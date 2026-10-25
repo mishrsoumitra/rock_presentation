@@ -16,7 +16,7 @@ export function TextInput({ view, stage, zoom }: { view: TextView & { transform:
   const goalX = useRef<number | undefined>(undefined);
   const composing = useRef(false);
 
-  // focused as soon as it is in the page, before the browser paints: keys typed right after a double-click land here
+  // focused as soon as it is in the page, before the browser paints: keys typed right after the click land here
   useLayoutEffect(() => { ref.current?.focus({ preventScroll: true }); }, [text.el]);
 
   // keep the textarea under the caret, so the IME's candidate window opens there

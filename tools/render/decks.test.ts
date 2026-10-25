@@ -1,5 +1,5 @@
-// The editor on your own decks, end to end in Chromium: every text box of every slide can be entered where it is
-// double-clicked, shows a caret you can see, and takes typing; the slide panel keeps the current slide in view.
+// The editor on your own decks, end to end in Chromium: every text box of every slide can be entered with one click
+// where its text is, shows a caret you can see, and takes typing; the slide panel keeps the current slide in view.
 //
 //   corepack pnpm test:decks            (decks from corpus/local/, or DECKS_DIR)
 //
@@ -141,7 +141,7 @@ describe.skipIf(decks.length === 0)('your decks in the editor', () => {
     await page.keyboard.press('End');
     await expect.poll(() => inView(parts.length)).toBe(true);
 
-    // every text box: double-click enters it, the caret shows, typing and deleting work
+    // every text box: one click on its text enters it, the caret shows, typing and deleting work
     const problems: string[] = [];
     const hidden: string[] = [];
     let boxes = 0;
@@ -155,11 +155,11 @@ describe.skipIf(decks.length === 0)('your decks in the editor', () => {
         const where = `slide ${i + 1} "${t.name}"`;
         await page.keyboard.press('Escape');
         await page.keyboard.press('Escape');
-        for (let g = 0; g < t.groups.length; g++) await page.mouse.dblclick(t.x, t.y);
-        await page.mouse.dblclick(t.x, t.y);
+        for (let g = 0; g < t.groups.length; g++) await page.mouse.dblclick(t.x, t.y);     // into each group first
+        await page.mouse.click(t.x, t.y);
         const editing = await state<number | null>(`${HELPERS} return s.text ? idOf(s.text.el) : null;`);
         if (editing !== t.id) {
-          problems.push(`${where}: double-click ${editing === null ? 'did not start editing' : `edited shape ${editing}`}`);
+          problems.push(`${where}: a click ${editing === null ? 'did not start editing' : `edited shape ${editing}`}`);
           continue;
         }
         if (!(await page.evaluate(() => !!(globalThis as unknown as { __stage: { findOne(s: string): unknown } }).__stage.findOne('.editing-frame')))) {

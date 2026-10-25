@@ -456,3 +456,150 @@ describe('the editor app', () => {
     expect(errors).toEqual([]);
   }, 120_000);
 });
+
+describe('text editing with the mouse, as in Google Slides', () => {
+  type Pt = { x: number; y: number };
+  type Pos = { p: number; offset: number };
+  type Box = { name: string; x: number; y: number; w: number; h: number; text: string };
+
+  /** Page-side helpers: the current slide's shapes, points of the slide on the page, names and text of elements. */
+  const HELP = `
+    const st = globalThis.__stage;
+    const screen = (x, y) => { const q = st.getAbsoluteTransform().point({ x, y }); const r = st.container().getBoundingClientRect(); return { x: r.left + q.x, y: r.top + q.y }; };
+    const nameOf = el => { const nv = el.children.find(c => c.kind === 'element' && c.local.startsWith('nv')); const c = nv && nv.children.find(x => x.kind === 'element' && x.local === 'cNvPr'); const a = c && c.attrs.find(a => a.local === 'name'); return a ? a.value : ''; };
+    const textOf = el => { const out = []; const walk = e => { if (e.local === 't') out.push(e.children.map(c => c.value ?? '').join('')); for (const c of e.children) if (c.kind === 'element') walk(c); }; walk(el); return out.join(''); };
+    const own = s.session.scenes.get(s.slide).slide.shapes.filter(x => x.layer === 'slide' && x.source);
+    const FOOT = ['dt', 'ftr', 'sldNum'];
+    const find = which => which === 'textbox' ? own.find(rs => !rs.source.placeholder)
+      : which === 'body' ? own.find(rs => rs.source.placeholder && !['title', 'ctrTitle', ...FOOT].includes(rs.source.placeholder.type))
+      : own.find(rs => rs.source.placeholder && rs.source.placeholder.type === which);
+    const corner = (rs, u, v) => { const m = rs.transform; return screen(m[0] * u + m[2] * v + m[4], m[1] * u + m[3] * v + m[5]); };
+  `;
+  /** Where the caret before `offset` of a box's paragraph (the first unless given) is on the page, mid-line. */
+  const caretAt = (which: string, offset: number, paragraph = 0) => state<Pt>(`${HELP}
+    const rs = find(${JSON.stringify(which)}); const t = rs.prims.filter(p => p.kind === 'text').pop();
+    const line = t.layout.lines.find(l => l.paragraph === ${paragraph} && l.carets.some(c => c.offset === ${offset}));
+    const c = line.carets.find(c => c.offset === ${offset}); const m = t.transform; const y = line.top + line.height / 2;
+    return screen(m[0] * c.x + m[2] * y + m[4], m[1] * c.x + m[3] * y + m[5]);`);
+  /** A box on the page: its name, its top left corner and size, and its text. */
+  const boxOf = (which: string) => state<Box>(`${HELP}
+    const rs = find(${JSON.stringify(which)}); const a = corner(rs, 0, 0), b = corner(rs, rs.box.w, rs.box.h);
+    return { name: rs.name, x: a.x, y: a.y, w: b.x - a.x, h: b.y - a.y, text: textOf(rs.source.view.el) };`);
+  /** What is being edited: the box's name, the caret and the anchor; null when nothing is. */
+  const editing = () => state<{ box: string; caret: Pos; anchor: Pos } | null>(`${HELP}
+    return s.text ? { box: nameOf(s.text.el), caret: s.text.caret, anchor: s.text.anchor } : null;`);
+  const selected = () => state<number>('return s.selection.length;');
+  const zoomNow = () => page.evaluate(() => (globalThis as unknown as { __stage: { scaleX(): number } }).__stage.scaleX());
+  const drag = async (a: Pt, b: Pt) => {
+    await page.mouse.move(a.x, a.y);
+    await page.mouse.down();
+    await page.mouse.move((a.x + b.x) / 2, (a.y + b.y) / 2, { steps: 3 });
+    await page.mouse.move(b.x, b.y, { steps: 3 });
+    await page.mouse.up();
+  };
+  const drawn = () => page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  /** Pixels of the selection highlight (its blue over the white slide) inside a rectangle of the page. */
+  const highlight = async (r: { x: number; y: number; w: number; h: number }) => {
+    await drawn();
+    const png = PNG.sync.read(await page.screenshot({ clip: { x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.w), height: Math.round(r.h) } }));
+    let n = 0;
+    for (let i = 0; i < png.data.length; i += 4) {
+      if (Math.abs(png.data[i]! - 202) < 14 && Math.abs(png.data[i + 1]! - 221) < 14 && png.data[i + 2]! > 240) n++;
+    }
+    return n;
+  };
+  let empty: Pt;
+
+  beforeAll(async () => {
+    await page.goto(server.resolvedUrls!.local[0]!);
+    await page.getByTestId('welcome-new').click();
+    await page.getByTestId('canvas').waitFor();
+    await page.waitForFunction(() => !!(globalThis as unknown as { __stage?: unknown }).__stage);
+    empty = await onScreen(300000, 300000);           // the top left corner of the slide: no shape of either layout is there
+  }, 60_000);
+
+  test('one click on an empty placeholder starts editing it: a new slide, a click on its title, and the title says Hello', async () => {
+    await page.getByTestId('new-slide').click();
+    expect(await slideCount()).toBe(2);
+    await drawn();
+    const title = await boxOf('title');
+    expect(title.text).toBe('');
+    await page.mouse.click(title.x + title.w / 2, title.y + title.h / 2);
+    expect(await editing()).toEqual({ box: title.name, caret: { p: 0, offset: 0 }, anchor: { p: 0, offset: 0 } });
+    await page.keyboard.type('Hello');
+    expect((await boxOf('title')).text).toBe('Hello');
+    expect((await boxOf('body')).text).toBe('');
+    await page.keyboard.press('Escape');
+    expect(await editing()).toBeNull();
+    expect(await selected()).toBe(1);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('a text box: one click puts the caret where you click, the mouse selects, Shift+click extends, a click never moves the box', async () => {
+    await page.getByTestId('thumb-1').click();
+    await page.getByRole('tab', { name: 'Insert' }).click();
+    await page.getByTestId('text-box').click();
+    await page.keyboard.type('Learning It for Good');
+    await page.keyboard.press('Escape');
+    await page.getByRole('tab', { name: 'Home' }).click();
+    await page.mouse.click(empty.x, empty.y);
+    expect(await selected()).toBe(0);
+    await drawn();
+    expect((await boxOf('textbox')).text).toBe('Learning It for Good');
+
+    // one click before "It": the caret at offset 9 and editing, with no selection
+    const at9 = await caretAt('textbox', 9);
+    await page.mouse.click(at9.x + 1, at9.y);
+    expect(await editing()).toMatchObject({ caret: { p: 0, offset: 9 }, anchor: { p: 0, offset: 9 } });
+    expect(await page.evaluate(() => document.activeElement?.getAttribute('data-testid'))).toBe('text-input');
+    // a click elsewhere while editing moves the caret
+    const at15 = await caretAt('textbox', 15);
+    await page.mouse.click(at15.x + 1, at15.y);
+    expect(await editing()).toMatchObject({ caret: { p: 0, offset: 15 }, anchor: { p: 0, offset: 15 } });
+
+    // dragging from the start of "Learning" to its end selects it (from a box that was not selected), and X replaces it
+    await page.mouse.click(empty.x, empty.y);
+    const at0 = await caretAt('textbox', 0), at8 = await caretAt('textbox', 8);
+    await drag({ x: at0.x + 1, y: at0.y }, at8);
+    expect(await editing()).toMatchObject({ anchor: { p: 0, offset: 0 }, caret: { p: 0, offset: 8 } });
+    await page.keyboard.type('X');
+    expect((await boxOf('textbox')).text).toBe('X It for Good');
+    await page.keyboard.press('Control+z');
+    expect((await boxOf('textbox')).text).toBe('Learning It for Good');
+
+    // Shift+click extends the selection from the anchor
+    await page.mouse.click(at9.x + 1, at9.y);
+    const at12 = await caretAt('textbox', 12);
+    await page.keyboard.down('Shift');
+    await page.mouse.click(at12.x + 1, at12.y);
+    await page.keyboard.up('Shift');
+    expect(await editing()).toMatchObject({ anchor: { p: 0, offset: 9 }, caret: { p: 0, offset: 12 } });
+
+    // one click on the text does not move the box, whether the box was selected or not
+    await page.keyboard.press('Escape');
+    expect(await selected()).toBe(1);
+    const before = await selectedXfrm();
+    const at3 = await caretAt('textbox', 3);
+    await page.mouse.click(at3.x + 1, at3.y);                 // selected: a click on its text starts editing
+    expect(await editing()).toMatchObject({ caret: { p: 0, offset: 3 } });
+    await page.keyboard.press('Escape');
+    await page.mouse.click(empty.x, empty.y);
+    await page.mouse.click(at3.x + 1, at3.y);                 // not selected: the same
+    expect(await editing()).toMatchObject({ caret: { p: 0, offset: 3 } });
+    await page.keyboard.press('Escape');
+    expect(await selectedXfrm()).toEqual(before);
+    // but dragging its frame does (the top edge of the selected box, away from the resize handle at its middle);
+    // Alt keeps the smart guides from snapping
+    const box = await boxOf('textbox');
+    const grab = { x: box.x + box.w / 4, y: box.y };
+    await page.keyboard.down('Alt');
+    await drag(grab, { x: grab.x, y: grab.y + 50 });
+    await page.keyboard.up('Alt');
+    const zoom = await zoomNow();
+    const moved = await selectedXfrm();
+    expect(Math.abs(moved.y - before.y - 50 / zoom)).toBeLessThan(3 / zoom);
+    expect(Math.abs(moved.x - before.x)).toBeLessThan(3 / zoom);
+    expect(await editing()).toBeNull();
+    expect(errors).toEqual([]);
+  }, 90_000);
+});
