@@ -32,5 +32,8 @@ process.on('SIGINT', signal => void stop(signal));
 process.on('SIGTERM', signal => void stop(signal));
 
 await app.listen({ host: config.host, port: config.port });
-const { dataDir, workers, render, oracles } = config;
-app.log.info({ dataDir, workers: workers.size, renderPages: render.pages, oracles: oracles.enabled }, 'ready');
+const { dataDir, workers, render, oracles, apiTokens, webDir } = config;
+app.log.info({
+  dataDir, workers: workers.size, renderPages: render.pages, oracles: oracles.enabled, apiTokens: apiTokens.length,
+  editor: app.hasRoute({ method: 'GET', url: '/' }) ? webDir : false,
+}, 'ready');

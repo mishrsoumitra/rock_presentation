@@ -63,6 +63,12 @@ export interface ServerConfig {
   pressure: { maxEventLoopDelayMs: number; maxHeapUsedBytes: number; maxRssBytes: number; sampleIntervalMs: number };
   requestTimeoutMs: number;
   logLevel: string;
+  /** Bearer tokens that may use the API (GET /api/health needs none). Empty: the API is open. */
+  apiTokens: string[];
+  /** Fastify's trustProxy: the proxies whose X-Forwarded-For names the client, for rate limits and logs. */
+  trustProxy: boolean | number | string[];
+  /** The built editor (apps/web/dist), served at /; when it has no index.html, only the API is served. */
+  webDir: string;
 }
 
 export type ConfigInput = Partial<Omit<ServerConfig, 'workers' | 'render' | 'oracles' | 'pressure' | 'limits' | 'container'>> & {
@@ -114,7 +120,29 @@ export function resolveConfig(input: ConfigInput = {}): ServerConfig {
     },
     requestTimeoutMs: input.requestTimeoutMs ?? 300_000,
     logLevel: input.logLevel ?? 'info',
+    apiTokens: input.apiTokens ?? [],
+    trustProxy: input.trustProxy ?? false,
+    webDir: resolve(input.webDir ?? join(HERE, '../../web/dist')),
   };
+}
+
+const isLoopback = (host: string) => host === 'localhost' || host === '::1' || /^127\.\d+\.\d+\.\d+$/.test(host);
+const yes = (raw: string | undefined) => raw?.trim() === '1' || raw?.trim().toLowerCase() === 'true';
+
+/** API_TOKENS: comma-separated, each at least 32 characters (openssl rand -hex 32 makes one). */
+function tokens(raw: string | undefined): string[] {
+  const list = (raw ?? '').split(',').map(t => t.trim()).filter(Boolean);
+  if (list.some(t => t.length < 32 || /\s/.test(t))) throw new Error('API_TOKENS must be comma-separated tokens of at least 32 characters, without spaces');
+  return list;
+}
+
+/** TRUST_PROXY: a number of proxy hops, "true" for any, or comma-separated proxy addresses and CIDR ranges. */
+function trustProxy(raw: string | undefined): ServerConfig['trustProxy'] | undefined {
+  const v = raw?.trim();
+  if (!v) return undefined;
+  if (/^\d+$/.test(v)) return Number(v);
+  if (v === 'true' || v === 'false') return v === 'true';
+  return v.split(',').map(a => a.trim()).filter(Boolean);
 }
 
 function int(env: NodeJS.ProcessEnv, name: string, min: number, max: number): number | undefined {
@@ -150,15 +178,22 @@ function httpUrl(raw: string | undefined, name: string): string | undefined {
  * Settings from the environment: PORT, HOST (default 127.0.0.1), DATA_DIR, MAX_UPLOAD_MB, RENDER_PAGES,
  * ENABLE_ORACLES, PPTX_VALIDATOR, POWERPOINT_BRIDGE_URL, plus WORKERS, WORKER_HEAP_MB, PARSE_TIMEOUT_MS,
  * RENDER_TIMEOUT_MS, RENDER_SANDBOX (0 to run Chromium without its sandbox), MAX_INFLATED_MB, RATE_LIMIT
- * (requests per minute per IP, 0 for none) and LOG_LEVEL.
- * A value that does not parse stops the server at startup rather than running with a surprise.
+ * (requests per minute per IP, 0 for none), LOG_LEVEL, API_TOKENS, ALLOW_ANONYMOUS_API, TRUST_PROXY and WEB_DIR.
+ * A value that does not parse stops the server at startup rather than running with a surprise, and so does a HOST
+ * that reaches the network without API_TOKENS, unless ALLOW_ANONYMOUS_API=1 says something in front authenticates.
  */
 export function configFromEnv(env: NodeJS.ProcessEnv): ServerConfig {
   const mb = (v: number | undefined) => (v === undefined ? undefined : v * MB);
   const inflated = mb(int(env, 'MAX_INFLATED_MB', 16, 2048));
   const rate = int(env, 'RATE_LIMIT', 0, 1_000_000);
+  const host = env.HOST?.trim() || undefined;
+  const apiTokens = tokens(env.API_TOKENS);
+  if (host && !isLoopback(host) && !apiTokens.length && !yes(env.ALLOW_ANONYMOUS_API)) {
+    throw new Error(`HOST=${host} would open the API to the network without API_TOKENS. Set API_TOKENS, `
+      + 'or ALLOW_ANONYMOUS_API=1 when a proxy in front of the server authenticates.');
+  }
   return resolveConfig({
-    host: env.HOST?.trim() || undefined,
+    host,
     port: int(env, 'PORT', 0, 65535),
     dataDir: env.DATA_DIR?.trim() || undefined,
     maxUploadBytes: mb(int(env, 'MAX_UPLOAD_MB', 1, 2048)),
@@ -182,5 +217,8 @@ export function configFromEnv(env: NodeJS.ProcessEnv): ServerConfig {
       : rate === 0 ? false
       : { max: rate, upload: Math.max(1, Math.ceil(rate / 10)), windowMs: 60_000 },
     logLevel: env.LOG_LEVEL?.trim() || undefined,
+    apiTokens,
+    trustProxy: trustProxy(env.TRUST_PROXY),
+    webDir: env.WEB_DIR?.trim() || undefined,
   });
 }

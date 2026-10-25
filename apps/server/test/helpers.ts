@@ -21,13 +21,14 @@ export function cleanup(): void {
   for (const d of temps.splice(0)) rmSync(d, { recursive: true, force: true });
 }
 
-/** A server on a temp DATA_DIR: quiet, no rate limit, no Chromium unless asked for. */
+/** A server on a temp DATA_DIR: quiet, no rate limit, no Chromium and no editor unless asked for. */
 export function testServer(input: ConfigInput = {}): Promise<FastifyInstance> {
   return buildServer({
     logLevel: 'silent',
     rateLimit: false,
     ...input,
     dataDir: input.dataDir ?? tempDir(),
+    webDir: input.webDir ?? tempDir('pptx-no-web-'),
     workers: { size: 2, ...input.workers },
     render: { pages: 0, ...input.render },
   });

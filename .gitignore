@@ -1,6 +1,6 @@
 node_modules/
 # third-party test decks and their download cache (corepack pnpm corpus:fetch)
-corpus/external/
+corpus/external
 corpus/.cache/
 # renders, reports and logs from the tools
 out/
