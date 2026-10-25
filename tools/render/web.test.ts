@@ -247,7 +247,8 @@ describe('the editor app', () => {
     await page.locator('input[type=file][accept^=".pptx"]').first().setInputFiles({ name: 'secret.pptx', mimeType: 'application/octet-stream', buffer: Buffer.from(saved) });
     await page.getByTestId('password').fill('wrong');
     await page.keyboard.press('Enter');
-    await expect.poll(() => page.getByText('The password is not correct').count()).toBe(1);
+    // a wrong password shows only after the key derivation (100,000 rounds of SHA-512), slow on a CI runner
+    await expect.poll(() => page.getByText('The password is not correct').count(), { timeout: 20_000 }).toBe(1);
     await page.getByTestId('password').fill('s3cret!');
     await page.keyboard.press('Enter');
     await expect.poll(slideCount, { timeout: 20_000 }).toBe(2);
