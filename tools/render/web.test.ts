@@ -564,8 +564,12 @@ describe('text editing with the mouse, as in Google Slides', () => {
     expect(await editing()).toMatchObject({ anchor: { p: 0, offset: 0 }, caret: { p: 0, offset: 8 } });
     await page.keyboard.type('X');
     expect((await boxOf('textbox')).text).toBe('X It for Good');
+    // undo while editing: editing goes on, with a caret and no selection, where the text has one
     await page.keyboard.press('Control+z');
     expect((await boxOf('textbox')).text).toBe('Learning It for Good');
+    const afterUndo = await editing();
+    expect(afterUndo).not.toBeNull();
+    expect(afterUndo!.anchor).toEqual(afterUndo!.caret);
 
     // Shift+click extends the selection from the anchor
     await page.mouse.click(at9.x + 1, at9.y);
@@ -623,4 +627,78 @@ describe('text editing with the mouse, as in Google Slides', () => {
     await page.keyboard.press('Escape');
     expect(errors).toEqual([]);
   }, 60_000);
+
+  test('a selection goes away when you click elsewhere, and stays for the ribbon', async () => {
+    // select "Learning", click on "Good" in the same box: no selection, the caret in "Good"
+    await page.mouse.click(empty.x, empty.y);
+    const l0 = await caretAt('textbox', 0), l8 = await caretAt('textbox', 8), g = await caretAt('textbox', 17);
+    await drag({ x: l0.x + 1, y: l0.y }, l8);
+    expect(await editing()).toMatchObject({ anchor: { p: 0, offset: 0 }, caret: { p: 0, offset: 8 } });
+    const textbox = await boxOf('textbox');
+    expect(await highlight(textbox)).toBeGreaterThan(30);
+    await page.mouse.click(g.x + 1, g.y);
+    let e = await editing();
+    expect(e!.anchor).toEqual(e!.caret);
+    expect(e!.caret.offset).toBeGreaterThanOrEqual(16);
+    expect(e!.caret.offset).toBeLessThanOrEqual(20);
+    expect(await highlight(textbox)).toBeLessThan(5);
+
+    // slide 2: the body placeholder gets text, with one click on it
+    await page.getByTestId('thumb-2').click();
+    expect(await editing()).toBeNull();
+    await drawn();
+    const body0 = await boxOf('body');
+    await page.mouse.click(body0.x + body0.w / 2, body0.y + 40);
+    expect(await editing()).toEqual({ box: body0.name, caret: { p: 0, offset: 0 }, anchor: { p: 0, offset: 0 } });
+    await page.keyboard.type('Body text');
+    const body = await boxOf('body');
+    expect(body.text).toBe('Body text');
+
+    // select, click below the last line inside the same box: the caret at the end, no selection
+    await page.keyboard.press('Control+a');
+    expect(await editing()).toMatchObject({ anchor: { p: 0, offset: 0 }, caret: { p: 0, offset: 9 } });
+    expect(await highlight(body)).toBeGreaterThan(30);
+    await page.mouse.click(body.x + body.w / 2, body.y + body.h - 20);
+    expect(await editing()).toMatchObject({ anchor: { p: 0, offset: 9 }, caret: { p: 0, offset: 9 } });
+    expect(await highlight(body)).toBeLessThan(5);
+
+    // select, click on another text box: the first box has no highlight, the second is being edited
+    await page.keyboard.press('Control+a');
+    expect(await highlight(body)).toBeGreaterThan(30);
+    const title = await boxOf('title');
+    const t2 = await caretAt('title', 2);
+    await page.mouse.click(t2.x + 1, t2.y);
+    e = await editing();
+    expect(e!.box).toBe(title.name);
+    expect(e!.anchor).toEqual(e!.caret);
+    expect(await highlight(body)).toBeLessThan(5);
+
+    // select, click on the empty slide: not editing, nothing selected, no highlight
+    await page.keyboard.press('Control+a');
+    expect(await highlight(title)).toBeGreaterThan(30);
+    await page.mouse.click(empty.x, empty.y);
+    expect(await editing()).toBeNull();
+    expect(await selected()).toBe(0);
+    expect(await highlight(title)).toBeLessThan(5);
+
+    // select "Body", click Bold: the word is bold, the selection stays, and the text input keeps the focus
+    const b0 = await caretAt('body', 0), b4 = await caretAt('body', 4);
+    await drag({ x: b0.x + 1, y: b0.y }, b4);
+    expect(await editing()).toMatchObject({ anchor: { p: 0, offset: 0 }, caret: { p: 0, offset: 4 } });
+    await page.getByTestId('bold').click();
+    expect(await editing()).toMatchObject({ anchor: { p: 0, offset: 0 }, caret: { p: 0, offset: 4 } });
+    expect(await page.evaluate(() => document.activeElement?.getAttribute('data-testid'))).toBe('text-input');
+    expect(await state<string>(`
+      const p = s.text.el.children.find(c => c.local === 'txBody').children.find(c => c.local === 'p');
+      const r = p.children.find(c => c.local === 'r'); const rPr = r.children.find(c => c.local === 'rPr');
+      return r.children.find(c => c.local === 't').children.map(c => c.value).join('') + ':' + rPr.attrs.map(a => a.local + '=' + a.value).join(' ');`))
+      .toMatch(/^Body:.*\bb=1\b/);
+    expect(await highlight(body)).toBeGreaterThan(30);
+
+    // a click on a slide in the panel ends editing and changes the slide
+    await page.getByTestId('thumb-1').click();
+    expect(await editing()).toBeNull();
+    expect(await state<string>('return s.session.ed.doc.slideParts().indexOf(s.slide);')).toBe(0);
+    expect(errors).toEqual([]);
+  }, 90_000);
 });

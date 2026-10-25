@@ -435,7 +435,10 @@ export function SlideCanvas() {
     if (e.target !== e.target.getStage() && e.target.name() !== 'underlay') return;
     // empty slide, or the grey around it: text editing ends (its selection with it) and nothing is selected
     const st = useEditor.getState();
-    if (st.text) st.setState({ text: null });
+    if (st.text) {
+      st.session?.ed.log.seal();
+      st.setState({ text: null, pending: null });
+    }
     const p = pointer();
     setMarquee({ x0: p.x, y0: p.y, x1: p.x, y1: p.y });
     if (!e.evt.shiftKey) st.select([]);
