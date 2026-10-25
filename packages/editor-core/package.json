@@ -1,0 +1,11 @@
+{
+  "name": "@pptx/editor-core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": { "@pptx/anim": "workspace:*", "@pptx/geometry": "workspace:*", "@pptx/model": "workspace:*", "@pptx/opc": "workspace:*", "@pptx/resolve": "workspace:*", "@pptx/xml": "workspace:*" }
+}

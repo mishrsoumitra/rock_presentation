@@ -1,0 +1,20 @@
+{
+  "name": "@pptx/tools-render",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@pptx/charts": "workspace:*",
+    "@pptx/metafile": "workspace:*",
+    "@pptx/model": "workspace:*",
+    "@pptx/opc": "workspace:*",
+    "@pptx/render": "workspace:*",
+    "@pptx/resolve": "workspace:*",
+    "@pptx/text": "workspace:*",
+    "@pptx/xml": "workspace:*",
+    "pixelmatch": "7.1.0",
+    "playwright": "1.64.0",
+    "pngjs": "7.0.0",
+    "vite": "8.3.4"
+  }
+}

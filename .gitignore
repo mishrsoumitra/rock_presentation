@@ -1,0 +1,17 @@
+node_modules/
+# third-party test decks and their download cache (corepack pnpm corpus:fetch)
+corpus/external/
+corpus/.cache/
+# renders, reports and logs from the tools
+out/
+# build output: the editor (apps/web/dist) and the server's render page (apps/server/dist)
+dist/
+*.tsbuildinfo
+# local configuration and secrets
+.env
+.env.*
+!.env.example
+# Claude Code worktrees and personal settings
+.claude/worktrees/
+.claude/settings.local.json
+.DS_Store

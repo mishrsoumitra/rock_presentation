@@ -1,0 +1,62 @@
+{
+  "libreoffice/sd~qa~unit~data~pptx~fail~CVE-2014-6352-1.ppsx": {
+    "code": "not-a-package",
+    "why": "obfuscated exploit sample stored scrambled so scanners ignore it; not a ZIP"
+  },
+  "libreoffice/sd~qa~unit~data~pptx~fail~ofz46160-1.pptx": {
+    "code": "invalid-zip",
+    "why": "fuzzer-generated test case with a corrupt ZIP structure"
+  },
+  "libreoffice/sd~qa~unit~data~pptx~pass~CVE-2014-4114.ppsx": {
+    "code": "not-a-package",
+    "why": "obfuscated exploit sample stored scrambled so scanners ignore it; not a ZIP"
+  },
+  "openxml-sdk/test~DocumentFormat.OpenXml.Tests.Assets~assets~TestFiles~encrypted_pptx.pptx": {
+    "code": "encrypted",
+    "why": "password-protected package (MS-OFFCRYPTO); support is planned for phase 6"
+  },
+  "poi/test-data~slideshow~Divino_Revelado.pptx": {
+    "code": "invalid-zip",
+    "why": "truncated archive: local headers but no end-of-central-directory record (Python zipfile refuses it too)"
+  },
+  "poi/test-data~slideshow~clusterfuzz-testcase-minimized-POIFuzzer-5205835528404992.pptx": {
+    "code": "invalid-package",
+    "why": "fuzzer-generated test case with a corrupt ZIP structure"
+  },
+  "poi/test-data~slideshow~clusterfuzz-testcase-minimized-POIXSLFFuzzer-4838644450394112.pptx": {
+    "code": "invalid-zip",
+    "why": "fuzzer-generated test case with a corrupt ZIP structure"
+  },
+  "poi/test-data~slideshow~clusterfuzz-testcase-minimized-POIXSLFFuzzer-4986044400861184.pptx": {
+    "code": "invalid-zip",
+    "why": "fuzzer-generated test case with a corrupt ZIP structure"
+  },
+  "poi/test-data~slideshow~clusterfuzz-testcase-minimized-POIXSLFFuzzer-5463285576892416.pptx": {
+    "code": "invalid-zip",
+    "why": "fuzzer-generated test case with a corrupt ZIP structure"
+  },
+  "poi/test-data~slideshow~clusterfuzz-testcase-minimized-POIXSLFFuzzer-5471515212382208.pptx": {
+    "code": "invalid-zip",
+    "why": "fuzzer-generated test case with a corrupt ZIP structure"
+  },
+  "poi/test-data~slideshow~clusterfuzz-testcase-minimized-POIXSLFFuzzer-5611274456596480.pptx": {
+    "code": "invalid-zip",
+    "why": "fuzzer-generated test case with a corrupt ZIP structure"
+  },
+  "poi/test-data~slideshow~clusterfuzz-testcase-minimized-POIXSLFFuzzer-6071540680032256.pptx": {
+    "code": "invalid-zip",
+    "why": "fuzzer-generated test case with a corrupt ZIP structure"
+  },
+  "poi/test-data~slideshow~clusterfuzz-testcase-minimized-POIXSLFFuzzer-6254434927378432.pptx": {
+    "code": "invalid-zip",
+    "why": "fuzzer-generated test case with a corrupt ZIP structure"
+  },
+  "poi/test-data~slideshow~clusterfuzz-testcase-minimized-POIXSLFFuzzer-6372932378820608.pptx": {
+    "code": "invalid-package",
+    "why": "fuzzer-generated test case with a corrupt ZIP structure"
+  },
+  "poi/test-data~slideshow~clusterfuzz-testcase-minimized-POIXSLFFuzzer-6435650376957952.pptx": {
+    "code": "invalid-zip",
+    "why": "fuzzer-generated test case with a corrupt ZIP structure"
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "name": "rock-presentation",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.11.2",
+  "engines": {
+    "node": ">=24.11.0"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.src.json && tsc -p tsconfig.json && tsc -p apps/web/tsconfig.json && tsc -p apps/server/tsconfig.json",
+    "check": "tsc -p tsconfig.src.json && tsc -p tsconfig.json && tsc -p apps/web/tsconfig.json && tsc -p apps/server/tsconfig.json && vitest run",
+    "corpus:fetch": "sh tools/corpus/fetch.sh",
+    "corpus:roundtrip": "node tools/corpus/roundtrip.ts",
+    "resave": "node tools/resave/resave.ts",
+    "inspect": "node tools/inspect/inspect.ts",
+    "render": "node tools/render/render.ts",
+    "dev": "corepack pnpm --dir apps/web dev"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.1",
+    "@types/pngjs": "6.0.5",
+    "pixelmatch": "7.1.0",
+    "playwright": "1.64.0",
+    "pngjs": "7.0.0",
+    "typescript": "7.0.2",
+    "vitest": "4.1.12"
+  }
+}

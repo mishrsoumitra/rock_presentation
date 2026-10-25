@@ -1,0 +1,11 @@
+{
+  "name": "@pptx/text",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": { "bidi-js": "1.1.0", "harfbuzzjs": "1.6.3", "linebreak": "1.1.0" }
+}

@@ -1,0 +1,35 @@
+{
+  "name": "@pptx/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/main.ts",
+    "build:render-page": "vite build --config render-page/vite.config.ts",
+    "typecheck": "tsc -p tsconfig.json",
+    "corpus": "node scripts/corpus.ts"
+  },
+  "dependencies": {
+    "@fastify/helmet": "13.1.2",
+    "@fastify/multipart": "10.1.3",
+    "@fastify/rate-limit": "11.2.1",
+    "@fastify/under-pressure": "9.2.1",
+    "@pptx/charts": "workspace:*",
+    "@pptx/crypto": "workspace:*",
+    "@pptx/metafile": "workspace:*",
+    "@pptx/model": "workspace:*",
+    "@pptx/opc": "workspace:*",
+    "@pptx/render": "workspace:*",
+    "@pptx/resolve": "workspace:*",
+    "@pptx/text": "workspace:*",
+    "@pptx/xml": "workspace:*",
+    "fastify": "5.12.7",
+    "pixelmatch": "7.1.0",
+    "playwright": "1.64.0",
+    "pngjs": "7.0.0",
+    "typebox": "1.3.36"
+  },
+  "devDependencies": {
+    "vite": "8.3.4"
+  }
+}

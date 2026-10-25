@@ -1,0 +1,14 @@
+{
+  "name": "@pptx/opc",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@pptx/xml": "workspace:*",
+    "fflate": "0.8.3"
+  }
+}
