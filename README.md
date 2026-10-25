@@ -12,6 +12,9 @@ phases of the plan are implemented:
 Everything is tested against about 900 third-party decks. What could not be tested is fidelity against PowerPoint
 itself: the plan's oracles need PowerPoint on Windows and the .NET SDK (see [Not run](#not-run-the-powerpoint-oracles)).
 
+It deploys as one container image, the editor and the server together ([Deploying](#deploying)), and GitHub Actions
+checks every change ([Continuous integration](#continuous-integration)).
+
 ## Running it
 
 ```sh
@@ -42,8 +45,83 @@ corepack pnpm corpus:roundtrip                     # the phase 1 numbers, in out
 UPDATE_GOLDEN=1 node_modules/.bin/vitest run tools/render/golden.test.ts   # approve new golden renders
 ```
 
+### Testing on your own decks
+
+Copy decks into `corpus/local/` (that folder is ignored, so nothing in it is ever committed), then:
+
+```sh
+corepack pnpm test:decks
+```
+
+For every deck, in headless Chromium, the test checks that:
+- the slide panel keeps the current slide in view while you go through it with the arrow keys, Home and End;
+- every text box on every slide starts editing in that box when its text is double-clicked, and shows the
+  editing frame;
+- the caret stands out against the slide (checked on one box per slide);
+- typing and Backspace work in every box;
+- the deck saves and opens again with the same text.
+
+Text that an opaque shape covers is listed and skipped, since it can't be seen or clicked (in PowerPoint either). The
+test takes about a minute per deck, so `corepack pnpm check` leaves it out.
+
 Node 24 runs the TypeScript directly (type stripping), so only the web app and the render page have a build step.
 The code uses only erasable TypeScript syntax (`erasableSyntaxOnly`), with explicit `.ts` import paths.
+
+## Deploying
+
+The image holds the editor and the server: the editor at `/`, the API under `/api`.
+
+```sh
+docker build -t rock-presentation .
+docker run -d -p 3000:3000 -v pptx-data:/data \
+  -e API_TOKENS="$(openssl rand -hex 32)" \
+  --read-only --tmpfs /tmp --tmpfs /home/node --cap-drop ALL --security-opt no-new-privileges \
+  rock-presentation
+```
+
+**Published images.** Every push to `main` and every version tag (`v1.2.3`) publishes
+`ghcr.io/mishrsoumitra/rock_presentation`, tagged `main`, the version, and the commit.
+
+**The editor needs no server.** It opens, edits and saves files in the browser. Its build (`apps/web/dist`) can
+also be served by any static host, as long as that host sends the page's content security policy.
+
+**Settings.** The server reads environment variables; `.env.example` lists them all. The ones a deployment usually
+sets:
+
+| Variable | What it does |
+| --- | --- |
+| `API_TOKENS` | Bearer tokens for `/api` (all but `/api/health`), comma-separated, 32 characters or more. A server reachable from the network will not start without them, unless `ALLOW_ANONYMOUS_API=1` says a proxy in front authenticates. |
+| `TRUST_PROXY` | Behind a load balancer: how many proxy hops to trust (usually `1`), or their addresses, so rate limits see the real client. |
+| `DATA_DIR` | Decks, their versions and cached renders. In the image: `/data`, a volume. Back it up. |
+| `MAX_UPLOAD_MB`, `RATE_LIMIT`, `WORKERS`, `RENDER_PAGES` | Upload size, requests per minute per client, parser threads, and Chromium pages drawing at once. |
+
+**Using the API.**
+
+```sh
+curl -H "Authorization: Bearer $TOKEN" -F file=@deck.pptx http://localhost:3000/api/decks              # -> {"id": ...}
+curl -H "Authorization: Bearer $TOKEN" -o slide1.png "http://localhost:3000/api/decks/$ID/slides/1.png?width=1280"
+curl -H "Authorization: Bearer $TOKEN" -o deck.pdf http://localhost:3000/api/decks/$ID/export.pdf
+```
+
+**Health and hardening.**
+- `GET /api/health` answers without a token; the image's health check uses it.
+- The server speaks plain HTTP, so put TLS in front of it (a load balancer or reverse proxy).
+- In the image, Chromium runs without its own sandbox (containers withhold the user namespaces it needs). The
+  container is the boundary: run it read-only, without capabilities, as above.
+- `node apps/server/scripts/smoke.ts https://your-host $TOKEN` checks a deployment end to end: health, the editor,
+  an upload, a slide image, a PDF.
+
+## Continuous integration
+
+| Workflow | When | What |
+| --- | --- | --- |
+| `ci.yml` | Every push and pull request | Install from the lockfile, `npm audit signatures`, `pnpm audit`, type-check, every test (browser tests included; the corpus is not fetched, so its tests skip), both builds |
+| `docker.yml` | Pull requests; `main` and tags | Build the image, run it read-only with a token, smoke-test it; publish from `main` and tags |
+| `corpus.yml` | Weekly, and on demand | Every test with the corpus, the server's exit run over all of it, and the weekly audit |
+| `codeql.yml` | Pushes, pull requests, weekly | GitHub's code scanning |
+
+Dependabot proposes updates weekly. It waits 14 days after a release, as `pnpm-workspace.yaml` does, and every
+action is pinned to a commit.
 
 ## Layout
 
