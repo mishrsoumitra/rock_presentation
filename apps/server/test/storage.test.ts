@@ -99,6 +99,8 @@ describe('DeckStore', () => {
     await store.cache.put(hash, 'slide-1-w640.png', bytes('png'));
     expect(Buffer.from((await store.cache.get(hash, 'slide-1-w640.png'))!).toString()).toBe('png');
     await expect(store.cache.put(hash, '../escape', bytes('x'))).rejects.toThrow(/cache entry/);
+    await expect(store.cache.put(hash, 'png/slide.png', bytes('x'))).rejects.toThrow(/cache entry/);
+    await expect(store.cache.get(`../${hash.slice(3)}`, 'slide-1-w640.png')).rejects.toThrow(/SHA-256/);
     await store.delete(a.id, exists);
     expect(await store.cache.get(hash, 'slide-1-w640.png')).toBeUndefined();
   });

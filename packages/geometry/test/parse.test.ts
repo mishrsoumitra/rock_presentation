@@ -94,6 +94,13 @@ describe('parseCustomGeometry', () => {
     expect(() => custGeom(xml)).toThrow(message);
   });
 
+  test('a hostile number in a formula is refused in linear time', () => {
+    // 100,000 zeros and a letter: the number pattern must not try every way of splitting the zeros
+    const started = performance.now();
+    expect(() => evaluateGeometry(custGeom(`<a:gdLst><a:gd name="g" fmla="+- ${'0'.repeat(100_000)}x 0 0"/></a:gdLst>`), 100, 100)).toThrow(GeometryError);
+    expect(performance.now() - started).toBeLessThan(500);
+  });
+
   test('a custom geometry evaluates like a preset', () => {
     // the triangle of the 20.1.9.11 example: its base on a guide at 2/3 of the height
     const g = custGeom(`<a:gdLst><a:gd name="myGuide" fmla="*/ h 2 3"/></a:gdLst>

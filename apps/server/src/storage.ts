@@ -10,7 +10,7 @@
 //   tmp/                       files being written, renamed into place once complete and flushed
 import { createHash, randomBytes } from 'node:crypto';
 import { mkdir, open, readdir, readFile, rename, rm, stat } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 
 export const HASH_RE = /^[0-9a-f]{64}$/;
 export const DECK_ID_RE = /^[0-9a-f]{32}$/;
@@ -71,6 +71,16 @@ export interface RenderCache {
 }
 
 export const sha256 = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
+
+/**
+ * A name to use as one path segment: the request's ids, hashes and cache names only ever reach the file system
+ * through here. It must match its pattern and be its own basename (no separators, so no way out of the directory).
+ */
+function safeName(name: string, pattern: RegExp, what: string): string {
+  const base = basename(name);
+  if (base !== name || !pattern.test(base)) throw new Error(`not ${what}: ${name.slice(0, 80)}`);
+  return base;
+}
 
 const isMissing = (e: unknown) => (e as NodeJS.ErrnoException).code === 'ENOENT';
 
@@ -134,8 +144,7 @@ export class FsBlobStore implements BlobStore {
   }
 
   private path(hash: string): string {
-    if (!HASH_RE.test(hash)) throw new Error(`not a SHA-256: ${hash.slice(0, 80)}`);
-    return join(this.root, hash.slice(0, 2), hash);
+    return join(this.root, hash.slice(0, 2), safeName(hash, HASH_RE, 'a SHA-256'));
   }
 
   async put(bytes: Uint8Array): Promise<string> {
@@ -168,8 +177,7 @@ export class FsMetaStore implements MetaStore {
   }
 
   private path(id: string): string {
-    if (!DECK_ID_RE.test(id)) throw new Error(`not a deck id: ${id.slice(0, 80)}`);
-    return join(this.root, `${id}.json`);
+    return join(this.root, `${safeName(id, DECK_ID_RE, 'a deck id')}.json`);
   }
 
   async get(id: string): Promise<DeckMeta | undefined> {
@@ -219,13 +227,11 @@ export class FsRenderCache implements RenderCache {
   }
 
   private dir(hash: string): string {
-    if (!HASH_RE.test(hash)) throw new Error(`not a SHA-256: ${hash.slice(0, 80)}`);
-    return join(this.root, hash);
+    return join(this.root, safeName(hash, HASH_RE, 'a SHA-256'));
   }
 
   private path(hash: string, name: string): string {
-    if (!CACHE_NAME_RE.test(name)) throw new Error(`not a cache entry name: ${name.slice(0, 80)}`);
-    return join(this.dir(hash), name);
+    return join(this.dir(hash), safeName(name, CACHE_NAME_RE, 'a cache entry name'));
   }
 
   async get(hash: string, name: string): Promise<Uint8Array | undefined> {

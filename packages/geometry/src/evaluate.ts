@@ -45,7 +45,8 @@ for (const d of [2, 3, 4, 5, 6, 8, 10, 12, 16, 32]) {
 }
 
 // A literal: an integer (ST_Coordinate, ST_Angle) or, in a formula, a decimal like the spec's own "*/ w 1.0 2.0".
-const NUMBER = /^[+-]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)$/;
+// the fraction needs its dot, so no two runs of digits can split the same input (linear on any string)
+const NUMBER = /^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)$/;
 // ST_UniversalMeasure, which a coordinate may also be: "2.5cm".
 const MEASURE = /^(-?[0-9]+(?:\.[0-9]+)?)(mm|cm|in|pt|pc|pi)$/;
 const EMU_PER = new Map([['mm', 36000], ['cm', 360000], ['in', 914400], ['pt', 12700], ['pc', 152400], ['pi', 152400]]);

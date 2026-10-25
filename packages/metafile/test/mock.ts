@@ -151,7 +151,7 @@ export class RecordingContext implements MetaCtx {
   }
   /** Width half the font size per character, ascent 0.8 and descent 0.2 of it: easy numbers for layout tests. */
   measureText(text: string): { width: number; fontBoundingBoxAscent: number; fontBoundingBoxDescent: number } {
-    const size = Number(/([\d.]+)px/.exec(this.s.font)?.[1] ?? 10);
+    const size = Number(this.s.font.split(' ').find(t => t.endsWith('px'))?.slice(0, -2) || 10);
     return { width: Array.from(text).length * size * 0.5, fontBoundingBoxAscent: size * 0.8, fontBoundingBoxDescent: size * 0.2 };
   }
   drawImage(image: CanvasImageSource, sx: number, sy: number, sw: number, sh: number, dx: number, dy: number, dw: number, dh: number): void {

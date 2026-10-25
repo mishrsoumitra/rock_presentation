@@ -8,7 +8,7 @@
 // by pattern and only ever name records, never paths. Errors are JSON without stack traces. There is no CORS:
 // browsers on other origins get nothing. Logs carry methods, URLs, ids and sizes, never file bytes, tokens or
 // passwords (which never reach the server). The built editor, when there is one, is served at / (src/web.ts).
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { timingSafeEqual } from 'node:crypto';
 import Fastify, { type FastifyInstance } from 'fastify';
 import helmet from '@fastify/helmet';
 import multipart from '@fastify/multipart';
@@ -76,14 +76,14 @@ export async function buildServer(input: ConfigInput = {}): Promise<FastifyInsta
   });
   if (config.rateLimit) await app.register(rateLimit, { global: true, max: config.rateLimit.max, timeWindow: config.rateLimit.windowMs });
   if (config.apiTokens.length) {
-    const digest = (token: string) => createHash('sha256').update(token).digest();
-    const allowed = config.apiTokens.map(digest);
+    // compared in constant time; only a token's length (32 characters or more, and not secret) can show
+    const allowed = config.apiTokens.map(token => Buffer.from(token));
     app.addHook('onRequest', async request => {
       const route = request.routeOptions.url;
       if (!route?.startsWith('/api/') || route === '/api/health') return;
       const given = /^Bearer +(\S+)$/i.exec(request.headers.authorization ?? '')?.[1];
-      const hash = given === undefined ? undefined : digest(given);
-      if (!hash || !allowed.some(a => timingSafeEqual(a, hash))) {
+      const bytes = given === undefined ? undefined : Buffer.from(given);
+      if (!bytes || !allowed.some(a => a.length === bytes.length && timingSafeEqual(a, bytes))) {
         throw new HttpError(401, 'unauthorized', 'This API needs a token: Authorization: Bearer <token>.', { 'www-authenticate': 'Bearer' });
       }
     });
