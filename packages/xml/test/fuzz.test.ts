@@ -24,7 +24,9 @@ describe('fuzzing the tokenizer', () => {
     let accepted = 0;
     let rejected = 0;
     const deadline = performance.now() + 8000;
-    for (let round = 0; performance.now() < deadline && round < 40; round++) {
+    // at least 2,000 mutations: without the corpus (CI) the two built-in seeds take many rounds each
+    const rounds = Math.max(40, Math.ceil(2000 / seeds.length));
+    for (let round = 0; performance.now() < deadline && round < rounds; round++) {
       for (const seed of seeds) {
         const input = mutate(seed, rnd);
         let doc;

@@ -1,6 +1,6 @@
 // The editor app end to end, in headless Chromium: create, draw, drag, type, format, undo, save, encrypt,
 // reopen, present, and edit a real deck. Saved files are checked in Node with the phase 1 oracle.
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -131,6 +131,7 @@ describe('the editor app', () => {
     const c2 = await onScreen(moved.x + moved.cx / 2, moved.y + moved.cy / 2);
     await page.mouse.dblclick(c2.x, c2.y);
     await page.getByTestId('text-input').waitFor({ state: 'attached' });
+    await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('data-testid'))).toBe('text-input');
     await page.keyboard.type('Hello world');
     expect(await selectedText()).toBe('Hello world');
     await page.keyboard.press('Escape');
@@ -263,8 +264,9 @@ describe('the editor app', () => {
     expect(errors).toEqual([]);
   }, 60_000);
 
-  test('a real deck: nudge its first shape, save, and the file still passes the oracle', async () => {
-    const file = join(ROOT, 'corpus/external/python-pptx/features~steps~test_files~shp-shapes.pptx');
+  const realDeck = join(ROOT, 'corpus/external/python-pptx/features~steps~test_files~shp-shapes.pptx');
+  test.skipIf(!existsSync(realDeck))('a real deck: nudge its first shape, save, and the file still passes the oracle', async () => {
+    const file = realDeck;
     await page.getByRole('tab', { name: 'File' }).click();
     await page.locator('input[type=file][accept^=".pptx"]').first().setInputFiles(file);
     await expect.poll(() => state<string>('return s.session?.name;'), { timeout: 20_000 }).toBe('features~steps~test_files~shp-shapes.pptx');

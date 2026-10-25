@@ -20,7 +20,7 @@ checks every change ([Continuous integration](#continuous-integration)).
 ```sh
 corepack pnpm install               # pnpm 12 (pinned in package.json); no dependency runs a build script
 corepack pnpm corpus:fetch          # ~1,050 third-party test decks into corpus/external/ (gitignored)
-corepack pnpm check                 # four type-checks, then every test: 10,233 tests in about 90 s
+corepack pnpm check                 # four type-checks, then every test: about 10,250 with the corpus, in about 2 minutes
 corepack pnpm dev                   # the editor, at http://localhost:5173
 ```
 
@@ -62,7 +62,8 @@ For every deck, in headless Chromium, the test checks that:
 - the deck saves and opens again with the same text.
 
 Text that an opaque shape covers is listed and skipped, since it can't be seen or clicked (in PowerPoint either). The
-test takes about a minute per deck, so `corepack pnpm check` leaves it out.
+test takes about a minute per deck, so `corepack pnpm check` leaves it out. The decks in `corpus/local/` do go through
+every corpus test in `corepack pnpm check`: the lossless round trip, resolving, rendering, and every editing command.
 
 Node 24 runs the TypeScript directly (type stripping), so only the web app and the render page have a build step.
 The code uses only erasable TypeScript syntax (`erasableSyntaxOnly`), with explicit `.ts` import paths.

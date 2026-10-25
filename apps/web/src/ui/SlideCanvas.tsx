@@ -1,6 +1,7 @@
 // apps/web/src/ui/SlideCanvas.tsx  -- the slide being edited: drawing, selection, moving, resizing, rotating
 import Konva from 'konva';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { Layer, Line, Rect, Shape, Stage, Transformer } from 'react-konva';
 import { moveBy, setTransforms, type TransformChange } from '@pptx/editor-core';
 import { ShapeView } from '@pptx/model';
@@ -170,7 +171,8 @@ export function SlideCanvas() {
       pos = hit(v, inv[0] * at.x + inv[2] * at.y + inv[4], inv[1] * at.x + inv[3] * at.y + inv[5]);
     }
     ed.log.seal();
-    set({ text: { part, el: rs.source.view.el, caret: pos, anchor: pos }, selection: [rs.source.view.el], pending: null });
+    // rendered (and the text input focused) before this handler returns, so keys typed straight away land in it
+    flushSync(() => set({ text: { part, el: rs.source.view.el, caret: pos, anchor: pos }, selection: [rs.source.view.el], pending: null }));
   };
 
   /** Snap the dragged node to slide and shape edges and centres, within a few screen pixels. */

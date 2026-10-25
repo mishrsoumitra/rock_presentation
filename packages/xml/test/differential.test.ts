@@ -119,7 +119,9 @@ describe('differential test against saxes', () => {
     const seeds = samples.filter(s => s.text.length < 20_000).slice(0, 150).map(s => s.text);
     seeds.push('<r xmlns:a="urn:a"><a:x a:y="1">t<![CDATA[c]]></a:x><!-- k --></r>', '<?xml version="1.0"?>\n<r a="&#9;\t&#10;\r\n"/>');
     const tally: Record<string, number> = {};
-    for (let round = 0; round < 25; round++) {
+    // at least 2,500 comparisons: without the corpus (CI) the two hand-written seeds take many rounds each
+    const rounds = Math.max(25, Math.ceil(2500 / seeds.length));
+    for (let round = 0; round < rounds; round++) {
       for (const seed of seeds) {
         const kind = compare(mutate(seed, rnd));
         tally[kind] = (tally[kind] ?? 0) + 1;
