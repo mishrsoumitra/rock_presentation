@@ -157,6 +157,9 @@ export function SlideCanvas() {
   const endPress = useRef<() => void>(() => undefined);
   /** The mouse button is down in the text: the caret stays lit instead of blinking, as in other editors. */
   const [holding, setHolding] = useState(false);
+  /** The shape under the mouse, and the outline drawn around it: kept out of React, so hovering re-renders nothing. */
+  const hovered = useRef<XmlElement | null>(null);
+  const hoverRef = useRef<Konva.Rect>(null);
 
   useLayoutEffect(() => {
     const el = host.current;
@@ -206,11 +209,39 @@ export function SlideCanvas() {
 
   const rsOf = (el: XmlElement) => shapes.find(s => s.source.view.el === el);
 
+  /**
+   * The hover outline: around the shape under the mouse when a click there would pick it, so not while drawing a
+   * shape, dragging a selection rectangle or dragging a shape, and not on a selected shape or the box being edited.
+   * It is drawn straight into the top layer, which is all that redraws: no scene rebuild, no thumbnail, no render.
+   */
+  const showHover = () => {
+    const rect = hoverRef.current;
+    if (!rect) return;
+    const st = useEditor.getState();
+    const el = hovered.current;
+    const rs = el && !st.drawing && !marquee && !drag.current && !st.selection.includes(el) && st.text?.el !== el ? rsOf(el) : undefined;
+    if (!rs) {
+      if (rect.visible()) { rect.visible(false); rect.getLayer()?.batchDraw(); }
+      return;
+    }
+    const b = boundsOf(rs);
+    if (rect.visible() && rect.x() === b.x && rect.y() === b.y && rect.width() === b.w && rect.height() === b.h) return;
+    rect.setAttrs({ x: b.x, y: b.y, width: b.w, height: b.h, visible: true });
+    rect.getLayer()?.batchDraw();
+  };
+  // after every render: the hovered shape may have been selected, or editing may have started in it
+  useEffect(() => { showHover(); });
+
   if (!sess || !part || !slide) return <div ref={host} className="canvas-host empty">{sess ? 'This presentation has no slides.' : null}</div>;
   const ed = sess.ed;
 
   /** The pointer in slide coordinates (EMU). */
   const pointer = () => stageRef.current?.getRelativePointerPosition() ?? { x: 0, y: 0 };
+  /** The mouse cursor over the slide says what a click would do: an I-beam on text, a move cursor on a grabbed box. */
+  const setCursor = (cursor: string) => {
+    const stage = stageRef.current;
+    if (stage && stage.container().style.cursor !== cursor) stage.container().style.cursor = cursor;
+  };
 
   const selectShape = (el: XmlElement, additive: boolean) => {
     const st = useEditor.getState();
@@ -353,6 +384,17 @@ export function SlideCanvas() {
       set({ text: null, selection: [el] });
     } else selectShape(el, false);
     beginPress({ kind: 'click', el, rs, node, down: evt, at, edit: text });
+  };
+
+  /** The mouse moves over a shape: the cursor says what a click there would do (nothing changes mid-press or drag). */
+  const onShapeMove = (rs: RenderShape, p: Placement, e: Konva.KonvaEventObject<MouseEvent>) => {
+    const st = useEditor.getState();
+    if (st.drawing || marquee || drag.current || press.current) return;
+    const el = rs.source.view.el;
+    const { onBand, text } = probe(rs, p, e.target, pointer());
+    const typing = !onBand && (st.text?.el === el || text);        // a click puts the caret here
+    const grabs = st.selection.includes(el) || st.text?.el === el;  // a press here takes hold of the box
+    setCursor(typing ? 'text' : grabs ? 'move' : '');
   };
 
   /** Snap the dragged node to slide and shape edges and centres, within a few screen pixels. */
@@ -505,6 +547,7 @@ export function SlideCanvas() {
       <Stage
         ref={stageRef} width={stageW} height={stageH} scaleX={zoom} scaleY={zoom} x={ox} y={oy}
         onMouseDown={onStageDown} onMouseMove={onStageMove} onMouseUp={onStageUp}
+        onMouseLeave={() => { hovered.current = null; showHover(); setCursor(''); }}
       >
         <Layer>
           <Shape
@@ -572,6 +615,12 @@ export function SlideCanvas() {
                   }
                 }}
                 onMouseDown={e => onShapeDown(rs, p, e)}
+                onMouseEnter={() => { hovered.current = el; showHover(); }}
+                onMouseLeave={() => {
+                  if (hovered.current === el) { hovered.current = null; showHover(); }
+                  if (press.current?.kind !== 'text') setCursor('');        // selecting text goes on outside the box
+                }}
+                onMouseMove={e => onShapeMove(rs, p, e)}
                 onDblClick={e => {
                   e.cancelBubble = true;
                   // Konva counts any two clicks within 400 ms as a double click, wherever they land, and the third
@@ -595,6 +644,8 @@ export function SlideCanvas() {
           })}
         </Layer>
         <Layer>
+          {/* the hover outline: one screen pixel, solid and light, unlike the dashed selection; placed by showHover */}
+          <Rect ref={hoverRef} visible={false} listening={false} name="hover-outline" stroke="#8ab4f8" strokeWidth={1 / zoom} />
           {selection.map(el => {
             const rs = rsOf(el);
             if (!rs) return null;

@@ -765,4 +765,77 @@ describe('text editing with the mouse, as in Google Slides', () => {
     await page.keyboard.press('Escape');
     expect(errors).toEqual([]);
   }, 90_000);
+
+  test('a hover outline shows on the shape a click would pick, and never on a selected shape, the box being edited, or empty slide', async () => {
+    await page.getByTestId('thumb-3').click();                // the slide whose title says Hello (the new slide went in before it)
+    await drawn();
+    expect((await boxOf('title')).text).toBe('Hello');
+    type Outline = { visible: boolean; x: number; y: number; w: number; h: number };
+    /** The hover outline in the top layer: whether it shows, and its box in slide units. */
+    const outline = () => page.evaluate(() => {
+      const st = (globalThis as unknown as { __stage: { findOne(sel: string): { visible(): boolean; x(): number; y(): number; width(): number; height(): number } | undefined } }).__stage;
+      const n = st.findOne('.hover-outline')!;
+      return { visible: n.visible(), x: n.x(), y: n.y(), w: n.width(), h: n.height() } as Outline;
+    });
+    /** A box's bounds on the slide (its corners through its transform), as the selection outline computes them. */
+    const boundsOnSlide = (which: string) => state<{ x: number; y: number; w: number; h: number }>(`${HELP}
+      const rs = find(${JSON.stringify(which)}); const m = rs.transform;
+      const pts = [[0, 0], [rs.box.w, 0], [rs.box.w, rs.box.h], [0, rs.box.h]].map(([u, v]) => [m[0] * u + m[2] * v + m[4], m[1] * u + m[3] * v + m[5]]);
+      const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]); const x = Math.min(...xs), y = Math.min(...ys);
+      return { x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y };`);
+    const cursor = () => page.evaluate(() => (globalThis as unknown as { __stage: { container(): HTMLElement } }).__stage.container().style.cursor);
+    const near = (o: Outline, b: { x: number; y: number; w: number; h: number }) =>
+      Math.abs(o.x - b.x) < 1 && Math.abs(o.y - b.y) < 1 && Math.abs(o.w - b.w) < 1 && Math.abs(o.h - b.h) < 1;
+
+    // over the empty slide: no outline, the arrow; over the title's text: the outline at the title's bounds, an I-beam
+    await page.mouse.move(empty.x, empty.y);
+    expect((await outline()).visible).toBe(false);
+    expect(await cursor()).toBe('');
+    const t2 = await caretAt('title', 2);
+    await page.mouse.move(t2.x + 1, t2.y);
+    const title = await boundsOnSlide('title');
+    let o = await outline();
+    expect(o.visible).toBe(true);
+    expect(near(o, title), `${JSON.stringify(o)} vs ${JSON.stringify(title)}`).toBe(true);
+    expect(await cursor()).toBe('text');
+    // back over the empty slide: it goes
+    await page.mouse.move(empty.x, empty.y);
+    expect((await outline()).visible).toBe(false);
+    expect(await cursor()).toBe('');
+
+    // one click on the title: editing starts, and the outline goes though the mouse is still over it
+    await page.mouse.click(t2.x + 1, t2.y);
+    expect((await editing())?.box).toBe((await boxOf('title')).name);
+    expect((await outline()).visible).toBe(false);
+    await page.mouse.move(t2.x + 20, t2.y);
+    expect((await outline()).visible).toBe(false);
+    expect(await cursor()).toBe('text');
+    // Escape leaves the title selected: no outline on a selected shape, off and on again; the cursor still says what
+    // a click does there: an I-beam on its text, a move cursor on its frame
+    await page.keyboard.press('Escape');
+    expect(await selected()).toBe(1);
+    await page.mouse.move(empty.x, empty.y);
+    await page.mouse.move(t2.x + 1, t2.y);
+    expect((await outline()).visible).toBe(false);
+    expect(await cursor()).toBe('text');
+    const tb = await boxOf('title');
+    await page.mouse.move(tb.x + tb.w / 4, tb.y);
+    expect(await cursor()).toBe('move');
+    // deselected, the outline is back; the body has one too, and only one shape at a time
+    await page.mouse.click(empty.x, empty.y);
+    expect(await selected()).toBe(0);
+    await page.mouse.move(t2.x + 1, t2.y);
+    o = await outline();
+    expect(o.visible).toBe(true);
+    expect(near(o, title)).toBe(true);
+    const b2 = await caretAt('body', 2);
+    await page.mouse.move(b2.x + 1, b2.y);
+    o = await outline();
+    expect(o.visible).toBe(true);
+    expect(near(o, await boundsOnSlide('body'))).toBe(true);
+    // the mouse leaving the slide takes it away
+    await page.mouse.move(5, 400);
+    expect((await outline()).visible).toBe(false);
+    expect(errors).toEqual([]);
+  }, 60_000);
 });
