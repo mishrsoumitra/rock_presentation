@@ -324,4 +324,135 @@ describe('the editor app', () => {
     if (!ci) expect(redraw).toBeLessThan(16);
     expect(errors).toEqual([]);
   }, 300_000);
+
+  test('placeholders take clicks where they are: the title and body of a new slide, at Fit and at 200% zoom', async () => {
+    // The shapes' Konva nodes do not scale their strokes with the stage (strokeScaleEnabled is off), so Konva measures
+    // hitStrokeWidth in screen pixels. Dividing it by the zoom once made every node's hit band cover the whole canvas,
+    // and the node drawn last took every click: the title of a new slide could not be clicked into.
+    type Hit = { id: string; x: number; y: number; w: number; h: number } | null;
+    type StageLike = {
+      getAbsoluteTransform(): { point(p: { x: number; y: number }): { x: number; y: number } };
+      container(): HTMLElement;
+      scaleX(): number;
+      getIntersection(p: { x: number; y: number }): { id(): string; x(): number; y(): number; width(): number; height(): number } | null;
+    };
+    /** The slide's own shapes: placeholder type, the centre and size of the box on the slide (EMU), and the text. */
+    const shapesHere = () => state<{ type: string; name: string; x: number; y: number; w: number; h: number; text: string }[]>(`
+      const textOf = el => { const out = []; const walk = e => { if (e.local === 't') out.push(e.children.map(c => c.value ?? '').join('')); for (const c of e.children) if (c.kind === 'element') walk(c); }; walk(el); return out.join(''); };
+      return s.session.scenes.get(s.slide).slide.shapes.filter(x => x.layer === 'slide' && x.source).map(rs => {
+        const m = rs.transform, u = rs.box.w / 2, v = rs.box.h / 2;
+        return { type: rs.source.placeholder ? rs.source.placeholder.type : '', name: rs.name, x: m[0] * u + m[2] * v + m[4], y: m[1] * u + m[3] * v + m[5], w: rs.box.w, h: rs.box.h, text: textOf(rs.source.view.el) };
+      });`);
+    /** The node Konva's hit canvas finds at a point of the slide (EMU): its centre and size in slide units. */
+    const hitAt = (x: number, y: number) => page.evaluate(([x, y]) => {
+      const st = (globalThis as unknown as { __stage: StageLike }).__stage;
+      const n = st.getIntersection(st.getAbsoluteTransform().point({ x, y }));
+      return (n ? { id: n.id(), x: n.x(), y: n.y(), w: n.width(), h: n.height() } : null) as Hit;
+    }, [x, y] as const);
+    /** Click a point of the slide (EMU), first scrolling the canvas so it is in view: at 200% the slide outgrows the window. */
+    const clickSlide = async (x: number, y: number) => {
+      const at = await page.evaluate(([x, y]) => {
+        const st = (globalThis as unknown as { __stage: StageLike }).__stage;
+        const host = document.querySelector('[data-testid="canvas"]') as HTMLElement;
+        const p = st.getAbsoluteTransform().point({ x, y });
+        host.scrollLeft = p.x - host.clientWidth / 2;
+        host.scrollTop = p.y - host.clientHeight / 2;
+        const r = st.container().getBoundingClientRect();
+        return { x: r.left + p.x, y: r.top + p.y };
+      }, [x, y] as const);
+      await page.mouse.click(at.x, at.y);
+    };
+    const drawn = () => page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+
+    for (const zoomButton of ['Fit', '200%'] as const) {
+      await page.goto(server.resolvedUrls!.local[0]!);
+      await page.getByTestId('welcome-new').click();
+      await page.getByTestId('canvas').waitFor();
+      await page.waitForFunction(() => !!(globalThis as unknown as { __stage?: unknown }).__stage);
+      await page.getByTestId('new-slide').click();
+      expect(await slideCount()).toBe(2);
+      await page.locator('footer.status .zoom').getByRole('button', { name: zoomButton, exact: true }).click();
+      if (zoomButton === '200%') {
+        await page.waitForFunction(z => Math.abs((globalThis as unknown as { __stage: StageLike }).__stage.scaleX() - z) < 1e-9, (2 * 96) / 914400);
+      }
+      await drawn();
+
+      // the new slide (Title and Content): an empty title and an empty body, both without fill
+      const shapes = await shapesHere();
+      const title = shapes.find(sh => sh.type === 'title'), body = shapes.find(sh => sh.type !== 'title');
+      expect(shapes.map(sh => sh.text), zoomButton).toEqual(['', '']);
+      expect(title, zoomButton).toBeDefined();
+      expect(body, zoomButton).toBeDefined();
+
+      // the hit canvas: the centre of each shape finds that shape's own node, not whichever node was drawn last
+      const hits: Hit[] = [];
+      for (const sh of shapes) {
+        const n = await hitAt(sh.x, sh.y);
+        hits.push(n);
+        expect(n, `${zoomButton}: nothing under the centre of ${sh.name}`).not.toBeNull();
+        expect(Math.abs(n!.x - sh.x), `${zoomButton}: the centre of ${sh.name} hits a node centred elsewhere`).toBeLessThan(1);
+        expect(Math.abs(n!.y - sh.y), `${zoomButton}: the centre of ${sh.name} hits a node centred elsewhere`).toBeLessThan(1);
+        expect(Math.abs(n!.w - sh.w), `${zoomButton}: the centre of ${sh.name} hits a node of another size`).toBeLessThan(1);
+        expect(Math.abs(n!.h - sh.h), `${zoomButton}: the centre of ${sh.name} hits a node of another size`).toBeLessThan(1);
+      }
+      expect(new Set(hits.map(n => n?.id)).size, `${zoomButton}: every shape has its own node`).toBe(shapes.length);
+
+      // click the centre of the title and type: the words go into the title, and the body stays empty
+      await clickSlide(title!.x, title!.y);
+      expect(await state<number>('return s.selection.length;'), zoomButton).toBe(1);
+      await page.keyboard.type('Title test');
+      let after = await shapesHere();
+      expect(after.find(sh => sh.type === 'title')!.text, zoomButton).toBe('Title test');
+      expect(after.find(sh => sh.type !== 'title')!.text, zoomButton).toBe('');
+      await page.keyboard.press('Escape');
+
+      // click the centre of the body and type: this goes into the body, and the title keeps its words
+      await clickSlide(body!.x, body!.y);
+      await page.keyboard.type('Body test');
+      after = await shapesHere();
+      expect(after.find(sh => sh.type === 'title')!.text, zoomButton).toBe('Title test');
+      expect(after.find(sh => sh.type !== 'title')!.text, zoomButton).toBe('Body test');
+      await page.keyboard.press('Escape');
+    }
+    expect(errors).toEqual([]);
+  }, 120_000);
+
+  test('the slide panel keeps the current slide in view: Down through forty slides, then Home and End', async () => {
+    // Pressing Down past the panel's bottom once left the current tile out of sight: the panel did not scroll with
+    // the keyboard. Each thumbnail now calls scrollIntoView when its slide becomes current.
+    const ed = new Editor(OpcPackage.open(blankPresentation()));
+    const first = ed.doc.slideParts()[0]!;
+    for (let i = 0; i < 39; i++) ed.run(duplicateSlide(ed, first).command);
+    const dir = mkdtempSync(join(tmpdir(), 'pptx-panel-'));
+    const file = join(dir, 'forty.pptx');
+    writeFileSync(file, ed.save());
+    await page.goto(server.resolvedUrls!.local[0]!);
+    await page.getByTestId('welcome-new').click();
+    await page.getByTestId('canvas').waitFor();
+    await page.getByRole('tab', { name: 'File' }).click();
+    await page.locator('input[type=file][accept^=".pptx"]').first().setInputFiles(file);
+    rmSync(dir, { recursive: true, force: true });
+    await page.waitForFunction(() => (globalThis as unknown as { __editor: { getState(): { session?: { name: string } } } }).__editor.getState().session?.name === 'forty.pptx');
+    expect(await slideCount()).toBe(40);
+    /** Whether the current slide's tile lies wholly inside the panel's box (what scrolls out of it is clipped). */
+    const currentInView = () => page.evaluate(() => {
+      const panel = document.querySelector('aside.slides')!.getBoundingClientRect();
+      const t = document.querySelector('.thumb.current')!.getBoundingClientRect();
+      return t.top >= panel.top - 1 && t.bottom <= panel.bottom + 1 && t.left >= panel.left - 1 && t.right <= panel.right + 1;
+    });
+    const index = () => state<number>('return s.session.ed.doc.slideParts().indexOf(s.slide);');
+    await page.getByTestId('thumb-1').click();                // the click also gives the panel the keyboard focus
+    for (let i = 1; i < 40; i++) {
+      await page.keyboard.press('ArrowDown');
+      expect(await index()).toBe(i);
+      await expect.poll(currentInView, { message: `slide ${i + 1} in view after Down` }).toBe(true);
+    }
+    await page.keyboard.press('Home');
+    expect(await index()).toBe(0);
+    await expect.poll(currentInView, { message: 'slide 1 in view after Home' }).toBe(true);
+    await page.keyboard.press('End');
+    expect(await index()).toBe(39);
+    await expect.poll(currentInView, { message: 'slide 40 in view after End' }).toBe(true);
+    expect(errors).toEqual([]);
+  }, 120_000);
 });
