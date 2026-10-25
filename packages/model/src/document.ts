@@ -56,11 +56,24 @@ export class PresentationDocument {
 
   /** Slide parts in presentation order (p:sldIdLst). */
   slideParts(): string[] {
-    return this.presentation.slideIds.map(e => this.target(this.mainPart, e.rId)).filter((p): p is string => p !== undefined);
+    return this.mainTargets(this.presentation.slideIds.map(e => e.rId));
   }
 
   masterParts(): string[] {
-    return this.presentation.masterIds.map(e => this.target(this.mainPart, e.rId)).filter((p): p is string => p !== undefined);
+    return this.mainTargets(this.presentation.masterIds.map(e => e.rId));
+  }
+
+  /** The parts the presentation's relationships point at, for ids in order, missing ones left out (rels read once). */
+  private mainTargets(rIds: string[]): string[] {
+    const rels = new Map(this.pkg.relationships(this.mainPart).map(r => [r.id, r]));
+    const out: string[] = [];
+    for (const rId of rIds) {
+      const rel = rels.get(rId);
+      if (!rel || rel.external) continue;
+      const name = this.pkg.getPart(resolveTarget(normalizeName(this.mainPart), rel.target))?.name;
+      if (name) out.push(name);
+    }
+    return out;
   }
 
   /** A master's layouts in the order of its p:sldLayoutIdLst. */

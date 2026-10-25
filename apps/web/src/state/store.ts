@@ -1,7 +1,8 @@
 // apps/web/src/state/store.ts  -- the editor's state: the open deck, the slide on screen, selection, text editing
 import { create } from 'zustand';
 import { isEncryptedPackage, OfficeCryptoError } from '@pptx/crypto';
-import { Editor, prepareForSave, type Command, type ShapeClip, type RunPatch, type TextPos } from '@pptx/editor-core';
+import { Editor, paragraphLength, paragraphs, prepareForSave, type Command, type ShapeClip, type RunPatch, type TextPos } from '@pptx/editor-core';
+import { ShapeView } from '@pptx/model';
 import { OpcError, OpcPackage } from '@pptx/opc';
 import type { FontRegistry } from '@pptx/text';
 import type { XmlElement } from '@pptx/xml';
@@ -67,6 +68,20 @@ function attached(els: XmlElement[]): XmlElement[] {
   });
 }
 
+/**
+ * Text editing after undo or redo: it goes on in the same box with a caret, and no selection, at a position the
+ * text now has (the selection it had may name text that is gone). It ends when the box itself is gone.
+ */
+function fitted(s: Session, t: TextEditing | null): TextEditing | null {
+  if (!t || !attached([t.el]).length) return null;
+  const body = new ShapeView(t.el, s.ed.doc.owner(t.part)).txBody;
+  if (!body) return null;
+  const ps = paragraphs(body);
+  const p = Math.max(0, Math.min(t.caret.p, ps.length - 1));
+  const caret = { p, offset: ps[p] ? Math.min(t.caret.offset, paragraphLength(ps[p]!)) : 0 };
+  return { ...t, caret, anchor: caret };
+}
+
 export const useEditor = create<EditorState>((set, get) => ({
   session: null, version: 0, slide: null, selection: [], entered: null, text: null, pending: null,
   zoom: 'fit', drawing: null, mode: 'edit', pane: 'none', clipboard: null, message: null, askPassword: null,
@@ -90,7 +105,9 @@ export const useEditor = create<EditorState>((set, get) => ({
       const thumbs = new Thumbnails(ed, zip, () => set(s => ({ version: s.version + 1 })));
       const session: Session = { ed, fonts, images, scenes: new SceneCache(ed, fonts), thumbs, name, password: password ?? null };
       ed.subscribe(parts => {
-        session.thumbs.sync(parts);
+        // while typing, the thumbnail follows 300 ms after the last keystroke; any other change shows at once
+        if (get().text) session.thumbs.syncLater(parts);
+        else session.thumbs.sync(parts);
         set(s => ({ version: s.version + 1 }));
       });
       set({
@@ -125,7 +142,8 @@ export const useEditor = create<EditorState>((set, get) => ({
   undo() {
     const s = get().session;
     if (!s?.ed.undo()) return;
-    set(st => ({ selection: attached(st.selection), text: null }));
+    s.thumbs.flush();
+    set(st => ({ selection: attached(st.selection), text: fitted(s, st.text), pending: null }));
     const slides = s.ed.doc.slideParts();
     if (!slides.includes(get().slide ?? '')) set({ slide: slides[0] ?? null });
   },
@@ -133,13 +151,16 @@ export const useEditor = create<EditorState>((set, get) => ({
   redo() {
     const s = get().session;
     if (!s?.ed.redo()) return;
-    set(st => ({ selection: attached(st.selection), text: null }));
+    s.thumbs.flush();
+    set(st => ({ selection: attached(st.selection), text: fitted(s, st.text), pending: null }));
     const slides = s.ed.doc.slideParts();
     if (!slides.includes(get().slide ?? '')) set({ slide: slides[0] ?? null });
   },
 
   setSlide(part) {
-    get().session?.ed.log.seal();
+    const s = get().session;
+    s?.ed.log.seal();
+    s?.thumbs.flush();
     set({ slide: part, selection: [], entered: null, text: null });
   },
 
@@ -171,6 +192,9 @@ export const useEditor = create<EditorState>((set, get) => ({
     }
   },
 }));
+
+// when editing ends, however it ends, the slide typed in reaches the thumbnail worker without the typing pause
+useEditor.subscribe((st, prev) => { if (prev.text && !st.text) st.session?.thumbs.flush(); });
 
 /** The session, for code outside React (event handlers). */
 export const session = () => useEditor.getState().session;

@@ -19,6 +19,17 @@ const hasText = (t: ResolvedTextBody | null) => !!t?.paragraphs.some(p => p.runs
  * shows it), or undefined. A layout placeholder with a custom prompt (hasCustomPrompt) gives its own text.
  */
 export function promptOf(ed: Editor, part: string, rs: RenderShape, fonts: FontRegistry): TextPrim | undefined {
+  // a render shape is rebuilt whenever its slide, layout or master changes, so its prompt is good for its lifetime
+  const hit = prompts.get(rs);
+  if (hit !== undefined) return hit ?? undefined;
+  const prompt = layoutPrompt(ed, part, rs, fonts);
+  prompts.set(rs, prompt ?? null);
+  return prompt;
+}
+
+const prompts = new WeakMap<RenderShape, TextPrim | null>();
+
+function layoutPrompt(ed: Editor, part: string, rs: RenderShape, fonts: FontRegistry): TextPrim | undefined {
   const s = rs.source;
   const ph = s?.placeholder;
   if (!s || !ph || rs.layer !== 'slide' || hasText(s.text) || !s.text) return undefined;

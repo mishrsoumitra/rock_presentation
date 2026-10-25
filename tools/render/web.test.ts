@@ -324,4 +324,518 @@ describe('the editor app', () => {
     if (!ci) expect(redraw).toBeLessThan(16);
     expect(errors).toEqual([]);
   }, 300_000);
+
+  test('placeholders take clicks where they are: the title and body of a new slide, at Fit and at 200% zoom', async () => {
+    // The shapes' Konva nodes do not scale their strokes with the stage (strokeScaleEnabled is off), so Konva measures
+    // hitStrokeWidth in screen pixels. Dividing it by the zoom once made every node's hit band cover the whole canvas,
+    // and the node drawn last took every click: the title of a new slide could not be clicked into.
+    type Hit = { id: string; x: number; y: number; w: number; h: number } | null;
+    type StageLike = {
+      getAbsoluteTransform(): { point(p: { x: number; y: number }): { x: number; y: number } };
+      container(): HTMLElement;
+      scaleX(): number;
+      getIntersection(p: { x: number; y: number }): { id(): string; x(): number; y(): number; width(): number; height(): number } | null;
+    };
+    /** The slide's own shapes: placeholder type, the centre and size of the box on the slide (EMU), and the text. */
+    const shapesHere = () => state<{ type: string; name: string; x: number; y: number; w: number; h: number; text: string }[]>(`
+      const textOf = el => { const out = []; const walk = e => { if (e.local === 't') out.push(e.children.map(c => c.value ?? '').join('')); for (const c of e.children) if (c.kind === 'element') walk(c); }; walk(el); return out.join(''); };
+      return s.session.scenes.get(s.slide).slide.shapes.filter(x => x.layer === 'slide' && x.source).map(rs => {
+        const m = rs.transform, u = rs.box.w / 2, v = rs.box.h / 2;
+        return { type: rs.source.placeholder ? rs.source.placeholder.type : '', name: rs.name, x: m[0] * u + m[2] * v + m[4], y: m[1] * u + m[3] * v + m[5], w: rs.box.w, h: rs.box.h, text: textOf(rs.source.view.el) };
+      });`);
+    /** The node Konva's hit canvas finds at a point of the slide (EMU): its centre and size in slide units. */
+    const hitAt = (x: number, y: number) => page.evaluate(([x, y]) => {
+      const st = (globalThis as unknown as { __stage: StageLike }).__stage;
+      const n = st.getIntersection(st.getAbsoluteTransform().point({ x, y }));
+      return (n ? { id: n.id(), x: n.x(), y: n.y(), w: n.width(), h: n.height() } : null) as Hit;
+    }, [x, y] as const);
+    /** Click a point of the slide (EMU), first scrolling the canvas so it is in view: at 200% the slide outgrows the window. */
+    const clickSlide = async (x: number, y: number) => {
+      const at = await page.evaluate(([x, y]) => {
+        const st = (globalThis as unknown as { __stage: StageLike }).__stage;
+        const host = document.querySelector('[data-testid="canvas"]') as HTMLElement;
+        const p = st.getAbsoluteTransform().point({ x, y });
+        host.scrollLeft = p.x - host.clientWidth / 2;
+        host.scrollTop = p.y - host.clientHeight / 2;
+        const r = st.container().getBoundingClientRect();
+        return { x: r.left + p.x, y: r.top + p.y };
+      }, [x, y] as const);
+      await page.mouse.click(at.x, at.y);
+    };
+    const drawn = () => page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+
+    for (const zoomButton of ['Fit', '200%'] as const) {
+      await page.goto(server.resolvedUrls!.local[0]!);
+      await page.getByTestId('welcome-new').click();
+      await page.getByTestId('canvas').waitFor();
+      await page.waitForFunction(() => !!(globalThis as unknown as { __stage?: unknown }).__stage);
+      await page.getByTestId('new-slide').click();
+      expect(await slideCount()).toBe(2);
+      await page.locator('footer.status .zoom').getByRole('button', { name: zoomButton, exact: true }).click();
+      if (zoomButton === '200%') {
+        await page.waitForFunction(z => Math.abs((globalThis as unknown as { __stage: StageLike }).__stage.scaleX() - z) < 1e-9, (2 * 96) / 914400);
+      }
+      await drawn();
+
+      // the new slide (Title and Content): an empty title and an empty body, both without fill
+      const shapes = await shapesHere();
+      const title = shapes.find(sh => sh.type === 'title'), body = shapes.find(sh => sh.type !== 'title');
+      expect(shapes.map(sh => sh.text), zoomButton).toEqual(['', '']);
+      expect(title, zoomButton).toBeDefined();
+      expect(body, zoomButton).toBeDefined();
+
+      // the hit canvas: the centre of each shape finds that shape's own node, not whichever node was drawn last
+      const hits: Hit[] = [];
+      for (const sh of shapes) {
+        const n = await hitAt(sh.x, sh.y);
+        hits.push(n);
+        expect(n, `${zoomButton}: nothing under the centre of ${sh.name}`).not.toBeNull();
+        expect(Math.abs(n!.x - sh.x), `${zoomButton}: the centre of ${sh.name} hits a node centred elsewhere`).toBeLessThan(1);
+        expect(Math.abs(n!.y - sh.y), `${zoomButton}: the centre of ${sh.name} hits a node centred elsewhere`).toBeLessThan(1);
+        expect(Math.abs(n!.w - sh.w), `${zoomButton}: the centre of ${sh.name} hits a node of another size`).toBeLessThan(1);
+        expect(Math.abs(n!.h - sh.h), `${zoomButton}: the centre of ${sh.name} hits a node of another size`).toBeLessThan(1);
+      }
+      expect(new Set(hits.map(n => n?.id)).size, `${zoomButton}: every shape has its own node`).toBe(shapes.length);
+
+      // click the centre of the title and type: the words go into the title, and the body stays empty
+      await clickSlide(title!.x, title!.y);
+      expect(await state<number>('return s.selection.length;'), zoomButton).toBe(1);
+      await page.keyboard.type('Title test');
+      let after = await shapesHere();
+      expect(after.find(sh => sh.type === 'title')!.text, zoomButton).toBe('Title test');
+      expect(after.find(sh => sh.type !== 'title')!.text, zoomButton).toBe('');
+      await page.keyboard.press('Escape');
+
+      // click the centre of the body and type: this goes into the body, and the title keeps its words
+      await clickSlide(body!.x, body!.y);
+      await page.keyboard.type('Body test');
+      after = await shapesHere();
+      expect(after.find(sh => sh.type === 'title')!.text, zoomButton).toBe('Title test');
+      expect(after.find(sh => sh.type !== 'title')!.text, zoomButton).toBe('Body test');
+      await page.keyboard.press('Escape');
+    }
+    expect(errors).toEqual([]);
+  }, 120_000);
+
+  test('the slide panel keeps the current slide in view: Down through forty slides, then Home and End', async () => {
+    // Pressing Down past the panel's bottom once left the current tile out of sight: the panel did not scroll with
+    // the keyboard. Each thumbnail now calls scrollIntoView when its slide becomes current.
+    const ed = new Editor(OpcPackage.open(blankPresentation()));
+    const first = ed.doc.slideParts()[0]!;
+    for (let i = 0; i < 39; i++) ed.run(duplicateSlide(ed, first).command);
+    const dir = mkdtempSync(join(tmpdir(), 'pptx-panel-'));
+    const file = join(dir, 'forty.pptx');
+    writeFileSync(file, ed.save());
+    await page.goto(server.resolvedUrls!.local[0]!);
+    await page.getByTestId('welcome-new').click();
+    await page.getByTestId('canvas').waitFor();
+    await page.getByRole('tab', { name: 'File' }).click();
+    await page.locator('input[type=file][accept^=".pptx"]').first().setInputFiles(file);
+    rmSync(dir, { recursive: true, force: true });
+    await page.waitForFunction(() => (globalThis as unknown as { __editor: { getState(): { session?: { name: string } } } }).__editor.getState().session?.name === 'forty.pptx');
+    expect(await slideCount()).toBe(40);
+    /** Whether the current slide's tile lies wholly inside the panel's box (what scrolls out of it is clipped). */
+    const currentInView = () => page.evaluate(() => {
+      const panel = document.querySelector('aside.slides')!.getBoundingClientRect();
+      const t = document.querySelector('.thumb.current')!.getBoundingClientRect();
+      return t.top >= panel.top - 1 && t.bottom <= panel.bottom + 1 && t.left >= panel.left - 1 && t.right <= panel.right + 1;
+    });
+    const index = () => state<number>('return s.session.ed.doc.slideParts().indexOf(s.slide);');
+    await page.getByTestId('thumb-1').click();                // the click also gives the panel the keyboard focus
+    for (let i = 1; i < 40; i++) {
+      await page.keyboard.press('ArrowDown');
+      expect(await index()).toBe(i);
+      await expect.poll(currentInView, { message: `slide ${i + 1} in view after Down` }).toBe(true);
+    }
+    await page.keyboard.press('Home');
+    expect(await index()).toBe(0);
+    await expect.poll(currentInView, { message: 'slide 1 in view after Home' }).toBe(true);
+    await page.keyboard.press('End');
+    expect(await index()).toBe(39);
+    await expect.poll(currentInView, { message: 'slide 40 in view after End' }).toBe(true);
+    expect(errors).toEqual([]);
+  }, 120_000);
+});
+
+describe('text editing with the mouse, as in Google Slides', () => {
+  type Pt = { x: number; y: number };
+  type Pos = { p: number; offset: number };
+  type Box = { name: string; x: number; y: number; w: number; h: number; text: string };
+
+  /** Page-side helpers: the current slide's shapes, points of the slide on the page, names and text of elements. */
+  const HELP = `
+    const st = globalThis.__stage;
+    const screen = (x, y) => { const q = st.getAbsoluteTransform().point({ x, y }); const r = st.container().getBoundingClientRect(); return { x: r.left + q.x, y: r.top + q.y }; };
+    const nameOf = el => { const nv = el.children.find(c => c.kind === 'element' && c.local.startsWith('nv')); const c = nv && nv.children.find(x => x.kind === 'element' && x.local === 'cNvPr'); const a = c && c.attrs.find(a => a.local === 'name'); return a ? a.value : ''; };
+    const textOf = el => { const out = []; const walk = e => { if (e.local === 't') out.push(e.children.map(c => c.value ?? '').join('')); for (const c of e.children) if (c.kind === 'element') walk(c); }; walk(el); return out.join(''); };
+    const own = s.session.scenes.get(s.slide).slide.shapes.filter(x => x.layer === 'slide' && x.source);
+    const FOOT = ['dt', 'ftr', 'sldNum'];
+    const find = which => which === 'textbox' ? own.find(rs => !rs.source.placeholder)
+      : which === 'body' ? own.find(rs => rs.source.placeholder && !['title', 'ctrTitle', ...FOOT].includes(rs.source.placeholder.type))
+      : own.find(rs => rs.source.placeholder && rs.source.placeholder.type === which);
+    const corner = (rs, u, v) => { const m = rs.transform; return screen(m[0] * u + m[2] * v + m[4], m[1] * u + m[3] * v + m[5]); };
+  `;
+  /** Where the caret before `offset` of a box's paragraph (the first unless given) is on the page, mid-line. */
+  const caretAt = (which: string, offset: number, paragraph = 0) => state<Pt>(`${HELP}
+    const rs = find(${JSON.stringify(which)}); const t = rs.prims.filter(p => p.kind === 'text').pop();
+    const line = t.layout.lines.find(l => l.paragraph === ${paragraph} && l.carets.some(c => c.offset === ${offset}));
+    const c = line.carets.find(c => c.offset === ${offset}); const m = t.transform; const y = line.top + line.height / 2;
+    return screen(m[0] * c.x + m[2] * y + m[4], m[1] * c.x + m[3] * y + m[5]);`);
+  /** A box on the page: its name, its top left corner and size, and its text. */
+  const boxOf = (which: string) => state<Box>(`${HELP}
+    const rs = find(${JSON.stringify(which)}); const a = corner(rs, 0, 0), b = corner(rs, rs.box.w, rs.box.h);
+    return { name: rs.name, x: a.x, y: a.y, w: b.x - a.x, h: b.y - a.y, text: textOf(rs.source.view.el) };`);
+  /** What is being edited: the box's name, the caret and the anchor; null when nothing is. */
+  const editing = () => state<{ box: string; caret: Pos; anchor: Pos } | null>(`${HELP}
+    return s.text ? { box: nameOf(s.text.el), caret: s.text.caret, anchor: s.text.anchor } : null;`);
+  const selected = () => state<number>('return s.selection.length;');
+  const zoomNow = () => page.evaluate(() => (globalThis as unknown as { __stage: { scaleX(): number } }).__stage.scaleX());
+  const drag = async (a: Pt, b: Pt) => {
+    await page.mouse.move(a.x, a.y);
+    await page.mouse.down();
+    await page.mouse.move((a.x + b.x) / 2, (a.y + b.y) / 2, { steps: 3 });
+    await page.mouse.move(b.x, b.y, { steps: 3 });
+    await page.mouse.up();
+  };
+  const drawn = () => page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  /** Pixels of the selection highlight (its blue over the white slide) inside a rectangle of the page. */
+  const highlight = async (r: { x: number; y: number; w: number; h: number }) => {
+    await drawn();
+    const png = PNG.sync.read(await page.screenshot({ clip: { x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.w), height: Math.round(r.h) } }));
+    let n = 0;
+    for (let i = 0; i < png.data.length; i += 4) {
+      if (Math.abs(png.data[i]! - 202) < 14 && Math.abs(png.data[i + 1]! - 221) < 14 && png.data[i + 2]! > 240) n++;
+    }
+    return n;
+  };
+  let empty: Pt;
+
+  beforeAll(async () => {
+    await page.goto(server.resolvedUrls!.local[0]!);
+    await page.getByTestId('welcome-new').click();
+    await page.getByTestId('canvas').waitFor();
+    await page.waitForFunction(() => !!(globalThis as unknown as { __stage?: unknown }).__stage);
+    empty = await onScreen(300000, 300000);           // the top left corner of the slide: no shape of either layout is there
+  }, 60_000);
+
+  test('one click on an empty placeholder starts editing it: a new slide, a click on its title, and the title says Hello', async () => {
+    await page.getByTestId('new-slide').click();
+    expect(await slideCount()).toBe(2);
+    await drawn();
+    const title = await boxOf('title');
+    expect(title.text).toBe('');
+    await page.mouse.click(title.x + title.w / 2, title.y + title.h / 2);
+    expect(await editing()).toEqual({ box: title.name, caret: { p: 0, offset: 0 }, anchor: { p: 0, offset: 0 } });
+    await page.keyboard.type('Hello');
+    expect((await boxOf('title')).text).toBe('Hello');
+    expect((await boxOf('body')).text).toBe('');
+    await page.keyboard.press('Escape');
+    expect(await editing()).toBeNull();
+    expect(await selected()).toBe(1);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('a text box: one click puts the caret where you click, the mouse selects, Shift+click extends, a triple click selects all the text, a click never moves the box', async () => {
+    await page.getByTestId('thumb-1').click();
+    await page.getByRole('tab', { name: 'Insert' }).click();
+    await page.getByTestId('text-box').click();
+    await page.keyboard.type('Learning It for Good');
+    await page.keyboard.press('Escape');
+    await page.getByRole('tab', { name: 'Home' }).click();
+    await page.mouse.click(empty.x, empty.y);
+    expect(await selected()).toBe(0);
+    await drawn();
+    expect((await boxOf('textbox')).text).toBe('Learning It for Good');
+
+    // one click before "It": the caret at offset 9 and editing, with no selection
+    const at9 = await caretAt('textbox', 9);
+    await page.mouse.click(at9.x + 1, at9.y);
+    expect(await editing()).toMatchObject({ caret: { p: 0, offset: 9 }, anchor: { p: 0, offset: 9 } });
+    expect(await page.evaluate(() => document.activeElement?.getAttribute('data-testid'))).toBe('text-input');
+    // a click elsewhere while editing moves the caret
+    const at15 = await caretAt('textbox', 15);
+    await page.mouse.click(at15.x + 1, at15.y);
+    expect(await editing()).toMatchObject({ caret: { p: 0, offset: 15 }, anchor: { p: 0, offset: 15 } });
+
+    // dragging from the start of "Learning" to its end selects it (from a box that was not selected), and X replaces it
+    await page.mouse.click(empty.x, empty.y);
+    const at0 = await caretAt('textbox', 0), at8 = await caretAt('textbox', 8);
+    await drag({ x: at0.x + 1, y: at0.y }, at8);
+    expect(await editing()).toMatchObject({ anchor: { p: 0, offset: 0 }, caret: { p: 0, offset: 8 } });
+    await page.keyboard.type('X');
+    expect((await boxOf('textbox')).text).toBe('X It for Good');
+    // undo while editing: editing goes on, with a caret and no selection, where the text has one
+    await page.keyboard.press('Control+z');
+    expect((await boxOf('textbox')).text).toBe('Learning It for Good');
+    const afterUndo = await editing();
+    expect(afterUndo).not.toBeNull();
+    expect(afterUndo!.anchor).toEqual(afterUndo!.caret);
+
+    // Shift+click extends the selection from the anchor
+    await page.mouse.click(at9.x + 1, at9.y);
+    const at12 = await caretAt('textbox', 12);
+    await page.keyboard.down('Shift');
+    await page.mouse.click(at12.x + 1, at12.y);
+    await page.keyboard.up('Shift');
+    expect(await editing()).toMatchObject({ anchor: { p: 0, offset: 9 }, caret: { p: 0, offset: 12 } });
+    // a triple click selects all the text of the box (one paragraph here)
+    await page.mouse.click(at12.x + 1, at12.y, { clickCount: 3 });
+    expect(await editing()).toMatchObject({ anchor: { p: 0, offset: 0 }, caret: { p: 0, offset: 20 } });
+
+    // one click on the text does not move the box, whether the box was selected or not
+    await page.keyboard.press('Escape');
+    expect(await selected()).toBe(1);
+    const before = await selectedXfrm();
+    const at3 = await caretAt('textbox', 3);
+    await page.mouse.click(at3.x + 1, at3.y);                 // selected: a click on its text starts editing
+    expect(await editing()).toMatchObject({ caret: { p: 0, offset: 3 } });
+    await page.keyboard.press('Escape');
+    await page.mouse.click(empty.x, empty.y);
+    await page.mouse.click(at3.x + 1, at3.y);                 // not selected: the same
+    expect(await editing()).toMatchObject({ caret: { p: 0, offset: 3 } });
+    await page.keyboard.press('Escape');
+    expect(await selectedXfrm()).toEqual(before);
+    // but dragging its frame does (the top edge of the selected box, away from the resize handle at its middle);
+    // Alt keeps the smart guides from snapping
+    const box = await boxOf('textbox');
+    const grab = { x: box.x + box.w / 4, y: box.y };
+    await page.keyboard.down('Alt');
+    await drag(grab, { x: grab.x, y: grab.y + 50 });
+    await page.keyboard.up('Alt');
+    const zoom = await zoomNow();
+    const moved = await selectedXfrm();
+    expect(Math.abs(moved.y - before.y - 50 / zoom)).toBeLessThan(3 / zoom);
+    expect(Math.abs(moved.x - before.x)).toBeLessThan(3 / zoom);
+    expect(await editing()).toBeNull();
+    expect(errors).toEqual([]);
+  }, 90_000);
+
+  test('typing 50 characters in a row: the text is right; locally, the time per keystroke is reported', async () => {
+    await page.mouse.click(empty.x, empty.y);
+    const end = await caretAt('textbox', 20);
+    await page.mouse.click(end.x - 1, end.y);
+    expect(await editing()).toMatchObject({ caret: { p: 0, offset: 20 }, anchor: { p: 0, offset: 20 } });
+    await page.evaluate(() => performance.clearMeasures('keystroke'));
+    const typed = 'abcdefghij'.repeat(5);
+    await page.keyboard.type(typed);
+    expect((await boxOf('textbox')).text).toBe(`Learning It for Good${typed}`);
+    const times = await page.evaluate(() => performance.getEntriesByName('keystroke').map(e => e.duration).sort((a, b) => a - b));
+    expect(times).toHaveLength(50);
+    if (!process.env.CI) {
+      // the app's own measure: the keystroke's command, autofit, scene rebuild, React render and commit (dev build)
+      console.log(`keystroke: median ${times[25]!.toFixed(1)} ms, p90 ${times[45]!.toFixed(1)} ms, max ${times[49]!.toFixed(1)} ms (dev build, headless Chromium)`);
+    }
+    await page.keyboard.press('Control+z');                   // the fifty went in as one step
+    expect((await boxOf('textbox')).text).toBe('Learning It for Good');
+    await page.keyboard.press('Escape');
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('a selection goes away when you click elsewhere, and stays for the ribbon', async () => {
+    // select "Learning", click on "Good" in the same box: no selection, the caret in "Good"
+    await page.mouse.click(empty.x, empty.y);
+    const l0 = await caretAt('textbox', 0), l8 = await caretAt('textbox', 8), g = await caretAt('textbox', 17);
+    await drag({ x: l0.x + 1, y: l0.y }, l8);
+    expect(await editing()).toMatchObject({ anchor: { p: 0, offset: 0 }, caret: { p: 0, offset: 8 } });
+    const textbox = await boxOf('textbox');
+    expect(await highlight(textbox)).toBeGreaterThan(30);
+    await page.mouse.click(g.x + 1, g.y);
+    let e = await editing();
+    expect(e!.anchor).toEqual(e!.caret);
+    expect(e!.caret.offset).toBeGreaterThanOrEqual(16);
+    expect(e!.caret.offset).toBeLessThanOrEqual(20);
+    expect(await highlight(textbox)).toBeLessThan(5);
+
+    // slide 2: the body placeholder gets text, with one click on it
+    await page.getByTestId('thumb-2').click();
+    expect(await editing()).toBeNull();
+    await drawn();
+    const body0 = await boxOf('body');
+    await page.mouse.click(body0.x + body0.w / 2, body0.y + 40);
+    expect(await editing()).toEqual({ box: body0.name, caret: { p: 0, offset: 0 }, anchor: { p: 0, offset: 0 } });
+    await page.keyboard.type('Body text');
+    const body = await boxOf('body');
+    expect(body.text).toBe('Body text');
+
+    // select, click below the last line inside the same box: the caret at the end, no selection
+    await page.keyboard.press('Control+a');
+    expect(await editing()).toMatchObject({ anchor: { p: 0, offset: 0 }, caret: { p: 0, offset: 9 } });
+    expect(await highlight(body)).toBeGreaterThan(30);
+    await page.mouse.click(body.x + body.w / 2, body.y + body.h - 20);
+    expect(await editing()).toMatchObject({ anchor: { p: 0, offset: 9 }, caret: { p: 0, offset: 9 } });
+    expect(await highlight(body)).toBeLessThan(5);
+
+    // select, click on another text box: the first box has no highlight, the second is being edited
+    await page.keyboard.press('Control+a');
+    expect(await highlight(body)).toBeGreaterThan(30);
+    const title = await boxOf('title');
+    const t2 = await caretAt('title', 2);
+    await page.mouse.click(t2.x + 1, t2.y);
+    e = await editing();
+    expect(e!.box).toBe(title.name);
+    expect(e!.anchor).toEqual(e!.caret);
+    expect(await highlight(body)).toBeLessThan(5);
+
+    // select, click on the empty slide: not editing, nothing selected, no highlight
+    await page.keyboard.press('Control+a');
+    expect(await highlight(title)).toBeGreaterThan(30);
+    await page.mouse.click(empty.x, empty.y);
+    expect(await editing()).toBeNull();
+    expect(await selected()).toBe(0);
+    expect(await highlight(title)).toBeLessThan(5);
+
+    // select "Body", click Bold: the word is bold, the selection stays, and the text input keeps the focus
+    const b0 = await caretAt('body', 0), b4 = await caretAt('body', 4);
+    await drag({ x: b0.x + 1, y: b0.y }, b4);
+    expect(await editing()).toMatchObject({ anchor: { p: 0, offset: 0 }, caret: { p: 0, offset: 4 } });
+    await page.getByTestId('bold').click();
+    expect(await editing()).toMatchObject({ anchor: { p: 0, offset: 0 }, caret: { p: 0, offset: 4 } });
+    expect(await page.evaluate(() => document.activeElement?.getAttribute('data-testid'))).toBe('text-input');
+    expect(await state<string>(`
+      const p = s.text.el.children.find(c => c.local === 'txBody').children.find(c => c.local === 'p');
+      const r = p.children.find(c => c.local === 'r'); const rPr = r.children.find(c => c.local === 'rPr');
+      return r.children.find(c => c.local === 't').children.map(c => c.value).join('') + ':' + rPr.attrs.map(a => a.local + '=' + a.value).join(' ');`))
+      .toMatch(/^Body:.*\bb=1\b/);
+    expect(await highlight(body)).toBeGreaterThan(30);
+
+    // a click on a slide in the panel ends editing and changes the slide
+    await page.getByTestId('thumb-1').click();
+    expect(await editing()).toBeNull();
+    expect(await state<string>('return s.session.ed.doc.slideParts().indexOf(s.slide);')).toBe(0);
+    expect(errors).toEqual([]);
+  }, 90_000);
+
+  test('a triple click selects all the text of a box of two paragraphs: typing replaces it, Backspace clears it, Bold applies to all of it', async () => {
+    // a third slide with a text box of two paragraphs
+    await page.getByTestId('new-slide').click();
+    expect(await slideCount()).toBe(3);
+    await page.getByRole('tab', { name: 'Insert' }).click();
+    await page.getByTestId('text-box').click();
+    await page.keyboard.type('First line');
+    await page.keyboard.press('Enter');
+    await page.keyboard.type('Second line');
+    await page.keyboard.press('Escape');
+    await page.getByRole('tab', { name: 'Home' }).click();
+    await page.mouse.click(empty.x, empty.y);
+    expect(await selected()).toBe(0);
+    await drawn();
+    expect((await boxOf('textbox')).text).toBe('First lineSecond line');
+
+    // a triple click on "First", in a box not being edited: the first click starts editing, the second takes the
+    // word, the third all the text, from the start of the first paragraph to the end of the last
+    const f2 = await caretAt('textbox', 2);
+    await page.mouse.click(f2.x + 1, f2.y, { clickCount: 3 });
+    expect(await editing()).toMatchObject({ anchor: { p: 0, offset: 0 }, caret: { p: 1, offset: 11 } });
+    const box = await boxOf('textbox');
+    expect(await highlight(box)).toBeGreaterThan(30);
+    // typing replaces all of it
+    await page.keyboard.type('X');
+    expect((await boxOf('textbox')).text).toBe('X');
+    expect(await editing()).toMatchObject({ anchor: { p: 0, offset: 1 }, caret: { p: 0, offset: 1 } });
+    await page.keyboard.press('Control+z');
+    expect((await boxOf('textbox')).text).toBe('First lineSecond line');
+
+    // a triple click on "Second", in the box being edited: the same selection, and Bold applies to both paragraphs
+    const s3 = await caretAt('textbox', 3, 1);
+    await page.mouse.click(s3.x + 1, s3.y, { clickCount: 3 });
+    expect(await editing()).toMatchObject({ anchor: { p: 0, offset: 0 }, caret: { p: 1, offset: 11 } });
+    await page.getByTestId('bold').click();
+    expect(await editing()).toMatchObject({ anchor: { p: 0, offset: 0 }, caret: { p: 1, offset: 11 } });
+    expect(await state<string[]>(`
+      const ps = s.text.el.children.find(c => c.local === 'txBody').children.filter(c => c.local === 'p');
+      return ps.map(p => p.children.filter(c => c.local === 'r').map(r => { const rPr = r.children.find(c => c.local === 'rPr'); const b = rPr && rPr.attrs.find(a => a.local === 'b'); return b ? b.value : '-'; }).join(','));`))
+      .toEqual(['1', '1']);
+    // Backspace clears the box
+    await page.keyboard.press('Backspace');
+    expect((await boxOf('textbox')).text).toBe('');
+    expect(await editing()).toMatchObject({ anchor: { p: 0, offset: 0 }, caret: { p: 0, offset: 0 } });
+    await page.keyboard.press('Control+z');
+    expect((await boxOf('textbox')).text).toBe('First lineSecond line');
+
+    // a click afterwards clears the selection: the caret goes to the click, in the second paragraph
+    const f2b = await caretAt('textbox', 2);
+    await page.mouse.click(f2b.x + 1, f2b.y, { clickCount: 3 });
+    expect(await editing()).toMatchObject({ anchor: { p: 0, offset: 0 }, caret: { p: 1, offset: 11 } });
+    const s3b = await caretAt('textbox', 3, 1);
+    await page.mouse.click(s3b.x + 1, s3b.y);
+    const e = await editing();
+    expect(e!.anchor).toEqual(e!.caret);
+    expect(e!.caret).toEqual({ p: 1, offset: 3 });
+    expect(await highlight(await boxOf('textbox'))).toBeLessThan(5);
+    await page.keyboard.press('Escape');
+    expect(errors).toEqual([]);
+  }, 90_000);
+
+  test('a hover outline shows on the shape a click would pick, and never on a selected shape, the box being edited, or empty slide', async () => {
+    await page.getByTestId('thumb-3').click();                // the slide whose title says Hello (the new slide went in before it)
+    await drawn();
+    expect((await boxOf('title')).text).toBe('Hello');
+    type Outline = { visible: boolean; x: number; y: number; w: number; h: number };
+    /** The hover outline in the top layer: whether it shows, and its box in slide units. */
+    const outline = () => page.evaluate(() => {
+      const st = (globalThis as unknown as { __stage: { findOne(sel: string): { visible(): boolean; x(): number; y(): number; width(): number; height(): number } | undefined } }).__stage;
+      const n = st.findOne('.hover-outline')!;
+      return { visible: n.visible(), x: n.x(), y: n.y(), w: n.width(), h: n.height() } as Outline;
+    });
+    /** A box's bounds on the slide (its corners through its transform), as the selection outline computes them. */
+    const boundsOnSlide = (which: string) => state<{ x: number; y: number; w: number; h: number }>(`${HELP}
+      const rs = find(${JSON.stringify(which)}); const m = rs.transform;
+      const pts = [[0, 0], [rs.box.w, 0], [rs.box.w, rs.box.h], [0, rs.box.h]].map(([u, v]) => [m[0] * u + m[2] * v + m[4], m[1] * u + m[3] * v + m[5]]);
+      const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]); const x = Math.min(...xs), y = Math.min(...ys);
+      return { x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y };`);
+    const cursor = () => page.evaluate(() => (globalThis as unknown as { __stage: { container(): HTMLElement } }).__stage.container().style.cursor);
+    const near = (o: Outline, b: { x: number; y: number; w: number; h: number }) =>
+      Math.abs(o.x - b.x) < 1 && Math.abs(o.y - b.y) < 1 && Math.abs(o.w - b.w) < 1 && Math.abs(o.h - b.h) < 1;
+
+    // over the empty slide: no outline, the arrow; over the title's text: the outline at the title's bounds, an I-beam
+    await page.mouse.move(empty.x, empty.y);
+    expect((await outline()).visible).toBe(false);
+    expect(await cursor()).toBe('');
+    const t2 = await caretAt('title', 2);
+    await page.mouse.move(t2.x + 1, t2.y);
+    const title = await boundsOnSlide('title');
+    let o = await outline();
+    expect(o.visible).toBe(true);
+    expect(near(o, title), `${JSON.stringify(o)} vs ${JSON.stringify(title)}`).toBe(true);
+    expect(await cursor()).toBe('text');
+    // back over the empty slide: it goes
+    await page.mouse.move(empty.x, empty.y);
+    expect((await outline()).visible).toBe(false);
+    expect(await cursor()).toBe('');
+
+    // one click on the title: editing starts, and the outline goes though the mouse is still over it
+    await page.mouse.click(t2.x + 1, t2.y);
+    expect((await editing())?.box).toBe((await boxOf('title')).name);
+    expect((await outline()).visible).toBe(false);
+    await page.mouse.move(t2.x + 20, t2.y);
+    expect((await outline()).visible).toBe(false);
+    expect(await cursor()).toBe('text');
+    // Escape leaves the title selected: no outline on a selected shape, off and on again; the cursor still says what
+    // a click does there: an I-beam on its text, a move cursor on its frame
+    await page.keyboard.press('Escape');
+    expect(await selected()).toBe(1);
+    await page.mouse.move(empty.x, empty.y);
+    await page.mouse.move(t2.x + 1, t2.y);
+    expect((await outline()).visible).toBe(false);
+    expect(await cursor()).toBe('text');
+    const tb = await boxOf('title');
+    await page.mouse.move(tb.x + tb.w / 4, tb.y);
+    expect(await cursor()).toBe('move');
+    // deselected, the outline is back; the body has one too, and only one shape at a time
+    await page.mouse.click(empty.x, empty.y);
+    expect(await selected()).toBe(0);
+    await page.mouse.move(t2.x + 1, t2.y);
+    o = await outline();
+    expect(o.visible).toBe(true);
+    expect(near(o, title)).toBe(true);
+    const b2 = await caretAt('body', 2);
+    await page.mouse.move(b2.x + 1, b2.y);
+    o = await outline();
+    expect(o.visible).toBe(true);
+    expect(near(o, await boundsOnSlide('body'))).toBe(true);
+    // the mouse leaving the slide takes it away
+    await page.mouse.move(5, 400);
+    expect((await outline()).visible).toBe(false);
+    expect(errors).toEqual([]);
+  }, 60_000);
 });

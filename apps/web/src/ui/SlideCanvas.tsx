@@ -7,9 +7,11 @@ import { ShapeView } from '@pptx/model';
 import { drawPrimitive, drawShape, drawSlide, shapeTextLayout, type RenderShape, type RenderSlide } from '@pptx/render';
 import type { XmlElement } from '@pptx/xml';
 import { session, useEditor } from '../state/store.ts';
-import { caretColour, caretRect, hit, wordAt, type TextView } from './caret.ts';
+import { caretColour, caretRect, clickPos, hit, onTextLine, samePos, wordAt, type TextView } from './caret.ts';
+import { keystrokeEnd } from './perf.ts';
 import { boundsOf, drawBase, parentOf, placementOf, restMatrix, xfrmFor, type Placement } from './placement.ts';
 import { promptOf } from './prompts.ts';
+import { selectAll } from './textActions.ts';
 import { TextInput } from './TextInput.tsx';
 import * as act from './actions.ts';
 
@@ -23,6 +25,10 @@ export const keyOf = (el: XmlElement) => {
 };
 
 const MARGIN = 32;
+/** How far the mouse moves, in screen pixels, before a press on a selected box drags it rather than clicks it. */
+const DRAG_PX = 4;
+/** The hit band around a shape's outline, in screen pixels (Konva's hitStrokeWidth, centred on the outline). */
+const BAND_PX = 8;
 
 /** Shapes the user can pick: the slide's own, or the members of the group entered. */
 function pickable(slide: RenderSlide, entered: XmlElement | null): RenderShape[] {
@@ -39,12 +45,40 @@ function pickable(slide: RenderSlide, entered: XmlElement | null): RenderShape[]
   return find(own)?.children ?? own;
 }
 
-/** The text being edited, laid out as drawn (also when empty), with the transform to the slide. */
-export function textViewOf(rs: RenderShape | undefined): (TextView & { transform: [number, number, number, number, number, number] }) | undefined {
+export type PlacedTextView = TextView & { transform: [number, number, number, number, number, number] };
+
+/**
+ * A shape's text laid out as drawn (also when empty), with the transform to the slide. The render tree already
+ * holds the layout of text that shows, so only an empty body is laid out here.
+ */
+export function textViewOf(rs: RenderShape | undefined): PlacedTextView | undefined {
   const s = session();
   if (!rs || !s || !rs.source?.text || !rs.source.view.txBody) return undefined;
+  for (let i = rs.prims.length - 1; i >= 0; i--) {
+    const prim = rs.prims[i]!;
+    if (prim.kind === 'text') return { txBody: rs.source.view.txBody, resolved: rs.source.text, layout: prim.layout, transform: prim.transform };
+  }
   const t = shapeTextLayout(rs.source, s.fonts);
   return t ? { txBody: rs.source.view.txBody, resolved: rs.source.text, layout: t.layout, transform: t.transform } : undefined;
+}
+
+/** A point of the slide in a text view's own coordinates. */
+function toText(v: PlacedTextView, at: { x: number; y: number }): { x: number; y: number } {
+  const inv = invertM(v.transform);
+  return { x: inv[0] * at.x + inv[2] * at.y + inv[4], y: inv[1] * at.x + inv[3] * at.y + inv[5] };
+}
+
+/**
+ * Whether a click at a point of the slide is on a shape's text, so it starts editing there rather than selecting the
+ * shape: on a line of its text (a little padded) for a filled shape; anywhere inside for a text box without fill
+ * (its hit area is its text already) or an empty placeholder (its prompt). A filled shape with no text is selected.
+ */
+function onText(rs: RenderShape, v: PlacedTextView, at: { x: number; y: number }, pad: number): boolean {
+  const hasText = v.layout.lines.some(l => l.runs.some(r => !r.bullet && r.end > r.start));
+  if (!hasText) return !!rs.source.placeholder || rs.source.fill.kind === 'none';
+  if (rs.source.fill.kind === 'none') return true;
+  const p = toText(v, at);
+  return onTextLine(v, p.x, p.y, pad);
 }
 
 /**
@@ -86,6 +120,22 @@ function findRendered(slide: RenderSlide, el: XmlElement): RenderShape | undefin
 
 interface Guide { x?: number; y?: number; }
 
+/**
+ * What a mouse-down on a shape started, until the mouse comes up. 'text': the mouse selects text in the box being
+ * edited as it moves (tracked on the window, so it goes on outside the box). 'click': the shape was selected; the
+ * mouse moving more than DRAG_PX before it comes up drags the shape, and a plain click on its text (`edit`) starts
+ * editing there when it comes up.
+ */
+interface Press {
+  kind: 'text' | 'click';
+  el: XmlElement;
+  rs: RenderShape;
+  node: Konva.Node;
+  down: MouseEvent;
+  at: { x: number; y: number };
+  edit: boolean;
+}
+
 export function SlideCanvas() {
   const sess = useEditor(s => s.session);
   const part = useEditor(s => s.slide);
@@ -103,6 +153,13 @@ export function SlideCanvas() {
   const [marquee, setMarquee] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   const [guides, setGuides] = useState<Guide[]>([]);
   const drag = useRef<{ starts: Map<string, { x: number; y: number }>; key: string } | null>(null);
+  const press = useRef<Press | null>(null);
+  const endPress = useRef<() => void>(() => undefined);
+  /** The mouse button is down in the text: the caret stays lit instead of blinking, as in other editors. */
+  const [holding, setHolding] = useState(false);
+  /** The shape under the mouse, and the outline drawn around it: kept out of React, so hovering re-renders nothing. */
+  const hovered = useRef<XmlElement | null>(null);
+  const hoverRef = useRef<Konva.Rect>(null);
 
   useLayoutEffect(() => {
     const el = host.current;
@@ -112,6 +169,10 @@ export function SlideCanvas() {
     setSize({ w: el.clientWidth, h: el.clientHeight });
     return () => ro.disconnect();
   }, []);
+
+  // a keystroke's cost is measured to here: the slide has been rendered and committed with the text it typed
+  useLayoutEffect(() => { keystrokeEnd(); });
+  useEffect(() => () => endPress.current(), []);
 
   const scene = sess && part ? sess.scenes.get(part) : undefined;
   const slide = scene?.slide;
@@ -146,12 +207,41 @@ export function SlideCanvas() {
     tr.getLayer()?.batchDraw();
   });
 
+  const rsOf = (el: XmlElement) => shapes.find(s => s.source.view.el === el);
+
+  /**
+   * The hover outline: around the shape under the mouse when a click there would pick it, so not while drawing a
+   * shape, dragging a selection rectangle or dragging a shape, and not on a selected shape or the box being edited.
+   * It is drawn straight into the top layer, which is all that redraws: no scene rebuild, no thumbnail, no render.
+   */
+  const showHover = () => {
+    const rect = hoverRef.current;
+    if (!rect) return;
+    const st = useEditor.getState();
+    const el = hovered.current;
+    const rs = el && !st.drawing && !marquee && !drag.current && !st.selection.includes(el) && st.text?.el !== el ? rsOf(el) : undefined;
+    if (!rs) {
+      if (rect.visible()) { rect.visible(false); rect.getLayer()?.batchDraw(); }
+      return;
+    }
+    const b = boundsOf(rs);
+    if (rect.visible() && rect.x() === b.x && rect.y() === b.y && rect.width() === b.w && rect.height() === b.h) return;
+    rect.setAttrs({ x: b.x, y: b.y, width: b.w, height: b.h, visible: true });
+    rect.getLayer()?.batchDraw();
+  };
+  // after every render: the hovered shape may have been selected, or editing may have started in it
+  useEffect(() => { showHover(); });
+
   if (!sess || !part || !slide) return <div ref={host} className="canvas-host empty">{sess ? 'This presentation has no slides.' : null}</div>;
   const ed = sess.ed;
 
   /** The pointer in slide coordinates (EMU). */
   const pointer = () => stageRef.current?.getRelativePointerPosition() ?? { x: 0, y: 0 };
-  const rsOf = (el: XmlElement) => shapes.find(s => s.source.view.el === el);
+  /** The mouse cursor over the slide says what a click would do: an I-beam on text, a move cursor on a grabbed box. */
+  const setCursor = (cursor: string) => {
+    const stage = stageRef.current;
+    if (stage && stage.container().style.cursor !== cursor) stage.container().style.cursor = cursor;
+  };
 
   const selectShape = (el: XmlElement, additive: boolean) => {
     const st = useEditor.getState();
@@ -161,16 +251,150 @@ export function SlideCanvas() {
     } else if (!st.selection.includes(el)) st.select([el]);
   };
 
+  /** The text position for a click at a point of the slide. */
+  const posAt = (v: PlacedTextView, at: { x: number; y: number }) => {
+    const p = toText(v, at);
+    return clickPos(v, p.x, p.y);
+  };
+
+  /** A box's text as it lays out now: its tree may have been rebuilt since the mouse went down on it. */
+  const viewNow = (el: XmlElement): PlacedTextView | undefined => {
+    const st = useEditor.getState();
+    const sc = st.session && st.slide ? st.session.scenes.get(st.slide) : undefined;
+    return sc ? textViewOf(findRendered(sc.slide, el)) : undefined;
+  };
+
   const startText = (rs: RenderShape, at?: { x: number; y: number }) => {
     const v = textViewOf(rs);
     if (!v) return;
-    let pos = { p: 0, offset: 0 };
-    if (at) {
-      const inv = invertM(v.transform);
-      pos = hit(v, inv[0] * at.x + inv[2] * at.y + inv[4], inv[1] * at.x + inv[3] * at.y + inv[5]);
-    }
+    const pos = at ? posAt(v, at) : { p: 0, offset: 0 };
     ed.log.seal();
     set({ text: { part, el: rs.source.view.el, caret: pos, anchor: pos }, selection: [rs.source.view.el], pending: null });
+  };
+
+  /** Track the mouse on the window until it comes up: outside the box, and outside the stage, as well as in it. */
+  const beginPress = (pr: Press) => {
+    endPress.current();
+    press.current = pr;
+    if (pr.kind === 'text') setHolding(true);
+    const move = (ev: MouseEvent) => {
+      const p = press.current, stage = stageRef.current;
+      if (!p || !stage) return;
+      if (p.kind === 'text') {
+        const t = useEditor.getState().text;
+        if (!t || t.el !== p.el) { endPress.current(); return; }
+        stage.setPointersPositions(ev);
+        const at = stage.getRelativePointerPosition();
+        const v = at ? viewNow(p.el) : undefined;
+        if (!at || !v) return;
+        const caret = posAt(v, at);
+        if (!samePos(caret, t.caret)) useEditor.setState({ text: { ...t, caret } });
+        return;
+      }
+      if (Math.abs(ev.clientX - p.down.clientX) <= DRAG_PX && Math.abs(ev.clientY - p.down.clientY) <= DRAG_PX) return;
+      // a drag: the shape (and the rest of the selection) follows the mouse from where it went down
+      endPress.current();
+      stage.setPointersPositions(p.down);
+      p.node.startDrag();
+    };
+    const up = () => {
+      const p = press.current;
+      endPress.current();
+      if (p?.kind === 'click' && p.edit) startText(p.rs, p.at);
+    };
+    endPress.current = () => {
+      press.current = null;
+      endPress.current = () => undefined;
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+      setHolding(false);
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  };
+
+  /**
+   * What is under the mouse on a shape: `v`, its text as laid out (a shape with a body); `onBand`, the band around
+   * its outline, which grabs the box (except where a line of text runs right up to the edge, in a box without
+   * insets: a press on the text is a press on the text); and `text`, whether a click there starts editing rather
+   * than selecting the shape (on a line of its text, or anywhere in a text box or an empty placeholder).
+   */
+  const probe = (rs: RenderShape, p: Placement, node: Konva.Node, at: { x: number; y: number }) => {
+    const local = node.getRelativePointerPosition() ?? { x: p.w / 2, y: p.h / 2 };
+    const v = rs.source.kind === 'sp' ? textViewOf(rs) : undefined;
+    const band = BAND_PX / 2 / zoom;
+    const outside = local.x < 0 || local.y < 0 || local.x > p.w || local.y > p.h;
+    const nearEdge = local.x < band || local.y < band || local.x > p.w - band || local.y > p.h - band;
+    const q = v ? toText(v, at) : undefined;
+    const onBand = outside || (nearEdge && !(v && q && onTextLine(v, q.x, q.y, 0)));
+    return { v, onBand, text: !!v && !onBand && onText(rs, v, at, band) };
+  };
+
+  /**
+   * The mouse goes down on a shape. As in Google Slides: one click on the text of a box puts the caret there and
+   * starts editing (an empty placeholder, at its start); in the box being edited the caret goes to the click, Shift
+   * extends the selection, a triple click selects all the text of the box, and the mouse held down selects text as
+   * it moves. The border band, a shape without text, or a box already selected but not being edited: the shape is
+   * selected, and the mouse moving before it comes up drags it. A plain click on text never moves a box.
+   */
+  const onShapeDown = (rs: RenderShape, p: Placement, e: Konva.KonvaEventObject<MouseEvent>) => {
+    if (useEditor.getState().drawing) return;          // drawing a new shape over this one
+    e.cancelBubble = true;
+    const el = rs.source.view.el;
+    const st = useEditor.getState();
+    const evt = e.evt;
+    const node = e.target;
+    if (evt.button !== 0) {
+      selectShape(el, false);
+      return;
+    }
+    const at = pointer();
+    const { v, onBand, text } = probe(rs, p, node, at);
+    const editingThis = st.text?.el === el;
+    if (v && !onBand && (editingThis || text) && evt.detail === 3) {
+      // the third click of a triple click: the first started editing, the second took the word, this takes the
+      // whole box (the browser counts clicks at the same spot; Konva's own double click fires for it but is ignored)
+      evt.preventDefault();
+      if (!editingThis) startText(rs, at);
+      selectAll();
+      return;
+    }
+    if (editingThis && v && !onBand) {
+      evt.preventDefault();                               // the text input keeps the focus
+      ed.log.seal();
+      const t = st.text!;
+      const pos = posAt(v, at);
+      set({ text: { ...t, caret: pos, anchor: evt.shiftKey ? t.anchor : pos }, pending: null });
+      beginPress({ kind: 'text', el, rs, node, down: evt, at, edit: false });
+      return;
+    }
+    if (evt.shiftKey || evt.metaKey || evt.ctrlKey) {
+      selectShape(el, true);                              // adds to or takes from the selection (editing ends)
+      return;
+    }
+    const selectedAlone = st.selection.includes(el) && !st.text;
+    if (text && !selectedAlone) {
+      evt.preventDefault();
+      startText(rs, at);
+      beginPress({ kind: 'text', el, rs, node, down: evt, at, edit: false });
+      return;
+    }
+    if (editingThis) {
+      ed.log.seal();
+      set({ text: null, selection: [el] });
+    } else selectShape(el, false);
+    beginPress({ kind: 'click', el, rs, node, down: evt, at, edit: text });
+  };
+
+  /** The mouse moves over a shape: the cursor says what a click there would do (nothing changes mid-press or drag). */
+  const onShapeMove = (rs: RenderShape, p: Placement, e: Konva.KonvaEventObject<MouseEvent>) => {
+    const st = useEditor.getState();
+    if (st.drawing || marquee || drag.current || press.current) return;
+    const el = rs.source.view.el;
+    const { onBand, text } = probe(rs, p, e.target, pointer());
+    const typing = !onBand && (st.text?.el === el || text);        // a click puts the caret here
+    const grabs = st.selection.includes(el) || st.text?.el === el;  // a press here takes hold of the box
+    setCursor(typing ? 'text' : grabs ? 'move' : '');
   };
 
   /** Snap the dragged node to slide and shape edges and centres, within a few screen pixels. */
@@ -260,8 +484,12 @@ export function SlideCanvas() {
       return;
     }
     if (e.target !== e.target.getStage() && e.target.name() !== 'underlay') return;
+    // empty slide, or the grey around it: text editing ends (its selection with it) and nothing is selected
     const st = useEditor.getState();
-    if (st.text) st.setState({ text: null });
+    if (st.text) {
+      st.session?.ed.log.seal();
+      st.setState({ text: null, pending: null });
+    }
     const p = pointer();
     setMarquee({ x0: p.x, y0: p.y, x1: p.x, y1: p.y });
     if (!e.evt.shiftKey) st.select([]);
@@ -319,6 +547,7 @@ export function SlideCanvas() {
       <Stage
         ref={stageRef} width={stageW} height={stageH} scaleX={zoom} scaleY={zoom} x={ox} y={oy}
         onMouseDown={onStageDown} onMouseMove={onStageMove} onMouseUp={onStageUp}
+        onMouseLeave={() => { hovered.current = null; showHover(); setCursor(''); }}
       >
         <Layer>
           <Shape
@@ -334,18 +563,19 @@ export function SlideCanvas() {
           {shapes.map(rs => {
             const el = rs.source.view.el;
             const p = placementOf(rs);
-            const selected = selection.includes(el);
             const editing = text?.el === el;
             const prompt = editing ? undefined : promptOf(ed, part, rs, sess.fonts);
-            // a shape without fill takes clicks on its text and its drawn outline only; the box being typed in, anywhere
-            const textOnly = editing ? undefined : textHitAreas(rs, p, 4 / zoom);
+            // a shape without fill takes clicks on its text and its drawn outline only; a selected box, or the box
+            // being typed in, anywhere (its frame can be grabbed to move it, as in PowerPoint)
+            const textOnly = editing || selection.includes(el) ? undefined : textHitAreas(rs, p, BAND_PX / 2 / zoom);
             const outlined = !!rs.source.line && rs.source.line.paint.kind !== 'none' && rs.source.line.width > 0;
             return (
               <Shape
                 key={keyOf(el)} id={keyOf(el)} x={p.x} y={p.y} width={p.w} height={p.h} offsetX={p.w / 2} offsetY={p.h / 2} rotation={p.rotation}
                 // the hit band around the outline is in screen pixels: strokes do not scale with the stage here
-                fill="#000" stroke="#000" strokeWidth={0} hitStrokeWidth={8} strokeScaleEnabled={false}
-                draggable={selected && !editing && !drawing}
+                fill="#000" stroke="#000" strokeWidth={0} hitStrokeWidth={BAND_PX} strokeScaleEnabled={false}
+                // drags start from the mouse handling above (the border band, or a selected box once the mouse moves)
+                draggable={false}
                 sceneFunc={ctx => {
                   const c = ctx._context as unknown as CanvasRenderingContext2D;
                   const base = drawBase(c.getTransform(), p, device);
@@ -384,23 +614,28 @@ export function SlideCanvas() {
                     ctx.strokeShape(shape);
                   }
                 }}
-                onMouseDown={e => {
-                  if (useEditor.getState().drawing) return;          // drawing a new shape over this one
-                  e.cancelBubble = true;
-                  if (useEditor.getState().text?.el === el) return;
-                  if (useEditor.getState().text) set({ text: null });
-                  selectShape(el, e.evt.shiftKey || e.evt.metaKey || e.evt.ctrlKey);
+                onMouseDown={e => onShapeDown(rs, p, e)}
+                onMouseEnter={() => { hovered.current = el; showHover(); }}
+                onMouseLeave={() => {
+                  if (hovered.current === el) { hovered.current = null; showHover(); }
+                  if (press.current?.kind !== 'text') setCursor('');        // selecting text goes on outside the box
                 }}
+                onMouseMove={e => onShapeMove(rs, p, e)}
                 onDblClick={e => {
                   e.cancelBubble = true;
+                  // Konva counts any two clicks within 400 ms as a double click, wherever they land, and the third
+                  // click of a triple click too; the browser's count (the same spot, quickly, the second time) is what
+                  // a double click means here: two clicks on different words are two clicks, a third is a triple click
+                  if (e.evt.detail !== 2) return;
                   if (rs.source.kind === 'grpSp') { set({ entered: el, selection: [] }); return; }
                   const at = pointer();
                   const v = textViewOf(rs);
                   if (!v) return;
                   if (useEditor.getState().text?.el === el) {
-                    const inv = invertM(v.transform);
-                    const w = wordAt(v, hit(v, inv[0] * at.x + inv[2] * at.y + inv[4], inv[1] * at.x + inv[3] * at.y + inv[5]));
-                    set({ text: { part, el, anchor: w.start, caret: w.end } });
+                    // the word under the double click
+                    const q = toText(v, at);
+                    const w = wordAt(v, hit(v, q.x, q.y));
+                    set({ text: { part, el, anchor: w.start, caret: w.end }, pending: null });
                   } else startText(rs, at);
                 }}
                 onDragStart={onDragStart(rs)} onDragMove={onDragMove} onDragEnd={onDragEnd()}
@@ -409,6 +644,8 @@ export function SlideCanvas() {
           })}
         </Layer>
         <Layer>
+          {/* the hover outline: one screen pixel, solid and light, unlike the dashed selection; placed by showHover */}
+          <Rect ref={hoverRef} visible={false} listening={false} name="hover-outline" stroke="#8ab4f8" strokeWidth={1 / zoom} />
           {selection.map(el => {
             const rs = rsOf(el);
             if (!rs) return null;
@@ -417,7 +654,7 @@ export function SlideCanvas() {
               ? <Rect key={`e${keyOf(el)}`} {...boundsRect(rs)} stroke="#2b6cb0" strokeWidth={1.5 / zoom} dash={[5 / zoom, 3 / zoom]} listening={false} name="editing-frame" />
               : <Rect key={`o${keyOf(el)}`} {...boundsRect(rs)} stroke="#2b6cb0" strokeWidth={1 / zoom} dash={[3 / zoom, 2 / zoom]} listening={false} />;
           })}
-          {tv && text && <TextOverlay view={tv} caret={text.caret} anchor={text.anchor} zoom={zoom} />}
+          {tv && text && <TextOverlay view={tv} caret={text.caret} anchor={text.anchor} zoom={zoom} steady={holding} />}
           <Transformer
             ref={trRef} rotationSnaps={[0, 90, 180, 270]} flipEnabled={false} ignoreStroke anchorSize={8} borderStroke="#2b6cb0" anchorStroke="#2b6cb0"
             onTransformEnd={onTransformEnd}
@@ -446,14 +683,21 @@ export function invertM(m: readonly number[]): [number, number, number, number, 
   return [d / det, -b / det, -c / det, a / det, (c * f - d * e) / det, (b * e - a * f) / det];
 }
 
-/** The caret and the selection highlight, drawn in the text box's own coordinates. */
-function TextOverlay({ view, caret, anchor, zoom }: { view: TextView & { transform: number[] }; caret: { p: number; offset: number }; anchor: { p: number; offset: number }; zoom: number }) {
+/**
+ * The caret and the selection highlight, drawn in the text box's own coordinates, from the editing state alone
+ * (the caret and the anchor): the layer redraws in the frame the state changes. With the mouse button down in the
+ * text (`steady`) the caret stays lit.
+ */
+function TextOverlay({ view, caret, anchor, zoom, steady }: {
+  view: TextView & { transform: number[] }; caret: { p: number; offset: number }; anchor: { p: number; offset: number }; zoom: number; steady: boolean;
+}) {
   const [blink, setBlink] = useState(true);
   useEffect(() => {
     setBlink(true);
+    if (steady) return undefined;
     const t = setInterval(() => setBlink(b => !b), 530);
     return () => clearInterval(t);
-  }, [caret.p, caret.offset]);
+  }, [caret.p, caret.offset, steady]);
   const m = view.transform;
   return (
     <Shape
@@ -477,7 +721,11 @@ function TextOverlay({ view, caret, anchor, zoom }: { view: TextView & { transfo
   );
 }
 
-/** Highlight rectangles for a text selection, one per line it touches. */
+/**
+ * Highlight rectangles for a text selection, one per line it touches: from the caret at its start to the caret at
+ * its end, whole lines in between (after the bullet, wherever the line is aligned), and a small mark for an empty
+ * paragraph inside it.
+ */
 function selectionRects(v: TextView, a: { p: number; offset: number }, b: { p: number; offset: number }) {
   const [s, e] = a.p < b.p || (a.p === b.p && a.offset <= b.offset) ? [a, b] : [b, a];
   if (s.p === e.p && s.offset === e.offset) return [];
@@ -492,7 +740,9 @@ function selectionRects(v: TextView, a: { p: number; offset: number }, b: { p: n
     const endsHere = line.paragraph === e.p && le.top === top;
     if (line.paragraph === s.p && !startsHere && ls.top > top) continue;
     if (line.paragraph === e.p && !endsHere && le.top < top) continue;
-    const x0 = startsHere ? ls.x : lineStart, x1 = endsHere ? le.x : lineEnd + (line.paragraph < e.p ? 4 : 0);
+    const x0 = startsHere ? ls.x : lineStart;
+    let x1 = endsHere ? le.x : lineEnd;
+    if (x1 - x0 < 1 && line.paragraph < e.p) x1 = x0 + height / 4;     // an empty paragraph, or the end of one, inside the selection
     if (x1 > x0) rects.push({ x: x0, top, w: x1 - x0, height });
   }
   return rects;

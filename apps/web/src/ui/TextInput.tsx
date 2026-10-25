@@ -1,10 +1,10 @@
 // apps/web/src/ui/TextInput.tsx  -- keyboard and IME input while editing text, through a hidden textarea
 import type Konva from 'konva';
 import { useLayoutEffect, useRef, type RefObject } from 'react';
-import { paragraphLength, paragraphs } from '@pptx/editor-core';
 import { useEditor } from '../state/store.ts';
 import { caretRect, move, type Move, type TextView } from './caret.ts';
-import { deleteChars, formatPara, formatText, formattingHere, typeChars } from './textActions.ts';
+import { keystrokeStart } from './perf.ts';
+import { deleteChars, formatPara, formatText, formattingHere, selectAll, typeChars } from './textActions.ts';
 
 /**
  * Text input goes to a textarea kept under the caret (how browser editors take IME composition and mobile
@@ -16,7 +16,7 @@ export function TextInput({ view, stage, zoom }: { view: TextView & { transform:
   const goalX = useRef<number | undefined>(undefined);
   const composing = useRef(false);
 
-  // focused as soon as it is in the page, before the browser paints: keys typed right after a double-click land here
+  // focused as soon as it is in the page, before the browser paints: keys typed right after the click land here
   useLayoutEffect(() => { ref.current?.focus({ preventScroll: true }); }, [text.el]);
 
   // keep the textarea under the caret, so the IME's candidate window opens there
@@ -65,12 +65,15 @@ export function TextInput({ view, stage, zoom }: { view: TextView & { transform:
     goalX.current = undefined;
     if (e.key === 'Backspace' || e.key === 'Delete') {
       e.preventDefault();
+      keystrokeStart();
       deleteChars(e.key === 'Backspace' ? 'back' : 'forward');
     } else if (e.key === 'Enter') {
       e.preventDefault();
+      keystrokeStart();
       typeChars(e.shiftKey ? '\u000b' : '\n');
     } else if (e.key === 'Tab') {
       e.preventDefault();
+      keystrokeStart();
       const lvl = formattingHere().para?.props.level ?? 0;
       const bulleted = !!formattingHere().para?.props.bullet;
       if (bulleted || e.shiftKey) formatPara({ lvl: Math.max(0, Math.min(8, lvl + (e.shiftKey ? -1 : 1))) }, e.shiftKey ? 'Decrease Indent' : 'Increase Indent');
@@ -81,8 +84,7 @@ export function TextInput({ view, stage, zoom }: { view: TextView & { transform:
       useEditor.setState({ text: null, selection: [t.el] });
     } else if (mod && e.key.toLowerCase() === 'a') {
       e.preventDefault();
-      const ps = paragraphs(view.txBody);
-      useEditor.setState({ text: { ...t, anchor: { p: 0, offset: 0 }, caret: { p: ps.length - 1, offset: paragraphLength(ps[ps.length - 1]!) } } });
+      selectAll();
     } else if (mod && ['b', 'i', 'u'].includes(e.key.toLowerCase())) {
       e.preventDefault();
       const run = formattingHere().run;
@@ -108,7 +110,9 @@ export function TextInput({ view, stage, zoom }: { view: TextView & { transform:
   const flush = (el: HTMLTextAreaElement) => {
     const v = el.value;
     el.value = '';
-    if (v) typeChars(v.replace(/\r\n|\r/g, '\n'));
+    if (!v) return;
+    keystrokeStart();
+    typeChars(v.replace(/\r\n|\r/g, '\n'));
   };
 
   return (

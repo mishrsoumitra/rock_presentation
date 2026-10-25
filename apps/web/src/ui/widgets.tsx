@@ -20,6 +20,18 @@ const PATHS: Record<string, string> = {
   lock: 'M6 11h12v10H6zM8 11V7a4 4 0 0 1 8 0v4', anim: 'M4 12h4l3-7 3 14 3-7h3', layout: 'M3 4h18v16H3zM3 9h18M9 9v11',
 };
 
+/**
+ * Ribbon controls keep the focus where it is: a mouse-down on a button must not blur the text input, so the text
+ * selection the command applies to stays, and typing goes on in the box afterwards (as in PowerPoint's ribbon).
+ */
+export const keepFocus = (e: React.MouseEvent) => e.preventDefault();
+
+/** Put the focus back in the text being edited, after a control that had to take it (a select). */
+export function refocusText(): void {
+  const el = document.querySelector<HTMLTextAreaElement>('.text-input');
+  if (el && document.activeElement !== el) el.focus({ preventScroll: true });
+}
+
 export function Icon({ name, size = 16 }: { name: string; size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -30,7 +42,7 @@ export function Icon({ name, size = 16 }: { name: string; size?: number }) {
 
 export function Btn({ icon, label, onClick, active, disabled, wide, testid }: { icon?: string; label: string; onClick?: () => void; active?: boolean; disabled?: boolean; wide?: boolean; testid?: string }) {
   return (
-    <button type="button" className={`btn${active ? ' active' : ''}${wide ? ' wide' : ''}`} title={label} aria-label={label} aria-pressed={active} disabled={disabled} onClick={onClick} data-testid={testid}>
+    <button type="button" className={`btn${active ? ' active' : ''}${wide ? ' wide' : ''}`} title={label} aria-label={label} aria-pressed={active} disabled={disabled} onClick={onClick} onMouseDown={keepFocus} data-testid={testid}>
       {icon && <Icon name={icon} />}
       {(wide || !icon) && <span>{label}</span>}
     </button>
@@ -49,7 +61,7 @@ export function Menu({ icon, label, children, wide = true, testid }: { icon?: st
   }, [open]);
   return (
     <div className="menu" ref={ref}>
-      <button type="button" className={`btn${wide ? ' wide' : ''}`} aria-haspopup="true" aria-expanded={open} title={label} onClick={() => setOpen(o => !o)} data-testid={testid}>
+      <button type="button" className={`btn${wide ? ' wide' : ''}`} aria-haspopup="true" aria-expanded={open} title={label} onClick={() => setOpen(o => !o)} onMouseDown={keepFocus} data-testid={testid}>
         {icon && <Icon name={icon} />}{wide && <span>{label}</span>}<span className="caret">▾</span>
       </button>
       {open && <div className="menu-panel" role="menu">{children(() => setOpen(false))}</div>}
@@ -58,7 +70,7 @@ export function Menu({ icon, label, children, wide = true, testid }: { icon?: st
 }
 
 export function MenuItem({ label, onClick, disabled }: { label: string; onClick: () => void; disabled?: boolean }) {
-  return <button type="button" role="menuitem" className="menu-item" disabled={disabled} onClick={onClick}>{label}</button>;
+  return <button type="button" role="menuitem" className="menu-item" disabled={disabled} onClick={onClick} onMouseDown={keepFocus}>{label}</button>;
 }
 
 /** The theme colour picker: the slide's theme colours with PowerPoint's tints and shades, then standard colours. */
@@ -71,19 +83,19 @@ export function ColorGrid({ onPick, extra }: { onPick: (c: ColorSpec | 'none' | 
     <div className="colors">
       <div className="colors-title">Theme Colors</div>
       <div className="colors-grid">
-        {cols.map(c => <button key={c.slot} type="button" className="swatch" style={{ background: c.base.hex }} title={c.base.label} onClick={() => onPick(c.base.color)} />)}
+        {cols.map(c => <button key={c.slot} type="button" className="swatch" style={{ background: c.base.hex }} title={c.base.label} onClick={() => onPick(c.base.color)} onMouseDown={keepFocus} />)}
       </div>
       {[0, 1, 2, 3, 4].map(row => (
         <div key={row} className="colors-grid tight">
           {cols.map(c => {
             const v = c.variants[row]!;
-            return <button key={c.slot} type="button" className="swatch" style={{ background: v.hex }} title={v.label} onClick={() => onPick(v.color)} />;
+            return <button key={c.slot} type="button" className="swatch" style={{ background: v.hex }} title={v.label} onClick={() => onPick(v.color)} onMouseDown={keepFocus} />;
           })}
         </div>
       ))}
       <div className="colors-title">Standard Colors</div>
       <div className="colors-grid">
-        {STANDARD_COLORS.map(c => <button key={c.hex} type="button" className="swatch" style={{ background: c.hex }} title={c.label} onClick={() => onPick(c.color)} />)}
+        {STANDARD_COLORS.map(c => <button key={c.hex} type="button" className="swatch" style={{ background: c.hex }} title={c.label} onClick={() => onPick(c.color)} onMouseDown={keepFocus} />)}
       </div>
       {extra}
     </div>
@@ -148,7 +160,7 @@ export function ShapeGallery({ onPick }: { onPick: (prst: string) => void }) {
         <div key={title}>
           <div className="colors-title">{title}</div>
           <div className="gallery-grid">
-            {names.map(n => <button key={n} type="button" className="gallery-item" title={n} aria-label={n} data-prst={n} onClick={() => onPick(n)}><PresetIcon prst={n} /></button>)}
+            {names.map(n => <button key={n} type="button" className="gallery-item" title={n} aria-label={n} data-prst={n} onClick={() => onPick(n)} onMouseDown={keepFocus}><PresetIcon prst={n} /></button>)}
           </div>
         </div>
       ))}

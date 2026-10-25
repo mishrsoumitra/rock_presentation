@@ -55,8 +55,8 @@ corepack pnpm test:decks
 
 For every deck, in headless Chromium, the test checks that:
 - the slide panel keeps the current slide in view while you go through it with the arrow keys, Home and End;
-- every text box on every slide starts editing in that box when its text is double-clicked, and shows the
-  editing frame;
+- every text box on every slide starts editing in that box with one click on its text, and shows the editing
+  frame;
 - the caret stands out against the slide (checked on one box per slide);
 - typing and Backspace work in every box;
 - the deck saves and opens again with the same text.

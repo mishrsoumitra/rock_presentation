@@ -1,9 +1,9 @@
 // apps/web/src/ui/Ribbon.tsx  -- the commands, in tabs as PowerPoint arranges them
 import { useRef, useState } from 'react';
-import { useEditor } from '../state/store.ts';
+import { useEditor, type EditorState } from '../state/store.ts';
 import * as act from './actions.ts';
 import { formatPara, formatText, formattingHere } from './textActions.ts';
-import { Btn, ColorGrid, Menu, MenuItem, ShapeGallery } from './widgets.tsx';
+import { Btn, ColorGrid, keepFocus, Menu, MenuItem, refocusText, ShapeGallery } from './widgets.tsx';
 
 const FONTS = ['Calibri', 'Calibri Light', 'Cambria', 'Arial', 'Times New Roman', 'Courier New', 'Aptos', 'Georgia', 'Verdana', 'Segoe UI'];
 const SIZES = [8, 9, 10, 10.5, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 40, 44, 48, 54, 60, 66, 72, 80, 88, 96];
@@ -27,12 +27,26 @@ function LayoutMenu({ label, icon, onPick, testid }: { label: string; icon: stri
   );
 }
 
+/**
+ * Everything the ribbon shows, as one string: it renders its hundred-odd controls again only when this changes,
+ * not on every keystroke (a change the keystroke makes to the formatting at the caret, or to the undo label, shows).
+ */
+function shown(s: EditorState): string {
+  const log = s.session?.ed.log;
+  const here = formattingHere();
+  const run = here.run, para = here.para?.props;
+  return [
+    s.session?.name, s.session?.password ? 'pw' : '', log?.canUndo, log?.undoLabel, log?.canRedo, log?.redoLabel, !!s.clipboard,
+    s.selection.length, s.selection[0]?.local, !!s.text,
+    run?.latin, run?.size, run?.bold, run?.italic, run?.underline, run?.strike, para?.bullet?.kind, para?.level, para?.align,
+  ].join('|');
+}
+
 export function Ribbon({ extraTabs }: { extraTabs?: Partial<Record<Tab, React.ReactNode>> }) {
   const [tab, setTab] = useState<Tab>('Home');
   const session = useEditor(s => s.session);
-  useEditor(s => s.version);
-  useEditor(s => s.text);
-  const selection = useEditor(s => s.selection);
+  useEditor(shown);
+  const selection = useEditor.getState().selection;
   const log = session?.ed.log;
   const here = formattingHere();
   const run = here.run;
@@ -44,7 +58,7 @@ export function Ribbon({ extraTabs }: { extraTabs?: Partial<Record<Tab, React.Re
   return (
     <header className="ribbon">
       <nav className="tabs" role="tablist">
-        {tabs.map(t => <button key={t} type="button" role="tab" aria-selected={tab === t} className={tab === t ? 'tab active' : 'tab'} onClick={() => setTab(t)}>{t}</button>)}
+        {tabs.map(t => <button key={t} type="button" role="tab" aria-selected={tab === t} className={tab === t ? 'tab active' : 'tab'} onClick={() => setTab(t)} onMouseDown={keepFocus}>{t}</button>)}
         <span className="doc-name">{session?.name ?? ''}</span>
       </nav>
       <div className="groups" role="toolbar">
@@ -74,11 +88,11 @@ export function Ribbon({ extraTabs }: { extraTabs?: Partial<Record<Tab, React.Re
               <LayoutMenu icon="layout" label="Layout" onPick={act.layoutCurrentSlide} />
             </section>
             <section className="group" aria-label="Font">
-              <select aria-label="Font" value={run?.latin ?? ''} onChange={e => formatText({ latin: e.target.value }, 'Font')} disabled={!session}>
+              <select aria-label="Font" value={run?.latin ?? ''} onChange={e => { formatText({ latin: e.target.value }, 'Font'); refocusText(); }} disabled={!session}>
                 {!run && <option value="" />}
                 {[...new Set([run?.latin ?? '', ...FONTS])].filter(Boolean).map(f => <option key={f}>{f}</option>)}
               </select>
-              <select aria-label="Font size" value={run ? String(run.size) : ''} onChange={e => formatText({ sz: Math.round(Number(e.target.value) * 100) }, 'Font Size')} disabled={!session} data-testid="font-size">
+              <select aria-label="Font size" value={run ? String(run.size) : ''} onChange={e => { formatText({ sz: Math.round(Number(e.target.value) * 100) }, 'Font Size'); refocusText(); }} disabled={!session} data-testid="font-size">
                 {!run && <option value="" />}
                 {[...new Set([...(run ? [run.size] : []), ...SIZES])].sort((a, b) => a - b).map(sz => <option key={sz} value={String(sz)}>{sz}</option>)}
               </select>

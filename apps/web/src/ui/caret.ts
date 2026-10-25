@@ -51,6 +51,27 @@ export function hit(v: TextView, x: number, y: number): TextPos {
   return toModel(v, r.paragraph, r.offset);
 }
 
+/**
+ * Where a click at a point of the text box puts the caret: the nearest position on the line under it, and, for a
+ * click in the empty space below the last line, the end of that line (as in Google Slides).
+ */
+export function clickPos(v: TextView, x: number, y: number): TextPos {
+  const last = v.layout.lines[v.layout.lines.length - 1];
+  if (last && y > last.top + last.height) return toModel(v, last.paragraph, last.end);
+  return hit(v, x, y);
+}
+
+/** Whether a point of the text box is on one of its lines of text (a little padded), rather than empty space. */
+export function onTextLine(v: TextView, x: number, y: number, pad: number): boolean {
+  for (const line of v.layout.lines) {
+    const runs = line.runs.filter(r => !r.bullet);
+    if (!runs.length) continue;
+    const x0 = Math.min(...runs.map(g => g.x)) - pad, x1 = Math.max(...runs.map(g => g.x + g.advance)) + pad;
+    if (x >= x0 && x <= x1 && y >= line.top - pad && y <= line.top + line.height + pad) return true;
+  }
+  return false;
+}
+
 export type Move = 'left' | 'right' | 'up' | 'down' | 'home' | 'end' | 'start' | 'finish' | 'wordLeft' | 'wordRight';
 
 const isWord = (ch: string | undefined) => !!ch && /[\p{L}\p{N}_]/u.test(ch);

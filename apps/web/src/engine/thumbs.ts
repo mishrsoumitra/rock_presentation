@@ -8,9 +8,16 @@ import type { ThumbMessage } from './thumbs.render.ts';
  * Thumbnails rendered off the main thread. The worker opens its own copy of the deck; after every change the parts
  * that changed (and their relationships), the parts added and the parts removed are sent over, so the worker's
  * copy draws what the editor shows. A slide's thumbnail is cached until its scene key changes.
+ *
+ * While the user types, the changed slide is not sent on every keystroke (serializing it is main-thread work and
+ * the worker would redraw the thumbnail each time): it goes 300 ms after the last keystroke, or at once when the
+ * slide changes, on undo and redo, or when editing ends. A slide whose latest change has not been sent yet is
+ * `pending`: its thumbnail waits rather than showing a stale drawing under a fresh key.
  */
 /** A thumbnail not drawn in this time means the worker is stuck (a hostile picture): it is replaced. */
 const WATCHDOG_MS = 30_000;
+/** How long after the last keystroke the slide being typed in reaches the worker. */
+export const TYPING_SYNC_MS = 300;
 
 export class Thumbnails {
   private worker!: Worker;
@@ -20,14 +27,18 @@ export class Thumbnails {
   private next = 1;
   private readonly waiting = new Map<number, { resolve: (b: ImageBitmap | undefined) => void; timer: ReturnType<typeof setTimeout> }>();
   private readonly cache = new Map<string, { key: string; bitmap: Promise<ImageBitmap | undefined> }>();
+  private readonly pending = new Set<string>();
+  private timer: ReturnType<typeof setTimeout> | undefined;
 
   /** Bumped when the worker is replaced, so thumbnails drawn by the old one are asked for again. */
   generation = 0;
-  private readonly restarted: () => void;
+  /** Bumped when changes that waited are sent, so thumbnails that waited for them are asked for. */
+  synced = 0;
+  private readonly changed: () => void;
 
-  constructor(ed: Editor, zip: Uint8Array, restarted: () => void = () => undefined) {
+  constructor(ed: Editor, zip: Uint8Array, changed: () => void = () => undefined) {
     this.ed = ed;
-    this.restarted = restarted;
+    this.changed = changed;
     this.names = new Set();
     this.start(zip);
   }
@@ -59,20 +70,25 @@ export class Thumbnails {
     }
     this.waiting.clear();
     this.cache.clear();
+    this.pending.clear();
     this.start(this.ed.pkg.save());
     this.generation++;
-    this.restarted();
+    this.changed();
   }
 
   private post(m: ThumbMessage, transfer: Transferable[] = []): void { this.worker.postMessage(m, transfer); }
 
   /** Send the worker what changed: the parts a command touched, their relationships, and added or removed parts. */
   sync(parts: readonly string[]): void {
+    clearTimeout(this.timer);
+    this.timer = undefined;
+    const all = [...this.pending, ...parts];
+    this.pending.clear();
     const pkg = this.ed.pkg;
     const now = new Set(pkg.partNames());
     const removed = [...this.names].filter(n => !now.has(n));
     const changed = new Set<string>();
-    for (const p of parts) {
+    for (const p of all) {
       if (now.has(p)) changed.add(p);
       const rels = relsNameFor(p);
       if (now.has(rels)) changed.add(rels);
@@ -89,6 +105,24 @@ export class Thumbnails {
     for (const n of removed) this.bytesOf.delete(n);
     this.post({ type: 'update', removed, parts: out });
   }
+
+  /** Changes to send after a pause: the slide being typed in follows the keystrokes, not each one. */
+  syncLater(parts: readonly string[], delay = TYPING_SYNC_MS): void {
+    for (const p of parts) this.pending.add(p);
+    clearTimeout(this.timer);
+    this.timer = setTimeout(() => this.flush(), delay);
+  }
+
+  /** Send what waits now (the slide changed, undo, redo, editing ended). */
+  flush(): void {
+    if (!this.pending.size) return;
+    this.sync([]);
+    this.synced++;
+    this.changed();
+  }
+
+  /** Whether a part's latest change has not reached the worker yet: its thumbnail would be stale. */
+  isPending(part: string): boolean { return this.pending.has(part); }
 
   /** A slide's thumbnail for a scene key (see SceneCache.key): rendered once per key. */
   get(part: string, key: string, width: number): Promise<ImageBitmap | undefined> {
@@ -107,5 +141,8 @@ export class Thumbnails {
     return bitmap;
   }
 
-  dispose(): void { this.worker.terminate(); }
+  dispose(): void {
+    clearTimeout(this.timer);
+    this.worker.terminate();
+  }
 }

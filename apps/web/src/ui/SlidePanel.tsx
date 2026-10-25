@@ -1,22 +1,29 @@
 // apps/web/src/ui/SlidePanel.tsx  -- slide thumbnails: pick, reorder by dragging, delete and duplicate
-import { useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import { ANIM_UNDERSTOOD } from '@pptx/anim';
 import { useEditor } from '../state/store.ts';
 import { deleteCurrentSlide, duplicateCurrentSlide, moveCurrentSlide } from './actions.ts';
 
 const THUMB = 168;
 
-/** One thumbnail, rendered by the worker when it scrolls into view and again when its slide changes. */
-function Thumb({ part, index, hidden, animated }: { part: string; index: number; hidden: boolean; animated: boolean }) {
+/**
+ * One thumbnail, rendered by the worker when it scrolls into view and again when its slide changes. It re-renders
+ * when its own scene key moves (its slide, layout, master, theme or the presentation), not on every change anywhere.
+ */
+const Thumb = memo(function Thumb({ part, index }: { part: string; index: number }) {
   const session = useEditor(s => s.session)!;
   const current = useEditor(s => s.slide === part);
-  useEditor(s => s.version);
+  const key = useEditor(s => (s.session ? s.session.scenes.key(part) : ''));
+  const synced = useEditor(s => s.session?.thumbs.synced ?? 0);
+  const generation = useEditor(s => s.session?.thumbs.generation ?? 0);
   const ref = useRef<HTMLCanvasElement>(null);
   const [visible, setVisible] = useState(false);
   const host = useRef<HTMLDivElement>(null);
-  const key = session.scenes.key(part);
   const size = session.ed.doc.presentation.slideSize;
   const h = Math.round((THUMB * size.cy) / size.cx);
+  // (a slide just deleted may still be asked before the panel drops its thumbnail)
+  const v = session.ed.pkg.getPart(part) ? session.ed.doc.slide(part) : undefined;
+  const hidden = v?.hidden ?? false, animated = !!v && (!!v.timing || !!v.transition(ANIM_UNDERSTOOD));
 
   useEffect(() => {
     const el = host.current;
@@ -32,7 +39,8 @@ function Thumb({ part, index, hidden, animated }: { part: string; index: number;
   }, [current]);
 
   useEffect(() => {
-    if (!visible) return;
+    // the slide being typed in is sent to the worker after a pause: until then its thumbnail would be stale
+    if (!visible || session.thumbs.isPending(part)) return;
     let live = true;
     const ratio = window.devicePixelRatio || 1;
     session.thumbs.get(part, key, Math.round(THUMB * ratio)).then(bmp => {
@@ -43,7 +51,7 @@ function Thumb({ part, index, hidden, animated }: { part: string; index: number;
       c.getContext('2d')!.drawImage(bmp, 0, 0);
     });
     return () => { live = false; };
-  }, [visible, key, part, session, session.thumbs.generation]);
+  }, [visible, key, part, session, generation, synced]);
 
   return (
     <div
@@ -63,11 +71,12 @@ function Thumb({ part, index, hidden, animated }: { part: string; index: number;
       <canvas ref={ref} style={{ width: THUMB, height: h }} aria-label={`Slide ${index + 1}`} />
     </div>
   );
-}
+});
 
 export function SlidePanel() {
   const session = useEditor(s => s.session);
-  useEditor(s => s.version);
+  // the list of slides changes with the presentation part (slides added, removed, moved), not with their content
+  useEditor(s => (s.session ? s.session.ed.versionOf(s.session.ed.doc.mainPart) : -1));
   if (!session) return <aside className="slides" />;
   const doc = session.ed.doc;
   const parts = doc.slideParts();
@@ -86,10 +95,7 @@ export function SlidePanel() {
         }
       }}
     >
-      {parts.map((p, i) => {
-        const v = doc.slide(p);
-        return <Thumb key={p} part={p} index={i} hidden={v.hidden} animated={!!v.timing || !!v.transition(ANIM_UNDERSTOOD)} />;
-      })}
+      {parts.map((p, i) => <Thumb key={p} part={p} index={i} />)}
     </aside>
   );
 }
