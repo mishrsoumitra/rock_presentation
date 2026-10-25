@@ -26,6 +26,11 @@ function Thumb({ part, index, hidden, animated }: { part: string; index: number;
     return () => io.disconnect();
   }, []);
 
+  // the current slide stays in view however it became current: arrow keys, Page Down on the slide, a new slide
+  useEffect(() => {
+    if (current) host.current?.scrollIntoView({ block: 'nearest' });
+  }, [current]);
+
   useEffect(() => {
     if (!visible) return;
     let live = true;
@@ -72,10 +77,11 @@ export function SlidePanel() {
       onKeyDown={e => {
         if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteCurrentSlide(); }
         else if ((e.metaKey || e.ctrlKey) && e.key === 'd') { e.preventDefault(); duplicateCurrentSlide(); }
-        else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        else if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Home' || e.key === 'End') {
           e.preventDefault();
           const i = parts.indexOf(useEditor.getState().slide ?? '');
-          const next = parts[Math.max(0, Math.min(parts.length - 1, i + (e.key === 'ArrowDown' ? 1 : -1)))];
+          const to = e.key === 'Home' ? 0 : e.key === 'End' ? parts.length - 1 : i + (e.key === 'ArrowDown' ? 1 : -1);
+          const next = parts[Math.max(0, Math.min(parts.length - 1, to))];
           if (next) useEditor.getState().setSlide(next);
         }
       }}

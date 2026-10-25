@@ -9,6 +9,7 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:decks": "TEST_DECKS=1 vitest run tools/render/decks.test.ts",
     "typecheck": "tsc -p tsconfig.src.json && tsc -p tsconfig.json && tsc -p apps/web/tsconfig.json && tsc -p apps/server/tsconfig.json",
     "check": "tsc -p tsconfig.src.json && tsc -p tsconfig.json && tsc -p apps/web/tsconfig.json && tsc -p apps/server/tsconfig.json && vitest run",
     "corpus:fetch": "sh tools/corpus/fetch.sh",

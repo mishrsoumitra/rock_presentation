@@ -7,8 +7,8 @@ import { ShapeView } from '@pptx/model';
 import { drawPrimitive, drawShape, drawSlide, shapeTextLayout, type RenderShape, type RenderSlide } from '@pptx/render';
 import type { XmlElement } from '@pptx/xml';
 import { session, useEditor } from '../state/store.ts';
-import { caretRect, hit, wordAt, type TextView } from './caret.ts';
-import { boundsOf, drawBase, parentOf, placementOf, xfrmFor, type Placement } from './placement.ts';
+import { caretColour, caretRect, hit, wordAt, type TextView } from './caret.ts';
+import { boundsOf, drawBase, parentOf, placementOf, restMatrix, xfrmFor, type Placement } from './placement.ts';
 import { promptOf } from './prompts.ts';
 import { TextInput } from './TextInput.tsx';
 import * as act from './actions.ts';
@@ -45,6 +45,31 @@ export function textViewOf(rs: RenderShape | undefined): (TextView & { transform
   if (!rs || !s || !rs.source?.text || !rs.source.view.txBody) return undefined;
   const t = shapeTextLayout(rs.source, s.fonts);
   return t ? { txBody: rs.source.view.txBody, resolved: rs.source.text, layout: t.layout, transform: t.transform } : undefined;
+}
+
+/**
+ * Where a shape without fill can be clicked, besides its drawn outline: the lines of its text, a little padded, in its
+ * node's coordinates (its unrotated box). As in PowerPoint, clicks on its empty inside reach the shapes underneath,
+ * so text boxes that overlap can each be clicked where their text is. Undefined when the whole box takes clicks:
+ * filled shapes, pictures, tables, charts and groups, and shapes with no text (which could not be picked otherwise).
+ */
+function textHitAreas(rs: RenderShape, p: Placement, pad: number): number[][] | undefined {
+  if (rs.source.kind !== 'sp' || rs.source.fill.kind !== 'none') return undefined;
+  const t = rs.prims.find(q => q.kind === 'text');
+  if (!t || t.kind !== 'text') return undefined;
+  const inv = invertM(restMatrix(p));
+  const m = t.transform;
+  const areas: number[][] = [];
+  for (const line of t.layout.lines) {
+    if (!line.runs.length) continue;
+    const x0 = Math.min(...line.runs.map(g => g.x)) - pad, x1 = Math.max(...line.runs.map(g => g.x + g.advance)) + pad;
+    const y0 = line.top - pad, y1 = line.top + line.height + pad;
+    areas.push([[x0, y0], [x1, y0], [x1, y1], [x0, y1]].flatMap(([u, v]) => {
+      const x = m[0] * u! + m[2] * v! + m[4], y = m[1] * u! + m[3] * v! + m[5];
+      return [inv[0] * x + inv[2] * y + inv[4], inv[1] * x + inv[3] * y + inv[5]];
+    }));
+  }
+  return areas.length ? areas : undefined;
 }
 
 function findRendered(slide: RenderSlide, el: XmlElement): RenderShape | undefined {
@@ -312,10 +337,14 @@ export function SlideCanvas() {
             const selected = selection.includes(el);
             const editing = text?.el === el;
             const prompt = editing ? undefined : promptOf(ed, part, rs, sess.fonts);
+            // a shape without fill takes clicks on its text and its drawn outline only; the box being typed in, anywhere
+            const textOnly = editing ? undefined : textHitAreas(rs, p, 4 / zoom);
+            const outlined = !!rs.source.line && rs.source.line.paint.kind !== 'none' && rs.source.line.width > 0;
             return (
               <Shape
                 key={keyOf(el)} id={keyOf(el)} x={p.x} y={p.y} width={p.w} height={p.h} offsetX={p.w / 2} offsetY={p.h / 2} rotation={p.rotation}
-                fill="#000" stroke="#000" strokeWidth={0} hitStrokeWidth={8 / zoom} strokeScaleEnabled={false}
+                // the hit band around the outline is in screen pixels: strokes do not scale with the stage here
+                fill="#000" stroke="#000" strokeWidth={0} hitStrokeWidth={8} strokeScaleEnabled={false}
                 draggable={selected && !editing && !drawing}
                 sceneFunc={ctx => {
                   const c = ctx._context as unknown as CanvasRenderingContext2D;
@@ -335,7 +364,26 @@ export function SlideCanvas() {
                     if (prompt) drawPrimitive(c, prompt, { scale: device, base, image: () => undefined });
                   }
                 }}
-                hitFunc={(ctx, shape) => { ctx.beginPath(); ctx.rect(0, 0, p.w, p.h); ctx.closePath(); ctx.fillStrokeShape(shape); }}
+                hitFunc={(ctx, shape) => {
+                  ctx.beginPath();
+                  if (!textOnly) {
+                    ctx.rect(0, 0, p.w, p.h);
+                    ctx.closePath();
+                    ctx.fillStrokeShape(shape);
+                    return;
+                  }
+                  for (const q of textOnly) {
+                    ctx.moveTo(q[0]!, q[1]!);
+                    for (let i = 2; i < q.length; i += 2) ctx.lineTo(q[i]!, q[i + 1]!);
+                    ctx.closePath();
+                  }
+                  ctx.fillShape(shape);
+                  if (outlined) {
+                    ctx.beginPath();
+                    ctx.rect(0, 0, p.w, p.h);
+                    ctx.strokeShape(shape);
+                  }
+                }}
                 onMouseDown={e => {
                   if (useEditor.getState().drawing) return;          // drawing a new shape over this one
                   e.cancelBubble = true;
@@ -363,8 +411,11 @@ export function SlideCanvas() {
         <Layer>
           {selection.map(el => {
             const rs = rsOf(el);
-            if (!rs || text?.el === el) return null;
-            return <Rect key={`o${keyOf(el)}`} {...boundsRect(rs)} stroke="#2b6cb0" strokeWidth={1 / zoom} dash={[3 / zoom, 2 / zoom]} listening={false} />;
+            if (!rs) return null;
+            // the box being typed in gets PowerPoint's editing frame: dashed, a little heavier than a selection's
+            return text?.el === el
+              ? <Rect key={`e${keyOf(el)}`} {...boundsRect(rs)} stroke="#2b6cb0" strokeWidth={1.5 / zoom} dash={[5 / zoom, 3 / zoom]} listening={false} name="editing-frame" />
+              : <Rect key={`o${keyOf(el)}`} {...boundsRect(rs)} stroke="#2b6cb0" strokeWidth={1 / zoom} dash={[3 / zoom, 2 / zoom]} listening={false} />;
           })}
           {tv && text && <TextOverlay view={tv} caret={text.caret} anchor={text.anchor} zoom={zoom} />}
           <Transformer
@@ -416,8 +467,9 @@ function TextOverlay({ view, caret, anchor, zoom }: { view: TextView & { transfo
         for (const r of sel) c.fillRect(r.x, r.top, r.w, r.height);
         const at = caretRect(view, caret);
         if (at && blink && !sel.length) {
-          c.fillStyle = '#000';
-          c.fillRect(at.x - 0.75 / zoom, at.top, 1.5 / zoom, at.height);
+          // two screen pixels wide, in the colour of the text it types
+          c.fillStyle = caretColour(view, caret);
+          c.fillRect(at.x - 1 / zoom, at.top, 2 / zoom, at.height);
         }
         c.restore();
       }}

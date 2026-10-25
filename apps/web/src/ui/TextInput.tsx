@@ -1,6 +1,6 @@
 // apps/web/src/ui/TextInput.tsx  -- keyboard and IME input while editing text, through a hidden textarea
 import type Konva from 'konva';
-import { useEffect, useRef, type RefObject } from 'react';
+import { useLayoutEffect, useRef, type RefObject } from 'react';
 import { paragraphLength, paragraphs } from '@pptx/editor-core';
 import { useEditor } from '../state/store.ts';
 import { caretRect, move, type Move, type TextView } from './caret.ts';
@@ -16,7 +16,8 @@ export function TextInput({ view, stage, zoom }: { view: TextView & { transform:
   const goalX = useRef<number | undefined>(undefined);
   const composing = useRef(false);
 
-  useEffect(() => { ref.current?.focus({ preventScroll: true }); }, [text.el]);
+  // focused as soon as it is in the page, before the browser paints: keys typed right after a double-click land here
+  useLayoutEffect(() => { ref.current?.focus({ preventScroll: true }); }, [text.el]);
 
   // keep the textarea under the caret, so the IME's candidate window opens there
   const r = caretRect(view, text.caret);

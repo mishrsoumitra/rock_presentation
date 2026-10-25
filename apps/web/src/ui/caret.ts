@@ -1,6 +1,6 @@
 // apps/web/src/ui/caret.ts  -- caret movement and hit testing over laid-out text, in file offsets
 import { layoutToModel, modelToLayout, paragraphLength, paragraphs, type TextPos } from '@pptx/editor-core';
-import type { ResolvedRunProps, ResolvedTextBody } from '@pptx/resolve';
+import { toHex, type Paint, type ResolvedRunProps, type ResolvedTextBody } from '@pptx/resolve';
 import { caretAt, hitTest, type TextLayout } from '@pptx/text';
 import type { XmlElement } from '@pptx/xml';
 
@@ -27,6 +27,22 @@ export const toModel = (v: TextView, paragraph: number, offset: number): TextPos
 export function caretRect(v: TextView, pos: TextPos): { x: number; top: number; height: number } | undefined {
   const l = toLayout(v, pos);
   return caretAt(v.layout, l.paragraph, l.offset);
+}
+
+const colourOf = (p: Paint | undefined): string | undefined =>
+  p?.kind === 'solid' ? toHex(p.color)
+    : p?.kind === 'linear' || p?.kind === 'path' ? (p.stops[0] ? toHex(p.stops[0].color) : undefined)
+      : p?.kind === 'pattern' ? toHex(p.fg) : undefined;
+
+/**
+ * The caret's colour: the colour of the text it types into (the character before it, else the one after it, else
+ * the paragraph mark's), as PowerPoint draws it. It shows wherever the text shows: white on a dark slide.
+ */
+export function caretColour(v: TextView, pos: TextPos): string {
+  const l = toLayout(v, pos);
+  const runs = v.layout.lines.filter(x => x.paragraph === l.paragraph).flatMap(x => x.runs).filter(r => !r.bullet);
+  const run = runs.find(r => r.start < l.offset && l.offset <= r.end) ?? runs.find(r => r.start <= l.offset && l.offset < r.end);
+  return colourOf(run?.props.fill) ?? colourOf(resolvedPara(v, l.paragraph)?.endProps.fill) ?? '#000000';
 }
 
 /** The position under a point of the text box. */
