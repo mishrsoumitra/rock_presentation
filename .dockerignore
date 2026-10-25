@@ -1,0 +1,13 @@
+**/node_modules
+**/dist
+corpus/external
+corpus/.cache
+corpus/local
+out
+.git
+.github
+.claude
+**/*.log
+.env
+.env.*
+**/.DS_Store

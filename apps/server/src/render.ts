@@ -279,6 +279,7 @@ export class Renderer {
           `--js-flags=--max-old-space-size=${this.settings.heapMb}`,
           '--disable-features=MediaRouter,OptimizationHints,Translate,AutofillServerCommunication,InterestFeedContentSuggestions',
           '--no-pings',
+          '--disable-dev-shm-usage',                                   // containers give /dev/shm 64 MB; use /tmp
         ],
       });
     } catch (e) {
