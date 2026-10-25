@@ -1,0 +1,19 @@
+{
+  "name": "@pptx/render",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@pptx/geometry": "workspace:*",
+    "@pptx/metafile": "workspace:*",
+    "@pptx/model": "workspace:*",
+    "@pptx/opc": "workspace:*",
+    "@pptx/resolve": "workspace:*",
+    "@pptx/text": "workspace:*",
+    "@pptx/xml": "workspace:*"
+  }
+}

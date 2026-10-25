@@ -1,0 +1,36 @@
+{
+  "name": "@pptx/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@pptx/anim": "workspace:*",
+    "@pptx/charts": "workspace:*",
+    "@pptx/crypto": "workspace:*",
+    "@pptx/editor-core": "workspace:*",
+    "@pptx/geometry": "workspace:*",
+    "@pptx/metafile": "workspace:*",
+    "@pptx/model": "workspace:*",
+    "@pptx/opc": "workspace:*",
+    "@pptx/render": "workspace:*",
+    "@pptx/resolve": "workspace:*",
+    "@pptx/text": "workspace:*",
+    "@pptx/xml": "workspace:*",
+    "konva": "10.7.1",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "react-konva": "19.3.0",
+    "zustand": "5.0.15"
+  },
+  "devDependencies": {
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.2",
+    "vite": "8.3.4"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  // Library code in packages/ must run unchanged in the browser, in web workers and in Node.
+  // It is type-checked without Node's types and without the DOM, so a stray `Buffer`,
+  // `process` or `document` fails here rather than in the browser.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["es2024", "webworker"],
+    "types": []
+  },
+  "include": ["packages/*/src/**/*.ts"]
+}

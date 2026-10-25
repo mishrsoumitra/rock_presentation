@@ -1,0 +1,11 @@
+{
+  "name": "@pptx/anim",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": { "@pptx/model": "workspace:*", "@pptx/opc": "workspace:*", "@pptx/render": "workspace:*", "@pptx/resolve": "workspace:*", "@pptx/xml": "workspace:*" }
+}

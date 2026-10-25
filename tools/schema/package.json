@@ -1,0 +1,9 @@
+{
+  "name": "@pptx/tools-schema",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@pptx/xml": "workspace:*"
+  }
+}

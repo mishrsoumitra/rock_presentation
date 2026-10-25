@@ -1,0 +1,36 @@
+packages:
+  - packages/*
+  - apps/*
+  - tools/*
+
+# Supply-chain policy (plan: "Dependency hygiene, enforced in CI").
+# Versions younger than 14 days are not installed; an explicit value makes the check strict.
+minimumReleaseAge: 20160
+# Refuse a version whose publish provenance is weaker than an earlier version of the same package.
+trustPolicy: no-downgrade
+# Transitive dependencies may not come from git repositories or tarball URLs.
+blockExoticSubdeps: true
+# No dependency may run lifecycle scripts unless it is listed here (sharp will be, in apps/server).
+allowBuilds: {}
+# Security patches may skip the age gate, pinned to the exact patched version.
+# vitest 4.1.12 fixes GHSA-qxg6-89mg-rqv8 and GHSA-xp26-3454-mjgp in @vitest/mocker (published 2026-10-15).
+minimumReleaseAgeExclude:
+  - vitest@4.1.12
+  - '@vitest/expect@4.1.12'
+  - '@vitest/mocker@4.1.12'
+  - '@vitest/pretty-format@4.1.12'
+  - '@vitest/runner@4.1.12'
+  - '@vitest/snapshot@4.1.12'
+  - '@vitest/spy@4.1.12'
+  - '@vitest/utils@4.1.12'
+  # fastify 5.12.6/5.12.7 fix GHSA-389g-gv7q-r4x8 (CVE-2026-107832, header validation bypass) in 5.12.2-5.12.5 (2026-10-13).
+  - fastify@5.12.7
+  # Transitive server dependencies, forced to their patched releases by the overrides below (published 2026-10-19).
+  - fast-uri@3.1.9      # GHSA-w74x-v6f9-j3xg, GHSA-wjr9-j795-jxcr, GHSA-xhq7-xmqj-769h, GHSA-333x-w4r6-6crp
+  - fast-uri@4.2.3      # the same four advisories on the 4.x line
+  - ip-address@10.7.4   # GHSA-rxp7-6hxx-x8q5 (quadratic-time zone identifier parsing)
+
+overrides:
+  fast-uri@>=3.0.0 <3.1.9: 3.1.9
+  fast-uri@>=4.0.0 <4.2.3: 4.2.3
+  ip-address@<10.7.4: 10.7.4

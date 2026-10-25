@@ -1,0 +1,60 @@
+# Weekly, and on demand: every test with the third-party corpus (about 900 decks), the server's exit run over the
+# whole corpus (upload, a PNG of every slide, the PDF), and the weekly audit of the lockfile against new advisories.
+name: Corpus
+
+on:
+  schedule:
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  corpus:
+    name: Corpus tests and the server's exit run
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+      - run: corepack enable
+      - name: Find the pnpm store
+        id: pnpm
+        run: echo "store=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.pnpm.outputs.store }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
+      - run: pnpm install --frozen-lockfile
+      - name: Audit the lockfile against this week's advisories
+        run: pnpm audit --audit-level=moderate
+      - run: pnpm exec playwright install --with-deps chromium
+      - name: Restore the corpus
+        id: corpus
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: corpus/external
+          key: corpus-${{ hashFiles('tools/corpus/fetch.sh') }}
+      - name: Fetch the corpus
+        if: steps.corpus.outputs.cache-hit != 'true'
+        run: pnpm corpus:fetch
+      - name: Every test, with the corpus
+        run: pnpm test
+      - name: Upload, render and PDF of every corpus deck through the server
+        run: pnpm --filter @pptx/server corpus
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: corpus-reports
+          path: |
+            apps/server/out/server-corpus.json
+            out/golden-diff/
+          if-no-files-found: ignore

@@ -1,0 +1,11 @@
+{
+  "name": "@pptx/tools-geometry",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@pptx/xml": "workspace:*",
+    "@pptx/geometry": "workspace:*",
+    "playwright": "1.64.0"
+  }
+}

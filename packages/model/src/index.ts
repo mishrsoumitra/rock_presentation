@@ -1,0 +1,14 @@
+export * from './ns.ts';
+export * from './units.ts';
+export * from './dom.ts';
+export { lookupNamespace } from './scope.ts';
+export { effectiveChildren, selectBranch } from './mc.ts';
+export { allowsChild, ensureChild, insertInOrder, removeChildren, schemaType } from './order.ts';
+export { checkOrder } from './validate.ts';
+export * from './drawingml.ts';
+export * from './textprops.ts';
+export * from './theme.ts';
+export * from './table.ts';
+export * from './textbody.ts';
+export * from './views.ts';
+export { PresentationDocument } from './document.ts';

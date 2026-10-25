@@ -1,0 +1,10 @@
+{
+  // Tests and tools run in Node; they get Node's types. Tools also drive browser pages (the render harness),
+  // so the DOM's types are there too.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["es2024", "dom", "dom.iterable"],
+    "types": ["node"]
+  },
+  "include": ["packages/*/src/**/*.ts", "packages/*/test/**/*.ts", "apps/web/test/**/*.ts", "tools/**/*.ts", "vitest.config.ts"]
+}

@@ -1,0 +1,11 @@
+{
+  // The server runs in Node; its render page (render-page/) runs in Chromium. One program covers both, so it gets
+  // Node's types and the DOM's, as tools/ does in the root tsconfig.json.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["es2024", "dom", "dom.iterable"],
+    "types": ["node"]
+  },
+  // packages/text declares its untyped dependencies (linebreak, bidi-js) in vendor.d.ts, which no import reaches
+  "include": ["src/**/*.ts", "test/**/*.ts", "scripts/**/*.ts", "render-page/**/*.ts", "../../packages/text/src/vendor.d.ts"]
+}
