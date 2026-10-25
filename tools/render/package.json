@@ -12,7 +12,7 @@
     "@pptx/resolve": "workspace:*",
     "@pptx/text": "workspace:*",
     "@pptx/xml": "workspace:*",
-    "pixelmatch": "7.1.0",
+    "pixelmatch": "8.0.0",
     "playwright": "1.64.0",
     "pngjs": "7.0.0",
     "vite": "8.3.4"

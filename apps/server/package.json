@@ -24,7 +24,7 @@
     "@pptx/text": "workspace:*",
     "@pptx/xml": "workspace:*",
     "fastify": "5.12.7",
-    "pixelmatch": "7.1.0",
+    "pixelmatch": "8.0.0",
     "playwright": "1.64.0",
     "pngjs": "7.0.0",
     "typebox": "1.3.36"
