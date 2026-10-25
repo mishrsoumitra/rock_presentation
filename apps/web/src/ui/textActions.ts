@@ -18,6 +18,21 @@ export function wholeBody(txBody: XmlElement): TextRange {
   return { start: { p: 0, offset: 0 }, end: { p: Math.max(0, last), offset: last >= 0 ? paragraphLength(ps[last]!) : 0 } };
 }
 
+/**
+ * Select all the text of the box being edited (Cmd+A, a triple click): every paragraph, from the start of the first
+ * to the end of the last. Typing then replaces it all, Backspace clears the box, and formatting applies to all of it.
+ */
+export function selectAll(): void {
+  const st = useEditor.getState();
+  const s = st.session, t = st.text;
+  if (!s || !t) return;
+  const body = new ShapeView(t.el, s.ed.doc.owner(t.part)).txBody;
+  if (!body) return;
+  const all = wholeBody(body);
+  s.ed.log.seal();
+  useEditor.setState({ text: { ...t, anchor: all.start, caret: all.end }, pending: null });
+}
+
 /** Options that keep a text edit and its autofit refit in one undo step. */
 function opts(part: string, el: XmlElement, coalesce: string | undefined) {
   const s = session()!;

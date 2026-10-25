@@ -535,7 +535,7 @@ describe('text editing with the mouse, as in Google Slides', () => {
     expect(errors).toEqual([]);
   }, 60_000);
 
-  test('a text box: one click puts the caret where you click, the mouse selects, Shift+click extends, a click never moves the box', async () => {
+  test('a text box: one click puts the caret where you click, the mouse selects, Shift+click extends, a triple click selects all the text, a click never moves the box', async () => {
     await page.getByTestId('thumb-1').click();
     await page.getByRole('tab', { name: 'Insert' }).click();
     await page.getByTestId('text-box').click();
@@ -578,6 +578,9 @@ describe('text editing with the mouse, as in Google Slides', () => {
     await page.mouse.click(at12.x + 1, at12.y);
     await page.keyboard.up('Shift');
     expect(await editing()).toMatchObject({ anchor: { p: 0, offset: 9 }, caret: { p: 0, offset: 12 } });
+    // a triple click selects all the text of the box (one paragraph here)
+    await page.mouse.click(at12.x + 1, at12.y, { clickCount: 3 });
+    expect(await editing()).toMatchObject({ anchor: { p: 0, offset: 0 }, caret: { p: 0, offset: 20 } });
 
     // one click on the text does not move the box, whether the box was selected or not
     await page.keyboard.press('Escape');
@@ -699,6 +702,67 @@ describe('text editing with the mouse, as in Google Slides', () => {
     await page.getByTestId('thumb-1').click();
     expect(await editing()).toBeNull();
     expect(await state<string>('return s.session.ed.doc.slideParts().indexOf(s.slide);')).toBe(0);
+    expect(errors).toEqual([]);
+  }, 90_000);
+
+  test('a triple click selects all the text of a box of two paragraphs: typing replaces it, Backspace clears it, Bold applies to all of it', async () => {
+    // a third slide with a text box of two paragraphs
+    await page.getByTestId('new-slide').click();
+    expect(await slideCount()).toBe(3);
+    await page.getByRole('tab', { name: 'Insert' }).click();
+    await page.getByTestId('text-box').click();
+    await page.keyboard.type('First line');
+    await page.keyboard.press('Enter');
+    await page.keyboard.type('Second line');
+    await page.keyboard.press('Escape');
+    await page.getByRole('tab', { name: 'Home' }).click();
+    await page.mouse.click(empty.x, empty.y);
+    expect(await selected()).toBe(0);
+    await drawn();
+    expect((await boxOf('textbox')).text).toBe('First lineSecond line');
+
+    // a triple click on "First", in a box not being edited: the first click starts editing, the second takes the
+    // word, the third all the text, from the start of the first paragraph to the end of the last
+    const f2 = await caretAt('textbox', 2);
+    await page.mouse.click(f2.x + 1, f2.y, { clickCount: 3 });
+    expect(await editing()).toMatchObject({ anchor: { p: 0, offset: 0 }, caret: { p: 1, offset: 11 } });
+    const box = await boxOf('textbox');
+    expect(await highlight(box)).toBeGreaterThan(30);
+    // typing replaces all of it
+    await page.keyboard.type('X');
+    expect((await boxOf('textbox')).text).toBe('X');
+    expect(await editing()).toMatchObject({ anchor: { p: 0, offset: 1 }, caret: { p: 0, offset: 1 } });
+    await page.keyboard.press('Control+z');
+    expect((await boxOf('textbox')).text).toBe('First lineSecond line');
+
+    // a triple click on "Second", in the box being edited: the same selection, and Bold applies to both paragraphs
+    const s3 = await caretAt('textbox', 3, 1);
+    await page.mouse.click(s3.x + 1, s3.y, { clickCount: 3 });
+    expect(await editing()).toMatchObject({ anchor: { p: 0, offset: 0 }, caret: { p: 1, offset: 11 } });
+    await page.getByTestId('bold').click();
+    expect(await editing()).toMatchObject({ anchor: { p: 0, offset: 0 }, caret: { p: 1, offset: 11 } });
+    expect(await state<string[]>(`
+      const ps = s.text.el.children.find(c => c.local === 'txBody').children.filter(c => c.local === 'p');
+      return ps.map(p => p.children.filter(c => c.local === 'r').map(r => { const rPr = r.children.find(c => c.local === 'rPr'); const b = rPr && rPr.attrs.find(a => a.local === 'b'); return b ? b.value : '-'; }).join(','));`))
+      .toEqual(['1', '1']);
+    // Backspace clears the box
+    await page.keyboard.press('Backspace');
+    expect((await boxOf('textbox')).text).toBe('');
+    expect(await editing()).toMatchObject({ anchor: { p: 0, offset: 0 }, caret: { p: 0, offset: 0 } });
+    await page.keyboard.press('Control+z');
+    expect((await boxOf('textbox')).text).toBe('First lineSecond line');
+
+    // a click afterwards clears the selection: the caret goes to the click, in the second paragraph
+    const f2b = await caretAt('textbox', 2);
+    await page.mouse.click(f2b.x + 1, f2b.y, { clickCount: 3 });
+    expect(await editing()).toMatchObject({ anchor: { p: 0, offset: 0 }, caret: { p: 1, offset: 11 } });
+    const s3b = await caretAt('textbox', 3, 1);
+    await page.mouse.click(s3b.x + 1, s3b.y);
+    const e = await editing();
+    expect(e!.anchor).toEqual(e!.caret);
+    expect(e!.caret).toEqual({ p: 1, offset: 3 });
+    expect(await highlight(await boxOf('textbox'))).toBeLessThan(5);
+    await page.keyboard.press('Escape');
     expect(errors).toEqual([]);
   }, 90_000);
 });

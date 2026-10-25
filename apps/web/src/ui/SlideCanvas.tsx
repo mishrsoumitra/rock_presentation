@@ -11,6 +11,7 @@ import { caretColour, caretRect, clickPos, hit, onTextLine, samePos, wordAt, typ
 import { keystrokeEnd } from './perf.ts';
 import { boundsOf, drawBase, parentOf, placementOf, restMatrix, xfrmFor, type Placement } from './placement.ts';
 import { promptOf } from './prompts.ts';
+import { selectAll } from './textActions.ts';
 import { TextInput } from './TextInput.tsx';
 import * as act from './actions.ts';
 
@@ -301,9 +302,9 @@ export function SlideCanvas() {
   /**
    * The mouse goes down on a shape. As in Google Slides: one click on the text of a box puts the caret there and
    * starts editing (an empty placeholder, at its start); in the box being edited the caret goes to the click, Shift
-   * extends the selection, and the mouse held down selects text as it moves. The border band, a shape without text,
-   * or a box already selected but not being edited: the shape is selected, and the mouse moving before it comes up
-   * drags it. A plain click on text never moves a box.
+   * extends the selection, a triple click selects all the text of the box, and the mouse held down selects text as
+   * it moves. The border band, a shape without text, or a box already selected but not being edited: the shape is
+   * selected, and the mouse moving before it comes up drags it. A plain click on text never moves a box.
    */
   const onShapeDown = (rs: RenderShape, p: Placement, e: Konva.KonvaEventObject<MouseEvent>) => {
     if (useEditor.getState().drawing) return;          // drawing a new shape over this one
@@ -319,6 +320,14 @@ export function SlideCanvas() {
     const at = pointer();
     const { v, onBand, text } = probe(rs, p, node, at);
     const editingThis = st.text?.el === el;
+    if (v && !onBand && (editingThis || text) && evt.detail === 3) {
+      // the third click of a triple click: the first started editing, the second took the word, this takes the
+      // whole box (the browser counts clicks at the same spot; Konva's own double click fires for it but is ignored)
+      evt.preventDefault();
+      if (!editingThis) startText(rs, at);
+      selectAll();
+      return;
+    }
     if (editingThis && v && !onBand) {
       evt.preventDefault();                               // the text input keeps the focus
       ed.log.seal();

@@ -1,11 +1,10 @@
 // apps/web/src/ui/TextInput.tsx  -- keyboard and IME input while editing text, through a hidden textarea
 import type Konva from 'konva';
 import { useLayoutEffect, useRef, type RefObject } from 'react';
-import { paragraphLength, paragraphs } from '@pptx/editor-core';
 import { useEditor } from '../state/store.ts';
 import { caretRect, move, type Move, type TextView } from './caret.ts';
 import { keystrokeStart } from './perf.ts';
-import { deleteChars, formatPara, formatText, formattingHere, typeChars } from './textActions.ts';
+import { deleteChars, formatPara, formatText, formattingHere, selectAll, typeChars } from './textActions.ts';
 
 /**
  * Text input goes to a textarea kept under the caret (how browser editors take IME composition and mobile
@@ -85,8 +84,7 @@ export function TextInput({ view, stage, zoom }: { view: TextView & { transform:
       useEditor.setState({ text: null, selection: [t.el] });
     } else if (mod && e.key.toLowerCase() === 'a') {
       e.preventDefault();
-      const ps = paragraphs(view.txBody);
-      useEditor.setState({ text: { ...t, anchor: { p: 0, offset: 0 }, caret: { p: ps.length - 1, offset: paragraphLength(ps[ps.length - 1]!) } } });
+      selectAll();
     } else if (mod && ['b', 'i', 'u'].includes(e.key.toLowerCase())) {
       e.preventDefault();
       const run = formattingHere().run;
