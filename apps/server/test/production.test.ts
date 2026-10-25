@@ -84,6 +84,8 @@ describe('the editor, served next to the API', () => {
   test('hashed assets: cached for good, compressed, and 304 when unchanged', async () => {
     const plain = await app.inject({ url: '/assets/index-abc123.js' });
     expect([plain.statusCode, plain.headers['cache-control'], plain.body]).toEqual([200, 'public, max-age=31536000, immutable', script]);
+    // a script may start a worker, which takes its policy from this response
+    expect(plain.headers['content-security-policy']).toBe(`${CSP}; frame-ancestors 'none'`);
     const br = await app.inject({ url: '/assets/index-abc123.js', headers: { 'accept-encoding': 'gzip, br' } });
     expect(br.headers['content-encoding']).toBe('br');
     expect(brotliDecompressSync(br.rawPayload).toString()).toBe(script);

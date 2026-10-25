@@ -3,8 +3,9 @@
 // The editor runs entirely in the browser, so serving it is serving files: index.html, the hashed bundles under
 // /assets/ and the fonts. They are read once at startup, so a request can only ever name a file that was there
 // then (no paths reach the file system), and compressed once (Brotli and gzip) for the clients that take it.
-// index.html carries its content security policy in a meta tag; the same policy goes in a header too, with
-// frame-ancestors added, which a meta tag cannot carry. Source maps are not served.
+// index.html carries its content security policy in a meta tag; the same policy goes in a header on every file,
+// with frame-ancestors added (which a meta tag cannot carry): workers get their policy from their script's
+// response, not from the page. Source maps are not served.
 import { createHash } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
 import { extname, join, relative, sep } from 'node:path';
@@ -76,8 +77,9 @@ export function webRoutes(app: FastifyInstance, web: WebFiles): void {
     const file = web.files.get(name);
     if (!file) throw notFound('file');
     reply.header('content-type', file.type).header('cache-control', file.cache).header('etag', file.etag).header('vary', 'accept-encoding');
-    // the editor's own policy replaces the API's (which allows nothing)
-    if (name === 'index.html') reply.header('content-security-policy', web.csp);
+    // the editor's own policy replaces the API's (which allows nothing) on every file: a worker takes its policy
+    // from its own script's response, so worker bundles need it as much as the page does
+    reply.header('content-security-policy', web.csp);
     if (request.headers['if-none-match'] === file.etag) return reply.code(304).send();
     const accept = String(request.headers['accept-encoding'] ?? '');
     if (file.br && /\bbr\b/.test(accept)) return reply.header('content-encoding', 'br').send(file.br);
