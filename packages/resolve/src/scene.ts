@@ -449,6 +449,48 @@ export function resolveSlide(doc: PresentationDocument, part: string): ResolvedS
   return { part, kind: ctx.kind, size: { cx: size.cx, cy: size.cy }, background: state.background, shapes, context: ctx };
 }
 
+/** Whether `el` is `root` or inside it. */
+function within(root: XmlElement, el: XmlElement): boolean {
+  for (let e: XmlElement | null = el; e; e = e.parent) if (e === root) return true;
+  return false;
+}
+
+function findResolved(shapes: ResolvedShape[], el: XmlElement): ResolvedShape | undefined {
+  for (const s of shapes) {
+    if (s.view.el === el) return s;
+    const inner = findResolved(s.children, el);
+    if (inner) return inner;
+  }
+  return undefined;
+}
+
+/**
+ * One of a slide's own top-level shapes resolved again in the slide's context, after an edit that touched it alone:
+ * the editor keeps the rest of the slide's resolution and render tree. The context carries the layout, master and
+ * theme as they were resolved; the caller knows those did not change.
+ */
+export function resolveSlideShape(slide: ResolvedSlide, view: ShapeView): ResolvedShape {
+  const ctx = slide.context;
+  const layer = ctx.kind === 'layout' ? 'layout' : 'slide';
+  const state: ResolveState = { ctx, listCache: new Map(), background: slide.background };
+  return resolveShape(state, view, layer, slide.part, IDENTITY);
+}
+
+/**
+ * One shape of a slide resolved on its own: the top-level shape that holds `el` (it may be in a group) is resolved,
+ * nothing else of the slide is. What autofit measures after a keystroke, without resolving every shape again.
+ * Undefined when `el` is not in the slide's own tree or is hidden.
+ */
+export function resolveShapeIn(doc: PresentationDocument, part: string, el: XmlElement): ResolvedShape | undefined {
+  const ctx = slideContext(doc, part);
+  const own = doc.slide(part);
+  const top = [...own.shapes, ...own.controlPictures].find(s => within(s.el, el));
+  if (!top || top.hidden) return undefined;
+  const layer = ctx.kind === 'layout' ? 'layout' : 'slide';
+  const state: ResolveState = { ctx, listCache: new Map(), background: resolveBackground(ctx) };
+  return findResolved([resolveShape(state, top, layer, part, IDENTITY)], el);
+}
+
 /**
  * The shapes of a SmartArt diagram's cached drawing (the dsp:drawing part PowerPoint writes beside the data model).
  * They are plain shapes positioned inside the diagram's frame, so they resolve like slide shapes, in the slide's

@@ -602,4 +602,25 @@ describe('text editing with the mouse, as in Google Slides', () => {
     expect(await editing()).toBeNull();
     expect(errors).toEqual([]);
   }, 90_000);
+
+  test('typing 50 characters in a row: the text is right; locally, the time per keystroke is reported', async () => {
+    await page.mouse.click(empty.x, empty.y);
+    const end = await caretAt('textbox', 20);
+    await page.mouse.click(end.x - 1, end.y);
+    expect(await editing()).toMatchObject({ caret: { p: 0, offset: 20 }, anchor: { p: 0, offset: 20 } });
+    await page.evaluate(() => performance.clearMeasures('keystroke'));
+    const typed = 'abcdefghij'.repeat(5);
+    await page.keyboard.type(typed);
+    expect((await boxOf('textbox')).text).toBe(`Learning It for Good${typed}`);
+    const times = await page.evaluate(() => performance.getEntriesByName('keystroke').map(e => e.duration).sort((a, b) => a - b));
+    expect(times).toHaveLength(50);
+    if (!process.env.CI) {
+      // the app's own measure: the keystroke's command, autofit, scene rebuild, React render and commit (dev build)
+      console.log(`keystroke: median ${times[25]!.toFixed(1)} ms, p90 ${times[45]!.toFixed(1)} ms, max ${times[49]!.toFixed(1)} ms (dev build, headless Chromium)`);
+    }
+    await page.keyboard.press('Control+z');                   // the fifty went in as one step
+    expect((await boxOf('textbox')).text).toBe('Learning It for Good');
+    await page.keyboard.press('Escape');
+    expect(errors).toEqual([]);
+  }, 60_000);
 });

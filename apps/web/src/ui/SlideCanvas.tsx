@@ -8,6 +8,7 @@ import { drawPrimitive, drawShape, drawSlide, shapeTextLayout, type RenderShape,
 import type { XmlElement } from '@pptx/xml';
 import { session, useEditor } from '../state/store.ts';
 import { caretColour, caretRect, clickPos, hit, onTextLine, samePos, wordAt, type TextView } from './caret.ts';
+import { keystrokeEnd } from './perf.ts';
 import { boundsOf, drawBase, parentOf, placementOf, restMatrix, xfrmFor, type Placement } from './placement.ts';
 import { promptOf } from './prompts.ts';
 import { TextInput } from './TextInput.tsx';
@@ -165,6 +166,8 @@ export function SlideCanvas() {
     return () => ro.disconnect();
   }, []);
 
+  // a keystroke's cost is measured to here: the slide has been rendered and committed with the text it typed
+  useLayoutEffect(() => { keystrokeEnd(); });
   useEffect(() => () => endPress.current(), []);
 
   const scene = sess && part ? sess.scenes.get(part) : undefined;

@@ -12,17 +12,20 @@ import { useShortcuts } from './ui/shortcuts.ts';
 
 function StatusBar() {
   const session = useEditor(s => s.session);
-  const slide = useEditor(s => s.slide);
   const zoom = useEditor(s => s.zoom);
   const message = useEditor(s => s.message);
-  useEditor(s => s.version);
-  const parts = session?.ed.doc.slideParts() ?? [];
-  const n = slide ? parts.indexOf(slide) + 1 : 0;
+  // "Slide n of m" changes with the presentation part (the list of slides) and the current slide, not with typing
+  const place = useEditor(s => {
+    if (!s.session) return '';
+    const parts = s.session.ed.doc.slideParts();
+    return `${s.slide ? parts.indexOf(s.slide) + 1 : 0}/${parts.length}`;
+  });
+  const [n, count] = place.split('/').map(Number);
   const setZoom = (z: number | 'fit') => useEditor.setState({ zoom: z });
   const current = typeof zoom === 'number' ? zoom * 914400 / 96 : undefined;
   return (
     <footer className="status">
-      <span data-testid="slide-count">{session ? `Slide ${n} of ${parts.length}` : 'No presentation'}</span>
+      <span data-testid="slide-count">{session ? `Slide ${n} of ${count}` : 'No presentation'}</span>
       {message && <span className={`message ${message.kind}`} role={message.kind === 'error' ? 'alert' : 'status'}>{message.text}
         <button type="button" aria-label="Dismiss" onClick={() => useEditor.setState({ message: null })}>×</button></span>}
       <span className="zoom">

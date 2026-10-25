@@ -210,6 +210,14 @@ function buildShape(slide: ResolvedSlide, s: ResolvedShape, opts: BuildOptions, 
   return { id: s.id, name: s.name, layer: s.layer, transform: s.transform, box, outline, prims, children, source: s };
 }
 
+/**
+ * One shape of a resolved slide built on its own (`slide` gives charts and SmartArt their context). The editor builds
+ * the shape an edit touched this way and keeps the rest of the slide's tree; `images` collects the parts it draws.
+ */
+export function buildSlideShape(slide: ResolvedSlide, s: ResolvedShape, opts: BuildOptions, images: Set<string>): RenderShape {
+  return buildShape(slide, s, opts, images);
+}
+
 /** Build the render tree of a resolved slide. Pure: the same slide and fonts give the same tree. */
 export function buildSlide(slide: ResolvedSlide, opts: BuildOptions): RenderSlide {
   const images = new Set<string>();

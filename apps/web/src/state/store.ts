@@ -90,7 +90,9 @@ export const useEditor = create<EditorState>((set, get) => ({
       const thumbs = new Thumbnails(ed, zip, () => set(s => ({ version: s.version + 1 })));
       const session: Session = { ed, fonts, images, scenes: new SceneCache(ed, fonts), thumbs, name, password: password ?? null };
       ed.subscribe(parts => {
-        session.thumbs.sync(parts);
+        // while typing, the thumbnail follows 300 ms after the last keystroke; any other change shows at once
+        if (get().text) session.thumbs.syncLater(parts);
+        else session.thumbs.sync(parts);
         set(s => ({ version: s.version + 1 }));
       });
       set({
@@ -125,6 +127,7 @@ export const useEditor = create<EditorState>((set, get) => ({
   undo() {
     const s = get().session;
     if (!s?.ed.undo()) return;
+    s.thumbs.flush();
     set(st => ({ selection: attached(st.selection), text: null }));
     const slides = s.ed.doc.slideParts();
     if (!slides.includes(get().slide ?? '')) set({ slide: slides[0] ?? null });
@@ -133,13 +136,16 @@ export const useEditor = create<EditorState>((set, get) => ({
   redo() {
     const s = get().session;
     if (!s?.ed.redo()) return;
+    s.thumbs.flush();
     set(st => ({ selection: attached(st.selection), text: null }));
     const slides = s.ed.doc.slideParts();
     if (!slides.includes(get().slide ?? '')) set({ slide: slides[0] ?? null });
   },
 
   setSlide(part) {
-    get().session?.ed.log.seal();
+    const s = get().session;
+    s?.ed.log.seal();
+    s?.thumbs.flush();
     set({ slide: part, selection: [], entered: null, text: null });
   },
 
@@ -171,6 +177,9 @@ export const useEditor = create<EditorState>((set, get) => ({
     }
   },
 }));
+
+// when editing ends, however it ends, the slide typed in reaches the thumbnail worker without the typing pause
+useEditor.subscribe((st, prev) => { if (prev.text && !st.text) st.session?.thumbs.flush(); });
 
 /** The session, for code outside React (event handlers). */
 export const session = () => useEditor.getState().session;

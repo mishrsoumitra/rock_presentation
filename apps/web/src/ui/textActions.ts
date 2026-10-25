@@ -1,6 +1,7 @@
 // apps/web/src/ui/textActions.ts  -- typing and formatting, for the keyboard and the ribbon alike
 import {
-  deleteText, formatParagraphs, formatRuns, paragraphLength, paragraphs, typeText, type ParaPatch, type RunPatch, type TextPos, type TextRange,
+  deleteText, formatParagraphs, formatRuns, paragraphLength, paragraphs, typeText, type Command, type ParaPatch, type RunPatch, type TextPos,
+  type TextRange,
 } from '@pptx/editor-core';
 import { ShapeView } from '@pptx/model';
 import type { ResolvedParagraph, ResolvedRunProps } from '@pptx/resolve';
@@ -23,6 +24,17 @@ function opts(part: string, el: XmlElement, coalesce: string | undefined) {
   return { scope: el, after: () => refit(s.ed, part, el, s.fonts), ...(coalesce ? { coalesceKey: coalesce } : {}) };
 }
 
+/** Run a command that changes one shape's text: the slide's render tree keeps its other shapes. */
+function runOn(part: string, el: XmlElement, cmd: Command): void {
+  const st = useEditor.getState();
+  const s = st.session;
+  if (!s) return;
+  const before = s.ed.versionOf(part);
+  s.scenes.expectChange(part, el);
+  st.run(cmd);
+  if (s.ed.versionOf(part) === before) s.scenes.forgetExpected(part);    // the command failed and changed nothing
+}
+
 /** Type at the caret (replacing the selection). Typing in one box coalesces into one undo step. */
 export function typeChars(chars: string): void {
   const st = useEditor.getState();
@@ -32,7 +44,7 @@ export function typeChars(chars: string): void {
   if (!body) return;
   const range = ordered(t.anchor, t.caret);
   const edit = typeText(s.ed, t.part, body, range, chars, { ...opts(t.part, t.el, `type:${keyOf(t.el)}`), ...(st.pending ? { patch: st.pending } : {}) });
-  st.run(edit.command);
+  runOn(t.part, t.el, edit.command);
   useEditor.setState({ text: { ...t, caret: edit.caret, anchor: edit.caret } });
 }
 
@@ -44,7 +56,7 @@ export function deleteChars(direction: 'back' | 'forward'): void {
   if (!body) return;
   const at = t.anchor.p === t.caret.p && t.anchor.offset === t.caret.offset ? t.caret : ordered(t.anchor, t.caret);
   const edit = deleteText(s.ed, t.part, body, at, direction, opts(t.part, t.el, `type:${keyOf(t.el)}`));
-  st.run(edit.command);
+  runOn(t.part, t.el, edit.command);
   useEditor.setState({ text: { ...t, caret: edit.caret, anchor: edit.caret } });
 }
 
@@ -77,14 +89,14 @@ export function formatText(patch: RunPatch, label = 'Font'): void {
   }
   const ts = targets();
   if (!ts.length) return;
-  for (const x of ts) st.run(formatRuns(s.ed, x.part, x.body, x.range, patch, { ...opts(x.part, x.el, undefined), label }));
+  for (const x of ts) runOn(x.part, x.el, formatRuns(s.ed, x.part, x.body, x.range, patch, { ...opts(x.part, x.el, undefined), label }));
 }
 
 export function formatPara(patch: ParaPatch, label = 'Paragraph'): void {
   const st = useEditor.getState();
   const s = st.session;
   if (!s) return;
-  for (const x of targets()) st.run(formatParagraphs(s.ed, x.part, x.body, x.range, patch, { ...opts(x.part, x.el, undefined), label }));
+  for (const x of targets()) runOn(x.part, x.el, formatParagraphs(s.ed, x.part, x.body, x.range, patch, { ...opts(x.part, x.el, undefined), label }));
 }
 
 /** The resolved formatting at the caret or of the selected shape's first run (for the ribbon's toggles). */

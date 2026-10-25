@@ -4,6 +4,7 @@ import { useLayoutEffect, useRef, type RefObject } from 'react';
 import { paragraphLength, paragraphs } from '@pptx/editor-core';
 import { useEditor } from '../state/store.ts';
 import { caretRect, move, type Move, type TextView } from './caret.ts';
+import { keystrokeStart } from './perf.ts';
 import { deleteChars, formatPara, formatText, formattingHere, typeChars } from './textActions.ts';
 
 /**
@@ -65,12 +66,15 @@ export function TextInput({ view, stage, zoom }: { view: TextView & { transform:
     goalX.current = undefined;
     if (e.key === 'Backspace' || e.key === 'Delete') {
       e.preventDefault();
+      keystrokeStart();
       deleteChars(e.key === 'Backspace' ? 'back' : 'forward');
     } else if (e.key === 'Enter') {
       e.preventDefault();
+      keystrokeStart();
       typeChars(e.shiftKey ? '\u000b' : '\n');
     } else if (e.key === 'Tab') {
       e.preventDefault();
+      keystrokeStart();
       const lvl = formattingHere().para?.props.level ?? 0;
       const bulleted = !!formattingHere().para?.props.bullet;
       if (bulleted || e.shiftKey) formatPara({ lvl: Math.max(0, Math.min(8, lvl + (e.shiftKey ? -1 : 1))) }, e.shiftKey ? 'Decrease Indent' : 'Increase Indent');
@@ -108,7 +112,9 @@ export function TextInput({ view, stage, zoom }: { view: TextView & { transform:
   const flush = (el: HTMLTextAreaElement) => {
     const v = el.value;
     el.value = '';
-    if (v) typeChars(v.replace(/\r\n|\r/g, '\n'));
+    if (!v) return;
+    keystrokeStart();
+    typeChars(v.replace(/\r\n|\r/g, '\n'));
   };
 
   return (

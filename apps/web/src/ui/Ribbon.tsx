@@ -1,6 +1,6 @@
 // apps/web/src/ui/Ribbon.tsx  -- the commands, in tabs as PowerPoint arranges them
 import { useRef, useState } from 'react';
-import { useEditor } from '../state/store.ts';
+import { useEditor, type EditorState } from '../state/store.ts';
 import * as act from './actions.ts';
 import { formatPara, formatText, formattingHere } from './textActions.ts';
 import { Btn, ColorGrid, Menu, MenuItem, ShapeGallery } from './widgets.tsx';
@@ -27,12 +27,26 @@ function LayoutMenu({ label, icon, onPick, testid }: { label: string; icon: stri
   );
 }
 
+/**
+ * Everything the ribbon shows, as one string: it renders its hundred-odd controls again only when this changes,
+ * not on every keystroke (a change the keystroke makes to the formatting at the caret, or to the undo label, shows).
+ */
+function shown(s: EditorState): string {
+  const log = s.session?.ed.log;
+  const here = formattingHere();
+  const run = here.run, para = here.para?.props;
+  return [
+    s.session?.name, s.session?.password ? 'pw' : '', log?.canUndo, log?.undoLabel, log?.canRedo, log?.redoLabel, !!s.clipboard,
+    s.selection.length, s.selection[0]?.local, !!s.text,
+    run?.latin, run?.size, run?.bold, run?.italic, run?.underline, run?.strike, para?.bullet?.kind, para?.level, para?.align,
+  ].join('|');
+}
+
 export function Ribbon({ extraTabs }: { extraTabs?: Partial<Record<Tab, React.ReactNode>> }) {
   const [tab, setTab] = useState<Tab>('Home');
   const session = useEditor(s => s.session);
-  useEditor(s => s.version);
-  useEditor(s => s.text);
-  const selection = useEditor(s => s.selection);
+  useEditor(shown);
+  const selection = useEditor.getState().selection;
   const log = session?.ed.log;
   const here = formattingHere();
   const run = here.run;
