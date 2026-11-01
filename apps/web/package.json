@@ -21,10 +21,10 @@
     "@pptx/resolve": "workspace:*",
     "@pptx/text": "workspace:*",
     "@pptx/xml": "workspace:*",
-    "konva": "10.7.1",
-    "react": "19.3.0",
-    "react-dom": "19.3.0",
-    "react-konva": "19.3.0",
+    "konva": "10.9.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "react-konva": "19.3.2",
     "zustand": "5.0.15"
   },
   "devDependencies": {
