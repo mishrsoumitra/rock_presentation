@@ -4,7 +4,8 @@
 // take them. Without them it has to compress at every start, and Brotli at quality 11 takes about 19 s for the
 // editor and its fonts on one core. Here the build does it once, on every core. A file gets its copies when its
 // type compresses (scripts, styles, WebAssembly, fonts, text), it is bigger than 1 KB, and a copy saves at least a
-// tenth: the same rules the server applies to a file that has none.
+// tenth: the same rules the server applies to a file that has none. PRECOMPRESS=0 leaves the copies out of a build
+// that does not need them (the server then makes them in the background), which the tests that build the editor do.
 import { readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { availableParallelism } from 'node:os';
 import { extname, join, resolve } from 'node:path';
@@ -81,7 +82,7 @@ export function precompress(): Plugin {
   let log = (_message: string) => {};
   return {
     name: 'precompress',
-    apply: 'build',
+    apply: (_config, { command }) => command === 'build' && process.env.PRECOMPRESS !== '0',
     configResolved(config) {
       outDir = resolve(config.root, config.build.outDir);
       log = message => config.logger.info(message);

@@ -61,6 +61,9 @@ const errors: string[] = [];
 
 beforeAll(async () => {
   const webDir = tempDir('pptx-web-build-');
+  // without the build's compressed copies (apps/web/precompress.ts): making them would peg every core for seconds
+  // while the browser tests run alongside, and the server makes them itself in the background
+  process.env.PRECOMPRESS = '0';
   await build({ configFile: join(ROOT, 'apps/web/vite.config.ts'), root: join(ROOT, 'apps/web'), logLevel: 'error', build: { outDir: webDir, emptyOutDir: true } });
   app = await testServer({ webDir });
   await app.listen({ host: '127.0.0.1', port: 0 });
