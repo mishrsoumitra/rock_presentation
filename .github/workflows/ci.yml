@@ -65,11 +65,13 @@ jobs:
         env:
           RENDER_SANDBOX: '0'
         run: |
-          npm start > start.log 2>&1 &
+          setsid npm start > start.log 2>&1 &
           for i in $(seq 1 60); do curl -fsS http://127.0.0.1:3000/api/health && break; sleep 1; done
           node apps/server/scripts/smoke.ts http://127.0.0.1:3000
-          kill -INT $!
-          wait $! || true
+          # Ctrl-C as a terminal sends it, to the whole process group (npm, the server, Chromium); then a clean stop within 30 s
+          kill -INT -- -$!
+          timeout 30 tail --pid=$! -f /dev/null
+          grep -q '"msg":"stopped"' start.log
       - name: The start log
         if: always()
         run: cat start.log
