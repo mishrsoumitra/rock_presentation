@@ -28,7 +28,9 @@ downloads Playwright's headless Chromium, builds the editor and the server's ren
 production mode: `NODE_ENV=production`, with the settings of `.env` when there is one (copy `.env.example`). Each
 step is skipped when nothing it depends on has changed, so after the first time the server is up in about half a
 second. Decks go to `./data` (`DATA_DIR`). To reach it from other machines, set `HOST=0.0.0.0` and `API_TOKENS`
-([Deploying](#deploying)); Ctrl-C stops it, letting requests in flight finish.
+([Deploying](#deploying)); Ctrl-C stops it, letting requests in flight finish. On a Linux host that withholds
+unprivileged user namespaces (Ubuntu 24.04's default, containers, GitHub's runners), Chromium's own sandbox cannot
+start and slide images answer 503 until `RENDER_SANDBOX=0` is set, as the container image sets it.
 
 For development:
 
