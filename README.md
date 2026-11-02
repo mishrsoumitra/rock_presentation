@@ -17,6 +17,23 @@ checks every change ([Continuous integration](#continuous-integration)).
 
 ## Running it
 
+One command, with Node 24 (`.node-version`) and nothing else installed:
+
+```sh
+npm start                           # the editor at http://127.0.0.1:3000/, the API under /api
+```
+
+`npm start` (`tools/start/start.ts`) fetches pnpm through corepack, installs the dependencies from the lockfile,
+downloads Playwright's headless Chromium, builds the editor and the server's render page, and runs the server in
+production mode: `NODE_ENV=production`, with the settings of `.env` when there is one (copy `.env.example`). Each
+step is skipped when nothing it depends on has changed, so after the first time the server is up in about half a
+second. Decks go to `./data` (`DATA_DIR`). To reach it from other machines, set `HOST=0.0.0.0` and `API_TOKENS`
+([Deploying](#deploying)); Ctrl-C stops it, letting requests in flight finish. On a Linux host that withholds
+unprivileged user namespaces (Ubuntu 24.04's default, containers, GitHub's runners), Chromium's own sandbox cannot
+start and slide images answer 503 until `RENDER_SANDBOX=0` is set, as the container image sets it.
+
+For development:
+
 ```sh
 corepack pnpm install               # pnpm 12 (pinned in package.json); no dependency runs a build script
 corepack pnpm corpus:fetch          # ~1,050 third-party test decks into corpus/external/ (gitignored)
@@ -84,7 +101,9 @@ docker run -d -p 3000:3000 -v pptx-data:/data \
 `ghcr.io/mishrsoumitra/rock_presentation`, tagged `main`, the version, and the commit.
 
 **The editor needs no server.** It opens, edits and saves files in the browser. Its build (`apps/web/dist`) can
-also be served by any static host, as long as that host sends the page's content security policy.
+also be served by any static host, as long as that host sends the page's content security policy. The build holds
+a Brotli and a gzip copy of every file worth compressing (`*.br`, `*.gz`, from `apps/web/precompress.ts`); the
+server sends them to the clients that take them, and a static host can do the same.
 
 **Settings.** The server reads environment variables; `.env.example` lists them all. The ones a deployment usually
 sets:
@@ -116,7 +135,7 @@ curl -H "Authorization: Bearer $TOKEN" -o deck.pdf http://localhost:3000/api/dec
 
 | Workflow | When | What |
 | --- | --- | --- |
-| `ci.yml` | Every push and pull request | Install from the lockfile, `npm audit signatures`, `pnpm audit`, type-check, every test (browser tests included; the corpus is not fetched, so its tests skip), both builds |
+| `ci.yml` | Every push and pull request | Install from the lockfile, `npm audit signatures`, `pnpm audit`, type-check, every test (browser tests included; the corpus is not fetched, so its tests skip), both builds, then `npm start` smoke-tested as a user would run it |
 | `docker.yml` | Pull requests; `main` and tags | Build the image, run it read-only with a token, smoke-test it; publish from `main` and tags |
 | `corpus.yml` | Weekly, and on demand | Every test with the corpus, the server's exit run over all of it, and the weekly audit |
 | `codeql.yml` | Pushes, pull requests, weekly | GitHub's code scanning |
@@ -147,6 +166,7 @@ action is pinned to a commit.
 | `tools/inspect`, `tools/resave` | The M2 deck inspector and the M1 re-save tool |
 | `tools/geometry`, `tools/schema`, `tools/anim` | Generators: preset geometry, schema child order, effect presets |
 | `tools/policy` | The dependency allowlist, enforced as a test |
+| `tools/start` | `npm start`: install, build and run in production mode, every step skipped while its inputs are unchanged |
 | `tools/validator`, `tools/crypto` | The Open XML SDK validator (oracle O1), and a differential test against msoffcrypto-tool |
 
 `packages/*` import nothing from Node, React or the DOM. They are type-checked against the `es2024` and `webworker`

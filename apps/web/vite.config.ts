@@ -2,6 +2,7 @@
 import { fileURLToPath } from 'node:url';
 import react from '@vitejs/plugin-react';
 import { defineConfig, type Plugin } from 'vite';
+import { precompress } from './precompress.ts';
 
 const root = fileURLToPath(new URL('../..', import.meta.url));
 
@@ -19,7 +20,8 @@ const csp = (): Plugin => ({
 });
 
 export default defineConfig({
-  plugins: [react(), csp()],
+  // precompress: a Brotli and a gzip copy next to each built file, for the server to send (apps/web/precompress.ts)
+  plugins: [react(), csp(), precompress()],
   // the metric-compatible open fonts the renderer substitutes for Calibri, Cambria, Arial... (assets/fonts)
   publicDir: fileURLToPath(new URL('../../assets', import.meta.url)),
   server: { fs: { allow: [root] }, headers: { 'Cross-Origin-Opener-Policy': 'same-origin' } },

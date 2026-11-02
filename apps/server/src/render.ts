@@ -274,6 +274,9 @@ export class Renderer {
       browser = await chromium.launch({
         headless: true,
         chromiumSandbox: this.settings.sandbox,
+        // the server handles signals itself (main.ts) and closes the browser in close(); Playwright's own handlers
+        // would end the process (with 130 on Ctrl-C) before the server had finished shutting down
+        handleSIGINT: false, handleSIGTERM: false, handleSIGHUP: false,
         args: [
           '--host-resolver-rules=MAP * ~NOTFOUND',                    // no host name resolves
           `--js-flags=--max-old-space-size=${this.settings.heapMb}`,

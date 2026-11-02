@@ -1,7 +1,7 @@
 // What a deployment adds: API tokens, proxies, and the editor served next to the API.
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { brotliDecompressSync, gunzipSync } from 'node:zlib';
+import { brotliCompressSync, brotliDecompressSync, constants, gunzipSync, gzipSync } from 'node:zlib';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import { configFromEnv } from '../src/config.ts';
@@ -58,6 +58,10 @@ describe('the editor, served next to the API', () => {
   let dir: string;
   let app: FastifyInstance;
   const script = `console.log(${JSON.stringify('x'.repeat(4000))});`;
+  // a file with the build's own compressed copies (apps/web/precompress.ts), made here at other settings than the server's
+  const built = `console.log(${JSON.stringify('y'.repeat(4000))});`;
+  const builtBr = brotliCompressSync(built, { params: { [constants.BROTLI_PARAM_QUALITY]: 5 } });
+  const builtGz = gzipSync(built, { level: 1 });
   beforeAll(async () => {
     dir = tempDir('pptx-web-');
     mkdirSync(join(dir, 'assets'));
@@ -65,6 +69,9 @@ describe('the editor, served next to the API', () => {
     writeFileSync(join(dir, 'index.html'), `<!doctype html><html><head>\n<meta http-equiv="Content-Security-Policy" content="${CSP}"><script type="module" src="/assets/index-abc123.js"></script></head></html>`);
     writeFileSync(join(dir, 'assets/index-abc123.js'), script);
     writeFileSync(join(dir, 'assets/index-abc123.js.map'), '{}');
+    writeFileSync(join(dir, 'assets/built-def456.js'), built);
+    writeFileSync(join(dir, 'assets/built-def456.js.br'), builtBr);
+    writeFileSync(join(dir, 'assets/built-def456.js.gz'), builtGz);
     writeFileSync(join(dir, 'fonts/carlito/Carlito-Regular.ttf'), new Uint8Array(64));
     writeFileSync(join(dir, '.env'), 'SECRET=1');
     app = await testServer({ webDir: dir, apiTokens: [TOKEN] });
@@ -86,6 +93,8 @@ describe('the editor, served next to the API', () => {
     expect([plain.statusCode, plain.headers['cache-control'], plain.body]).toEqual([200, 'public, max-age=31536000, immutable', script]);
     // a script may start a worker, which takes its policy from this response
     expect(plain.headers['content-security-policy']).toBe(`${CSP}; frame-ancestors 'none'`);
+    // the build left no compressed copies of this file, so the server made them, after it was up
+    await app.services.web!.compressed;
     const br = await app.inject({ url: '/assets/index-abc123.js', headers: { 'accept-encoding': 'gzip, br' } });
     expect(br.headers['content-encoding']).toBe('br');
     expect(brotliDecompressSync(br.rawPayload).toString()).toBe(script);
@@ -96,8 +105,16 @@ describe('the editor, served next to the API', () => {
     expect((await app.inject({ url: '/fonts/carlito/Carlito-Regular.ttf' })).headers['content-type']).toBe('font/ttf');
   });
 
-  test('nothing else: no source maps, dotfiles, paths out of the build, or API paths', async () => {
-    for (const url of ['/assets/index-abc123.js.map', '/.env', '/../package.json', '/%2e%2e/package.json', '/assets/../../package.json', '/nope']) {
+  test("the build's own compressed copies are sent as they are", async () => {
+    const br = await app.inject({ url: '/assets/built-def456.js', headers: { 'accept-encoding': 'br' } });
+    expect([br.headers['content-encoding'], br.rawPayload.equals(builtBr)]).toEqual(['br', true]);
+    const gz = await app.inject({ url: '/assets/built-def456.js', headers: { 'accept-encoding': 'gzip' } });
+    expect([gz.headers['content-encoding'], gz.rawPayload.equals(builtGz)]).toEqual(['gzip', true]);
+    expect((await app.inject({ url: '/assets/built-def456.js' })).body).toBe(built);
+  });
+
+  test('nothing else: no source maps, compressed copies, dotfiles, paths out of the build, or API paths', async () => {
+    for (const url of ['/assets/index-abc123.js.map', '/assets/built-def456.js.br', '/assets/built-def456.js.gz', '/.env', '/../package.json', '/%2e%2e/package.json', '/assets/../../package.json', '/nope']) {
       expect((await app.inject({ url })).statusCode, url).toBe(404);
     }
     const api = await app.inject({ url: '/api/nope', headers: { authorization: `Bearer ${TOKEN}` } });

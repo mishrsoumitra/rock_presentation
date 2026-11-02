@@ -13,6 +13,7 @@ import {
 } from './schemas.ts';
 import { currentVersion, type DeckMeta, type DeckStore, type DeckVersion } from './storage.ts';
 import { PACKAGE_TYPES, type DeckCheck } from './tasks.ts';
+import type { WebFiles } from './web.ts';
 import { TaskFailure, WorkerError, type WorkerPool } from './workers.ts';
 
 export interface Services {
@@ -21,6 +22,7 @@ export interface Services {
   pool: WorkerPool;
   renderer: Renderer | undefined;   // undefined when RENDER_PAGES is 0
   renders: JobQueue;
+  web: WebFiles | undefined;        // undefined without a build at WEB_DIR: only the API is served
 }
 
 export const etagOf = (v: DeckVersion) => `"${v.version}-${v.sha256}"`;
