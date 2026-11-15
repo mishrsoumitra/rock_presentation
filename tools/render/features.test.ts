@@ -1848,6 +1848,90 @@ describe('spelling', () => {
   }, 60_000);
 });
 
+describe('slide backgrounds', () => {
+  const pick = async (item: string) => {
+    await page.getByRole('tab', { name: 'Design' }).click();
+    await page.getByTestId('format-background').click();
+    await page.locator('.menu-panel').getByRole('menuitem', { name: item, exact: true }).click();
+    await frames();
+  };
+  const swatch = async (title: string) => {
+    await page.getByRole('tab', { name: 'Design' }).click();
+    await page.getByTestId('format-background').click();
+    await page.locator(`.menu-panel .swatch[title="${title}"]`).first().click();
+    await frames();
+  };
+  /** The colour drawn at a point of the slide (EMU). */
+  const pixel = async (x: number, y: number) => {
+    await frames();
+    const p = await slidePoint(x, y);
+    return page.evaluate(([px, py]) => {
+      const c = document.querySelector('[data-testid="canvas"] canvas') as HTMLCanvasElement;
+      const r = c.getBoundingClientRect();
+      const d = c.getContext('2d')!.getImageData(Math.round((px - r.left) * (c.width / r.width)), Math.round((py - r.top) * (c.height / r.height)), 1, 1).data;
+      return [d[0]!, d[1]!, d[2]!];
+    }, [p.x, p.y] as const);
+  };
+  /** Each slide's own background element, compactly ("-" for none of its own). */
+  const backgrounds = () => state<string[]>(`
+    const find = (e, n) => e && e.children.find(c => c.kind === 'element' && c.local === n);
+    return s.session.ed.doc.slideParts().map(p => { const pr = find(find(find(s.session.ed.doc.root(p), 'cSld'), 'bg'), 'bgPr'); return pr ? pr.children[0].local + ':' + (pr.children[0].children[0] ? (pr.children[0].children[0].attrs[0] || {}).value : '') : '-'; });`);
+  const CORNER = [300000, 300000] as const;
+
+  test('a theme colour, a standard colour, a gradient in it, and Reset, each drawn across the whole slide', async () => {
+    await swatch('Red');
+    expect(await backgrounds()).toEqual(['solidFill:FF0000']);
+    expect(await pixel(...CORNER)).toEqual([255, 0, 0]);
+    expect(await state<string>('return s.session.ed.log.undoLabel;')).toBe('Format Background');
+
+    await pick('Gradient: Down');
+    expect((await backgrounds())[0]).toMatch(/^gradFill/);
+    const top = await pixel(6000000, 150000), bottom = await pixel(6000000, 6700000);
+    expect(top[1]!).toBeGreaterThan(bottom[1]! + 80);                    // from a light tint at the top to red at the bottom
+    expect(bottom[0]!).toBeGreaterThan(240);
+
+    // a theme colour is written as the theme colour, not as its value today
+    await swatch('Accent 1');
+    expect(await backgrounds()).toEqual(['solidFill:accent1']);
+    expect(await pixel(...CORNER)).toEqual([0x44, 0x72, 0xc4]);
+
+    await pick('Reset Background');
+    expect(await backgrounds()).toEqual(['-']);
+    expect(await pixel(...CORNER)).toEqual([255, 255, 255]);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('a picture as the background, then Apply to All Slides; the saved file has the picture once', async () => {
+    const png = new PNG({ width: 16, height: 9 });
+    for (let i = 0; i < 16 * 9; i++) png.data.set([0, 120, 60, 255], i * 4);
+    const file = join(mkdtempSync(join(tmpdir(), 'bg-')), 'green.png');
+    writeFileSync(file, PNG.sync.write(png));
+    await page.getByTestId('new-slide').click();
+    await page.getByTestId('new-slide').click();
+    await page.getByRole('tab', { name: 'Design' }).click();
+    await page.getByTestId('format-background').click();
+    const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.locator('.menu-panel').getByRole('menuitem', { name: 'Picture…' }).click()]);
+    await chooser.setFiles(file);
+    await expect.poll(async () => (await backgrounds())[2], { timeout: 10_000 }).toMatch(/^blipFill/);
+    await expect.poll(() => pixel(...CORNER), { timeout: 10_000 }).toEqual([0, 120, 60]);
+    expect(await backgrounds()).toEqual(['-', '-', expect.stringMatching(/^blipFill/)]);
+
+    await pick('Apply to All Slides');
+    expect((await backgrounds()).every(b => b.startsWith('blipFill'))).toBe(true);
+    expect(await state<string>('return s.session.ed.log.undoLabel;')).toBe('Apply Background to All');
+    await state('s.setSlide(s.session.ed.doc.slideParts()[0]);');
+    await expect.poll(() => pixel(...CORNER), { timeout: 10_000 }).toEqual([0, 120, 60]);
+    await page.keyboard.press('Control+z');                              // one step for all slides
+    expect(await backgrounds()).toEqual(['-', '-', expect.stringMatching(/^blipFill/)]);
+    await page.keyboard.press('Control+y');
+
+    const ed = await saved();
+    expect(ed.pkg.partNames().filter(n => n.startsWith('/ppt/media/')).length).toBe(1);
+    expect(ed.doc.slideParts().map(p => ed.doc.targets(p, 'image').length)).toEqual([1, 1, 1]);
+    expect(errors).toEqual([]);
+  }, 60_000);
+});
+
 describe('bullet and number styles', () => {
   test('pick a bullet character and a numbering scheme; the menus tick the one in force; text in a box gets a hanging indent', async () => {
     await textBox('one\ntwo');

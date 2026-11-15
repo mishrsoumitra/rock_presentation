@@ -283,12 +283,13 @@ export function Ribbon({ extraTabs }: { extraTabs?: Partial<Record<Tab, React.Re
                 <MenuItem label="Widescreen (16:9)" onClick={() => { close(); window.dispatchEvent(new CustomEvent('slide-size', { detail: { cx: 12192000, cy: 6858000 } })); }} />
                 <MenuItem label="Custom Slide Size…" onClick={() => { close(); window.dispatchEvent(new CustomEvent('slide-size', { detail: null })); }} />
               </>)}</Menu>
-              <Menu icon="fill" label="Format Background">{close => <ColorGrid onPick={c => {
-                close();
-                const hex = c && c !== 'none' && c.kind === 'srgb' ? c.hex : null;
-                if (c && c !== 'none' && c.kind === 'scheme') useEditor.getState().notify('info', 'Background: pick a standard colour (theme backgrounds keep following the master).');
-                act.backgroundCurrentSlide(hex);
-              }} extra={<MenuItem label="Reset Background" onClick={() => { close(); act.backgroundCurrentSlide(null); }} />} />}</Menu>
+              <Menu icon="fill" label="Format Background" testid="format-background">{close => <ColorGrid onPick={c => { close(); act.backgroundCurrentSlide(c && c !== 'none' ? { color: c } : null); }} extra={<>
+                <hr />
+                {([['Down', 90], ['Right', 0], ['Diagonal', 45]] as const).map(([l, a]) => <MenuItem key={l} label={`Gradient: ${l}`} onClick={() => { close(); act.gradientBackground(a); }} />)}
+                <MenuItem label="Picture…" onClick={() => { close(); void pickFile('image/png,image/jpeg,image/gif,image/bmp,image/webp').then(f => (f ? act.pictureBackground(f) : undefined)); }} />
+                <hr />
+                <MenuItem label="Apply to All Slides" onClick={() => { close(); act.backgroundToAll(); }} />
+                <MenuItem label="Reset Background" onClick={() => { close(); act.backgroundCurrentSlide(null); }} /></>} />}</Menu>
               <FilePicker accept=".pptx,.potx,.pptm,.potm" onFile={f => void act.importTemplate(f)}>{open => <Btn icon="layout" label="Import Slide Masters…" wide disabled={!session} onClick={open} />}</FilePicker>
             </section>
           </>

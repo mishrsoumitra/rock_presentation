@@ -2,8 +2,8 @@
 import {
   addSlide, align, applyLayout, compound, copyShapes, copySlide, pasteSlide, cropPicture, deleteShapes, deleteSlide, distribute, duplicateShapes, duplicateSlide, flip, group, importMasters, replacePicture,
   insertPicture, insertShape, insertTable, insertTextBox, moveBy, ROW_HEIGHT, moveSlide, pasteShapes, prepareImage, prepareSvg, prepareTemplate, rotateQuarter,
-  fillColorOf, setBackground, setFill, setFillTransparency, setGradientFill, setLine, setPictureFill, setShadow, setSlideHidden, setSlideSize, setTransforms, ungroup, zOrder,
-  type Alignment, type ColorSpec, type LineSpec,
+  applyBackgroundToAll, fillColorOf, setFill, setSlideBackground, setFillTransparency, setGradientFill, setLine, setPictureFill, setShadow, setSlideHidden, setSlideSize, setTransforms, ungroup, zOrder,
+  type Alignment, type BackgroundSpec, type ColorSpec, type LineSpec,
   type ScaleMode, type ZOrder,
 } from '@pptx/editor-core';
 import { OpcPackage } from '@pptx/opc';
@@ -11,7 +11,7 @@ import {
   connectionSites, copyFormat, copyTextFormat, frameBetween, nearestSite, paragraphLength, paragraphs, pasteFormat, setConnectorEnds, type Point,
 } from '@pptx/editor-core';
 import { runsOf } from '@pptx/model';
-import { ShapeView } from '@pptx/model';
+import { attr, child, ShapeView } from '@pptx/model';
 import type { XmlElement } from '@pptx/xml';
 import { blankPresentation } from '../engine/blank.ts';
 import { decodeImage } from '../engine/images.ts';
@@ -628,10 +628,48 @@ export function layoutCurrentSlide(layout: string): void {
   s.run(applyLayout(ed, s.slide, layout), { selection: [] });
 }
 
-export function backgroundCurrentSlide(hex: string | null): void {
+/** The current slide's background: a colour, a gradient, or (null) the layout's again. */
+export function backgroundCurrentSlide(bg: BackgroundSpec | null): void {
   const s = st();
   const ed = s.session?.ed;
-  if (ed && s.slide) s.run(setBackground(ed, s.slide, hex ? { hex } : null));
+  if (ed && s.slide) s.run(setSlideBackground(ed, [s.slide], bg));
+}
+
+/** The colour of the current slide's own solid background, when it has one. */
+function ownBackgroundColor(): ColorSpec | undefined {
+  const s = st();
+  if (!s.session || !s.slide) return undefined;
+  const fill = child(child(child(child(s.session.ed.doc.root(s.slide), 'p:cSld'), 'p:bg'), 'p:bgPr'), 'a:solidFill');
+  const srgb = child(fill, 'a:srgbClr'), scheme = child(fill, 'a:schemeClr');
+  if (srgb) return { kind: 'srgb', hex: attr(srgb, 'val') ?? 'FFFFFF' };
+  return scheme && !scheme.children.length ? { kind: 'scheme', val: attr(scheme, 'val') ?? 'accent1' } : undefined;
+}
+
+/** A gradient background from a lighter tint of the slide's background colour (the theme's accent when it has none) to the colour. */
+export function gradientBackground(angle: number): void {
+  const to = ownBackgroundColor() ?? { kind: 'scheme', val: 'accent1' };
+  backgroundCurrentSlide({ gradient: { from: lighter(to), to, angle } });
+}
+
+/** A picture from a file as the current slide's background. */
+export async function pictureBackground(file: File): Promise<void> {
+  const s = st();
+  const ed = s.session?.ed;
+  if (!ed || !s.slide) return;
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const type = sniffImage(bytes, file.name);
+  if (!type || type === 'image/svg+xml' || type === 'image/x-emf' || type === 'image/x-wmf') { s.notify('error', `${file.name} cannot be a background here.`); return; }
+  const img = await decodeImage(bytes, type).catch(() => undefined);
+  if (!img) { s.notify('error', `${file.name} could not be read as a picture.`); return; }
+  const width = (img as { width?: number }).width ?? 960, height = (img as { height?: number }).height ?? 720;
+  backgroundCurrentSlide({ picture: await prepareImage(ed, { bytes, contentType: type, ext: EXT[type]!, width, height }) });
+}
+
+/** Every slide gets the current slide's background. */
+export function backgroundToAll(): void {
+  const s = st();
+  const ed = s.session?.ed;
+  if (ed && s.slide) s.run(applyBackgroundToAll(ed, s.slide));
 }
 
 export function resizeSlides(cx: number, cy: number, mode: ScaleMode): void {

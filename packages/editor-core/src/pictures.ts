@@ -4,7 +4,11 @@ import { attr, attrNs, child, insertInOrder, int, path, relType, removeChildren,
 import type { Editor } from './editor.ts';
 import type { Command } from './history.ts';
 import { collectOrphans, dropUnreferenced, hashMedia, mediaPart, relRefs } from './parts.ts';
+import { colorXml, type GradientSpec } from './format.ts';
 import type { Rect } from './shapes.ts';
+import type { ColorSpec } from './text.ts';
+import { clone } from '@pptx/model';
+import type { XmlElement } from '@pptx/xml';
 import { element, esc, insertAt, nextShapeId, unitsIn } from './xml.ts';
 
 export interface ImageData {
@@ -204,6 +208,80 @@ export function setPictureFill(ed: Editor, part: string, shapes: ShapeView[], im
       }
       // a picture fill this replaced may have been the last use of its picture
       dropUnreferenced(ed.pkg, part, before);
+    },
+  });
+}
+
+/** What a slide's background is filled with: a colour (the theme's or any other), a two-colour gradient, or a picture. */
+export type BackgroundSpec = { color: ColorSpec } | { gradient: GradientSpec } | { picture: ImageData };
+
+/** Remove what a part's XML no longer refers to among the relationships it referred to before an edit. */
+function dropUnused(ed: Editor, part: string, before: Set<string>): void {
+  dropUnreferenced(ed.pkg, part, before);
+}
+
+/**
+ * Give slides a background of their own (null: back to the layout's). Several slides are one undo step, which is
+ * how "apply to all" is done. A picture is stored once however many slides show it.
+ */
+export function setSlideBackground(ed: Editor, slides: string[], bg: BackgroundSpec | null): Command {
+  return ed.edit({
+    label: 'Format Background', parts: slides, structural: true, scope: () => slides.map(p => ed.doc.root(p)),
+    apply: () => {
+      for (const part of slides) {
+        const root = ed.doc.root(part);
+        const cSld = child(root, 'p:cSld');
+        if (!cSld) continue;
+        const before = new Set(relRefs(root).map(r => r.value));
+        removeChildren(cSld, 'p:bg');
+        if (bg) {
+          const ang = 'gradient' in bg ? Math.round((((bg.gradient.angle % 360) + 360) % 360) * 60000) : 0;
+          const fill = 'color' in bg ? `<a:solidFill>${colorXml(bg.color)}</a:solidFill>`
+            : 'gradient' in bg ? `<a:gradFill rotWithShape="1"><a:gsLst><a:gs pos="0">${colorXml(bg.gradient.from)}</a:gs><a:gs pos="100000">${colorXml(bg.gradient.to)}</a:gs></a:gsLst><a:lin ang="${ang}" scaled="0"/></a:gradFill>`
+              : `<a:blipFill dpi="0" rotWithShape="1">${blipXml(ed, part, bg.picture)}<a:srcRect/><a:stretch><a:fillRect/></a:stretch></a:blipFill>`;
+          insertInOrder(cSld, element(cSld, `<p:bg><p:bgPr>${fill}<a:effectLst/></p:bgPr></p:bg>`, ed.strict));
+        }
+        dropUnused(ed, part, before);
+      }
+    },
+  });
+}
+
+/**
+ * Give every other slide the background one slide has (PowerPoint's Apply to All): its colour, gradient or picture,
+ * or, when it has none of its own, no background of their own either. One undo step.
+ */
+export function applyBackgroundToAll(ed: Editor, from: string): Command {
+  const slides = ed.doc.slideParts().filter(p => p !== from);
+  return ed.edit({
+    label: 'Apply Background to All', parts: slides, structural: true, scope: () => slides.map(p => ed.doc.root(p)),
+    apply: () => {
+      const source = child(child(ed.doc.root(from), 'p:cSld'), 'p:bg');
+      // the pictures the background shows, by the relationship ids its XML names them with
+      const pictures = new Map<string, string>();
+      if (source) {
+        for (const ref of relRefs(source)) {
+          const rel = ed.pkg.relationships(from).find(r => r.id === ref.value && !r.external);
+          if (rel) pictures.set(ref.value, resolveTarget(normalizeName(from), rel.target));
+        }
+      }
+      for (const part of slides) {
+        const root = ed.doc.root(part);
+        const cSld = child(root, 'p:cSld');
+        if (!cSld) continue;
+        const before = new Set(relRefs(root).map(r => r.value));
+        removeChildren(cSld, 'p:bg');
+        if (source) {
+          const copy = clone(source, cSld);
+          const repoint = (e: XmlElement) => {
+            for (const a of e.attrs) { const target = pictures.get(a.value); if (target && a.ns.endsWith('/relationships')) a.value = relTo(ed, part, 'image', target); }
+            for (const c of e.children) if (c.kind === 'element') repoint(c);
+          };
+          repoint(copy);
+          insertInOrder(cSld, copy);
+        }
+        dropUnused(ed, part, before);
+      }
     },
   });
 }
