@@ -18,6 +18,7 @@ export {
 export { applyBackgroundToAll, cropAndPlace, cropPicture, pictureCrop, insertMedia, insertPicture, prepareMedia, setSlideBackground, type BackgroundSpec, type MediaData, naturalSize, prepareImage, prepareSvg, replacePicture, retarget, setPictureFill, type ImageData, type SvgImage } from './pictures.ts';
 export { addSlide, applyLayout, copySlide, deleteSlide, duplicateSlide, moveSlide, pasteSlide, setBackground, setSlideHidden, type SlideClip } from './slides.ts';
 export { notesText, setNotes } from './notes.ts';
+export { equationOf, equationPieces, insertEquation, linearOf, ommlOf, parseEquation, setEquation, type MathNode } from './equations.ts';
 export { insertWordArt, WORDART_STYLES, type WordArtStyle } from './wordart.ts';
 export { headerFooter, setHeaderFooter, setHeaderFooterAll, type FooterKind, type HeaderFooter } from './footers.ts';
 export { chartData, chartPartOf, insertChart, SAMPLE_DATA, setChartData, type ChartData, type ChartKind } from './charts.ts';

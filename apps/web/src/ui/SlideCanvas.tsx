@@ -2,7 +2,7 @@
 import Konva from 'konva';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Circle, Layer, Line, Rect, Shape, Stage, Transformer } from 'react-konva';
-import { moveBy, setTransforms, type TransformChange } from '@pptx/editor-core';
+import { equationOf, moveBy, setTransforms, type TransformChange } from '@pptx/editor-core';
 import { ShapeView } from '@pptx/model';
 import { drawPrimitive, drawShape, drawSlide, shapeTextLayout, type RenderShape, type RenderSlide } from '@pptx/render';
 import type { XmlElement } from '@pptx/xml';
@@ -874,6 +874,8 @@ export function SlideCanvas() {
                   if (e.evt.detail !== 2 || e.evt.button !== 0) return;
                   if (rs.source.kind === 'grpSp') { set({ entered: el, selection: [] }); return; }
                   if (rs.source.graphic?.kind === 'table') return;                      // a table takes its double click on the press (onTableDown)
+                  // an equation is changed as an equation, not as the text that stands for it here
+                  if (equationOf(el) !== undefined) { set({ selection: [el], text: null, equationEditing: true }); return; }
                   const at = pointer();
                   const v = textViewOf(rs);
                   if (!v) return;

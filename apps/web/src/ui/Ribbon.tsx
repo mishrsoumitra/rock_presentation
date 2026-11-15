@@ -48,7 +48,7 @@ function shown(s: EditorState): string {
     run?.latin, run?.size, run?.bold, run?.italic, run?.underline, run?.strike, para?.bullet?.kind, para?.bullet?.char, para?.bullet?.scheme, para?.marL, para?.indent, para?.level, para?.align,
     run?.baseline, run?.spacing, para?.lineSpacing.kind, para?.lineSpacing.val, para?.spaceBefore.val, para?.spaceAfter.val,
     here.body?.anchor, here.body?.numCol, here.body && Object.values(here.body.insets).join(','),
-    s.painting, !!s.cropping, act.chartSelected(), !!act.selectedMedia(), !!s.playing, s.pane, s.view, s.showRuler, s.showGuides, s.guides.x.length + s.guides.y.length, s.cells && [s.cells.anchor.r, s.cells.anchor.c, s.cells.focus.r, s.cells.focus.c].join(','), !!linkContext(), s.text && [s.text.anchor.p, s.text.anchor.offset, s.text.caret.p, s.text.caret.offset].join(','), Object.values(tables.tableAbilities()).join(','),
+    s.painting, !!s.cropping, act.chartSelected(), !!act.selectedMedia(), !!s.playing, act.selectedEquation(), s.pane, s.view, s.showRuler, s.showGuides, s.guides.x.length + s.guides.y.length, s.cells && [s.cells.anchor.r, s.cells.anchor.c, s.cells.focus.r, s.cells.focus.c].join(','), !!linkContext(), s.text && [s.text.anchor.p, s.text.anchor.offset, s.text.caret.p, s.text.caret.offset].join(','), Object.values(tables.tableAbilities()).join(','),
   ].join('|');
 }
 
@@ -70,6 +70,7 @@ export function Ribbon({ extraTabs }: { extraTabs?: Partial<Record<Tab, React.Re
   const painting = useEditor.getState().painting;
   const chart = act.chartSelected();
   const media = !!act.selectedMedia();
+  const equation = act.selectedEquation() !== undefined;
   const playing = !!useEditor.getState().playing;
   const cropping = !!useEditor.getState().cropping;
   const isPicture = selection.length === 1 && selection[0]!.local === 'pic';
@@ -204,6 +205,11 @@ export function Ribbon({ extraTabs }: { extraTabs?: Partial<Record<Tab, React.Re
                 </FilePicker>
               </section>
             )}
+            {equation && (
+              <section className="group" aria-label="Equation">
+                <Btn icon="equation" label="Edit Equation" wide onClick={() => useEditor.setState({ equationEditing: true })} testid="equation-edit" />
+              </section>
+            )}
             {media && (
               <section className="group" aria-label="Media">
                 <Btn icon="play" label={playing ? 'Stop' : 'Play'} wide active={playing} onClick={act.togglePlaying} testid="media-play" />
@@ -295,6 +301,7 @@ export function Ribbon({ extraTabs }: { extraTabs?: Partial<Record<Tab, React.Re
               <Btn icon="text" label="Text Box" wide disabled={!session} onClick={act.insertTextBoxHere} testid="text-box" />
               <Menu icon="wordart" label="WordArt" testid="insert-wordart">{close => <WordArtGallery onPick={w => { close(); act.insertWordArtHere(w); }} />}</Menu>
               <Btn icon="footer" label="Header & Footer" wide disabled={!session} onClick={() => useEditor.setState({ footerEditing: true })} testid="header-footer" />
+              <Btn icon="equation" label="Equation" wide disabled={!session} onClick={() => useEditor.setState({ equationEditing: true })} testid="insert-equation" />
               <Menu icon="symbol" label="Symbol" testid="insert-symbol">{() => (
                 <div className="symbols" data-testid="symbols">
                   {SYMBOL_GROUPS.map(([title, chars]) => (

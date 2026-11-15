@@ -9,7 +9,7 @@ import { PNG } from 'pngjs';
 import { createServer, type ViteDevServer } from 'vite';
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest';
 import { OpcPackage, readZip } from '@pptx/opc';
-import { cellText, chartData, Editor, headerFooter, notesText, slideComments, tableOf, tableSize } from '../../packages/editor-core/src/index.ts';
+import { cellText, chartData, Editor, equationOf, headerFooter, notesText, slideComments, tableOf, tableSize } from '../../packages/editor-core/src/index.ts';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 let server: ViteDevServer;
@@ -1936,6 +1936,103 @@ describe('theme colours and fonts', () => {
     expect(xml).toContain('<a:clrScheme name="Violet">');
     expect(xml).toContain('<a:accent1><a:srgbClr val="AD84C6"/></a:accent1>');
     expect(xml).toMatch(/<a:fontScheme name="Georgia and Verdana"><a:majorFont><a:latin typeface="Georgia"/);
+    expect(errors).toEqual([]);
+  }, 60_000);
+});
+
+describe('equations', () => {
+  const dialog = () => page.getByTestId('equation-dialog');
+  const selected = () => page.evaluate(`import('/src/ui/actions.ts').then(a => a.selectedEquation() ?? null)`) as Promise<string | null>;
+  /** The text the selected shape is drawn with here, and which of its runs are raised. */
+  const shown = () => state<{ text: string; raised: string }>(`
+    const el = s.selection[0];
+    const runs = [];
+    const walk = e => { for (const c of e.children) if (c.kind === 'element') { if (c.local === 'r' && c.prefix === 'a') runs.push(c); else walk(c); } };
+    walk(el);
+    const text = r => r.children.filter(c => c.kind === 'element' && c.local === 't').map(t => t.children.map(c => c.value ?? '').join('')).join('');
+    const up = r => r.children.some(c => c.kind === 'element' && c.local === 'rPr' && c.attrs.some(a => a.local === 'baseline' && Number(a.value) > 0));
+    return { text: runs.map(text).join(''), raised: runs.filter(up).map(text).join(',') };`);
+  async function insertEquation(text: string): Promise<void> {
+    await page.getByRole('tab', { name: 'Insert' }).click();
+    await page.getByTestId('insert-equation').click();
+    await dialog().waitFor();
+    await page.getByTestId('equation-text').fill(text);
+    await page.getByTestId('equation-apply').click();
+  }
+
+  test('Insert > Equation takes an equation typed on one line and shows it with its exponents raised', async () => {
+    await page.getByRole('tab', { name: 'Insert' }).click();
+    await page.getByTestId('insert-equation').click();
+    await dialog().waitFor();
+    expect(await page.getByTestId('equation-apply').isDisabled()).toBe(true);      // nothing to insert yet
+    expect(await page.getByTestId('equation-apply').innerText()).toBe('Insert');
+    await page.getByTestId('equation-text').fill('a^2 + b^2 = c^2');
+    await page.keyboard.press('Enter');
+    expect(await dialog().count()).toBe(0);
+    expect(await selected()).toBe('a^2+b^2=c^2');
+    expect(await shown()).toEqual({ text: 'a2+b2=c2', raised: '2,2,2' });
+    expect(await state<string>('return s.session.ed.log.undoLabel;')).toBe('Insert Equation');
+    expect(await state<number>('return s.selection.length;')).toBe(1);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('an example fills in the equation; the quadratic formula is a fraction with a root in it', async () => {
+    await page.getByRole('tab', { name: 'Insert' }).click();
+    await page.getByTestId('insert-equation').click();
+    await dialog().getByRole('button', { name: 'Quadratic formula' }).click();
+    expect(await page.getByTestId('equation-text').inputValue()).toBe('x = (-b ± sqrt(b^2 - 4ac)) / (2a)');
+    await page.getByTestId('equation-apply').click();
+    expect(await selected()).toBe('x=(-b±sqrt(b^2-4ac))/(2a)');
+    expect((await shown()).text).toBe('x=(-b±√(b2-4ac))/(2a)');
+    const ed = await saved();
+    const xml = new TextDecoder().decode(ed.pkg.getPart(ed.doc.slideParts()[0]!)!.bytes);
+    expect(xml).toMatch(/<mc:Choice[^>]* Requires="a14"[^>]*><p:sp>/);
+    expect(xml).toContain('<m:f><m:num>');
+    expect(xml).toContain('<m:rad><m:radPr><m:degHide m:val="1"/></m:radPr><m:deg/><m:e><m:sSup>');
+    expect(xml).toContain('<mc:Fallback><p:sp>');
+    const part = ed.doc.slideParts()[0]!;
+    expect(ed.doc.slide(part).shapes.map(sh => equationOf(sh)).filter(Boolean)).toEqual(['x=(-b±sqrt(b^2-4ac))/(2a)']);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('a double click, Edit Equation on the Home tab and the right-click menu open the equation to change; Apply is one undo step', async () => {
+    await insertEquation('E = m c^2');
+    const box = await state<{ x: number; y: number; cx: number; cy: number }>(`const x = s.session.ed.view(s.slide, s.selection[0]).xfrm; return { x: x.x, y: x.y, cx: x.cx, cy: x.cy };`);
+    await frames();
+    const mid = await slidePoint(box.x + box.cx / 2, box.y + box.cy / 2);
+    await page.mouse.dblclick(mid.x, mid.y);
+    await dialog().waitFor();
+    expect(await page.getByTestId('equation-text').inputValue()).toBe('E=m c^2');
+    expect(await page.getByTestId('equation-apply').innerText()).toBe('Apply');
+    expect(await state<boolean>('return s.text === null;')).toBe(true);            // not typing in the text that stands for it
+    await page.getByTestId('equation-text').fill('E = m c^2 / sqrt(1 - v^2/c^2)');
+    await page.getByTestId('equation-apply').click();
+    expect(await selected()).toBe('E=m c^2/sqrt(1-v^2/c^2)');
+    expect((await shown()).text).toBe('E=mc2/√(1-v2/c2)');
+    expect(await state<string>('return s.session.ed.log.undoLabel;')).toBe('Edit Equation');
+    expect(await state<number>('return s.session.ed.doc.slide(s.slide).shapes.length;')).toBe(3);
+
+    await page.getByRole('tab', { name: 'Home' }).click();
+    await page.getByTestId('equation-edit').click();
+    await dialog().waitFor();
+    await page.keyboard.press('Escape');
+    expect(await dialog().count()).toBe(0);
+    await frames();
+    await page.mouse.click(mid.x, mid.y, { button: 'right' });
+    await page.getByTestId('menu-equation').click();
+    await dialog().waitFor();
+    await page.keyboard.press('Escape');
+
+    await page.keyboard.press('Control+z');
+    expect(await selected()).toBe('E=m c^2');
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('a plain text box is not an equation: no Edit Equation for it', async () => {
+    await textBox('x^2');
+    await page.keyboard.press('Escape');
+    expect(await selected()).toBeNull();
+    expect(await page.getByTestId('equation-edit').count()).toBe(0);
     expect(errors).toEqual([]);
   }, 60_000);
 });

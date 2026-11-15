@@ -258,6 +258,12 @@ select { height: 28px; border: 1px solid var(--line); border-radius: var(--radiu
 .dialog-error { color: var(--danger); margin: 6px 0 0; }
 .dialog-buttons button.plain { margin-right: auto; background: var(--panel); border-color: var(--line); color: var(--danger); }
 .dialog.chart-dialog { width: min(760px, 100%); }
+.equation-dialog input[type="text"] { font: 16px/1.2 'Cambria Math', Cambria, Georgia, serif; height: 36px; }
+.equation-help { font-size: 12px; margin: 6px 0; }
+.equation-help code { background: var(--bg); border: 1px solid var(--line); border-radius: 3px; padding: 0 3px; }
+.equation-examples { display: flex; flex-wrap: wrap; gap: 6px; }
+.equation-examples button { border: 1px solid var(--line); background: var(--panel); border-radius: 12px; padding: 3px 10px; cursor: pointer; font-size: 12px; }
+.equation-examples button:hover { border-color: var(--accent); }
 .footer-dialog label { display: flex; align-items: center; gap: 6px; margin: 6px 0; }
 .footer-dialog input[type="checkbox"], .footer-dialog input[type="radio"] { display: inline-block; width: auto; margin: 0; padding: 0; }
 .footer-dialog .footer-sub { margin-left: 22px; }

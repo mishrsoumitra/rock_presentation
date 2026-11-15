@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import { useEditor } from '../state/store.ts';
 import type { LinkTarget } from '@pptx/editor-core';
-import { applyFooter, footerHere, resizeSlides, todayText } from './actions.ts';
+import { applyEquation, applyFooter, footerHere, resizeSlides, selectedEquation, todayText } from './actions.ts';
 import { applyLink, linkContext, slideChoices } from './linkActions.ts';
 import { normalizeUrl } from './links.ts';
 import { refocusText } from './widgets.tsx';
@@ -224,6 +224,46 @@ function FooterForm() {
           <button type="button" onClick={close}>Cancel</button>
           <button type="button" onClick={() => apply(true)} data-testid="footer-apply-all">Apply to All</button>
           <button type="submit" data-testid="footer-apply">Apply</button>
+        </div>
+      </form>
+    </Dialog>
+  );
+}
+
+/** Equations to start from: what they are called and how they are typed. */
+export const EQUATION_EXAMPLES: [string, string][] = [
+  ['Quadratic formula', 'x = (-b ± sqrt(b^2 - 4ac)) / (2a)'],
+  ['Pythagoras', 'a^2 + b^2 = c^2'],
+  ['Area of a circle', 'A = π r^2'],
+  ['Mass and energy', 'E = m c^2'],
+  ['Slope of a line', 'm = (y_2 - y_1) / (x_2 - x_1)'],
+];
+
+/**
+ * Equation: typed on one line (^ raises, _ lowers, / makes a fraction, sqrt() a root, brackets group) and stored
+ * as Office math, which PowerPoint typesets. It opens on the selected equation to change it, or empty for a new one.
+ */
+export function EquationDialog() {
+  const open = useEditor(s => s.equationEditing);
+  return open ? <EquationForm /> : null;
+}
+
+function EquationForm() {
+  const [existing] = useState(() => selectedEquation());
+  const [text, setText] = useState(existing ?? '');
+  const close = () => useEditor.setState({ equationEditing: false });
+  const apply = () => { if (!text.trim()) return; applyEquation(text); close(); };
+  return (
+    <Dialog title="Equation" onClose={close}>
+      <form className="equation-dialog" data-testid="equation-dialog" onSubmit={e => { e.preventDefault(); apply(); }}>
+        <input type="text" autoFocus aria-label="Equation" placeholder="a^2 + b^2 = c^2" value={text} spellCheck={false} onChange={e => setText(e.target.value)} data-testid="equation-text" />
+        <p className="equation-help">Type it on one line: <code>^</code> raises, <code>_</code> lowers, <code>/</code> makes a fraction, <code>sqrt( )</code> a root, and brackets group.</p>
+        <div className="equation-examples" role="group" aria-label="Examples">
+          {EQUATION_EXAMPLES.map(([name, eq]) => <button key={name} type="button" title={eq} onClick={() => setText(eq)}>{name}</button>)}
+        </div>
+        <div className="dialog-buttons">
+          <button type="button" onClick={close}>Cancel</button>
+          <button type="submit" disabled={!text.trim()} data-testid="equation-apply">{existing === undefined ? 'Insert' : 'Apply'}</button>
         </div>
       </form>
     </Dialog>

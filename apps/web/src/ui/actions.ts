@@ -2,7 +2,7 @@
 import {
   addSlide, align, applyLayout, compound, copyShapes, copySlide, pasteSlide, cropPicture, deleteShapes, deleteSlide, distribute, duplicateShapes, duplicateSlide, flip, group, importMasters, replacePicture,
   insertPicture, insertShape, insertTable, insertTextBox, moveBy, ROW_HEIGHT, moveSlide, pasteShapes, prepareImage, prepareSvg, prepareTemplate, rotateQuarter,
-  addSection, applyBackgroundToAll, chartData, chartPartOf, fillColorOf, headerFooter, insertChart, insertMedia, insertWordArt, prepareMedia, setChartData, setFill, setHeaderFooter, setHeaderFooterAll, setSlideBackground, setThemeColors, setThemeFonts, themeOfSlide, themeSchemes, setFillTransparency, setGradientFill, setLine, setPictureFill, setShadow, setSlideHidden, setSlideSize, setTransforms, ungroup, zOrder,
+  addSection, applyBackgroundToAll, chartData, chartPartOf, equationOf, fillColorOf, headerFooter, insertChart, insertEquation, insertMedia, insertWordArt, setEquation, prepareMedia, setChartData, setFill, setHeaderFooter, setHeaderFooterAll, setSlideBackground, setThemeColors, setThemeFonts, themeOfSlide, themeSchemes, setFillTransparency, setGradientFill, setLine, setPictureFill, setShadow, setSlideHidden, setSlideSize, setTransforms, ungroup, zOrder,
   type Alignment, type BackgroundSpec, type ChartData, type ChartKind, type ColorScheme, type HeaderFooter, type WordArtStyle, type ColorSpec, type FontScheme, type LineSpec,
   type ScaleMode, type ZOrder,
 } from '@pptx/editor-core';
@@ -239,6 +239,29 @@ export function insertTextBoxHere(): void {
   c.s.run(r.command);
   const els = inserted(r.id);
   if (els[0]) useEditor.setState({ selection: els, text: { part: c.part, el: els[0], caret: { p: 0, offset: 0 }, anchor: { p: 0, offset: 0 } } });
+}
+
+/** The equation of the one selected shape, on one line, when it holds one. */
+export function selectedEquation(): string | undefined {
+  const c = ctx();
+  return c?.views.length === 1 ? equationOf(c.views[0]!) : undefined;
+}
+
+/** The Equation dialog's Insert or Apply: change the selected equation, or put a new one in the middle of the slide. */
+export function applyEquation(text: string): void {
+  const c = ctx();
+  if (!c || !text.trim()) return;
+  useEditor.setState({ text: null });
+  if (c.views.length === 1 && equationOf(c.views[0]!) !== undefined) {
+    c.s.run(setEquation(c.ed, c.part, c.views[0]!, text));
+    return;
+  }
+  const size = c.ed.doc.presentation.slideSize;
+  // roomy for its text; the box fits itself to the equation when it is drawn
+  const w = Math.min(size.cx * 0.9, Math.max(1200000, text.trim().length * 190000)), h = 461665;
+  const r = insertEquation(c.ed, c.part, text, { x: (size.cx - w) / 2, y: (size.cy - h) / 2, w, h });
+  c.s.run(r.command);
+  c.s.select(inserted(r.id));
 }
 
 /**
