@@ -241,6 +241,18 @@ select { height: 28px; border: 1px solid var(--line); border-radius: var(--radiu
 .dialog .link-kinds { margin-bottom: 8px; flex-wrap: wrap; }
 .dialog-error { color: var(--danger); margin: 6px 0 0; }
 .dialog-buttons button.plain { margin-right: auto; background: var(--panel); border-color: var(--line); color: var(--danger); }
+.dialog.chart-dialog { width: min(760px, 100%); }
+.chart-sheet { max-height: 50vh; overflow: auto; border: 1px solid var(--line); border-radius: var(--radius); }
+.chart-sheet table { border-collapse: collapse; }
+.chart-sheet th, .chart-sheet td { border: 1px solid var(--line); padding: 0; }
+.chart-sheet input { width: 108px; height: 28px; border: 0; padding: 0 6px; background: var(--panel); }
+.chart-sheet th input { background: var(--bg); font-weight: 600; }
+.chart-sheet td input { text-align: right; font-variant-numeric: tabular-nums; }
+.chart-sheet input.bad { background: #fde7e9; color: var(--danger); }
+.chart-sheet input:focus { outline: 2px solid var(--focus); outline-offset: -2px; }
+.chart-tools { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+.chart-tools button { border: 1px solid var(--line); background: var(--panel); border-radius: var(--radius); padding: 4px 10px; cursor: pointer; }
+.chart-tools button:disabled { opacity: 0.4; cursor: default; }
 .dialog-buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
 .dialog-buttons button { border: 1px solid var(--line); background: var(--panel); padding: 6px 14px; border-radius: var(--radius); cursor: pointer; }
 .dialog-buttons button[type="submit"], .dialog-buttons button:last-child { background: var(--accent); border-color: var(--accent); color: #fff; }

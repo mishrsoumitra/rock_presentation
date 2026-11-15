@@ -69,6 +69,7 @@ export function menuEntries(s: EditorState): MenuEntry[] {
     { label: 'Duplicate', run: act.duplicateSelection, keys: 'Ctrl+D', testid: 'menu-duplicate' },
     { label: 'Delete', run: act.deleteSelection, keys: 'Delete', testid: 'menu-delete' },
     'separator',
+    ...(act.chartSelected() ? [{ label: 'Edit Data…', run: () => useEditor.setState({ chartEditing: true }), testid: 'menu-chart-data' } satisfies MenuEntry, 'separator' as const] : []),
     ...tableEntries,
     ...(hasText ? [{ label: 'Edit Text', run: act.editSelectedText, keys: 'Enter', testid: 'menu-edit-text' } satisfies MenuEntry, 'separator' as const] : []),
     { label: 'Bring to Front', run: () => act.order('front'), testid: 'menu-front' },

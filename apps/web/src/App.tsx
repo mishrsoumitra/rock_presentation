@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { useEditor } from './state/store.ts';
 import type { Autosaved } from './engine/autosave.ts';
 import { closeMasterView, discardAutosaved, newPresentation, openFile, recoverable, restoreAutosaved } from './ui/actions.ts';
+import { ChartDialog } from './ui/ChartDialog.tsx';
 import { CommentsPane } from './ui/CommentsPane.tsx';
 import { ContextMenu } from './ui/ContextMenu.tsx';
 import { LinkDialog, NewPasswordDialog, OpenPasswordDialog, SlideSizeDialog } from './ui/Dialogs.tsx';
@@ -111,6 +112,7 @@ export function App() {
       <NewPasswordDialog />
       <SlideSizeDialog />
       <LinkDialog />
+      <ChartDialog />
     </div>
   );
 }

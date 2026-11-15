@@ -564,6 +564,11 @@ export function SlideCanvas() {
   const onTableDown = (rs: RenderShape, e: Konva.KonvaEventObject<MouseEvent>) => {
     const st = useEditor.getState();
     const el = rs.source.view.el;
+    // a double click on a chart (the browser's count, on the press) opens its data
+    if (!st.drawing && rs.source.graphic?.kind === 'chart' && e.evt.button === 0 && e.evt.detail === 2 && st.selection.length === 1 && st.selection[0] === el) {
+      set({ chartEditing: true });
+      return;
+    }
     if (st.drawing || rs.source.graphic?.kind !== 'table' || st.selection.length !== 1 || st.selection[0] !== el) return;
     const cell = cellAtPoint(rs, sess.fonts, pointer());
     if (!cell) { set({ cells: null }); return; }

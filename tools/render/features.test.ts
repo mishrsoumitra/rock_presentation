@@ -9,7 +9,7 @@ import { PNG } from 'pngjs';
 import { createServer, type ViteDevServer } from 'vite';
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest';
 import { OpcPackage, readZip } from '@pptx/opc';
-import { cellText, Editor, notesText, slideComments, tableOf, tableSize } from '../../packages/editor-core/src/index.ts';
+import { cellText, chartData, Editor, notesText, slideComments, tableOf, tableSize } from '../../packages/editor-core/src/index.ts';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 let server: ViteDevServer;
@@ -1936,6 +1936,146 @@ describe('theme colours and fonts', () => {
     expect(xml).toContain('<a:clrScheme name="Violet">');
     expect(xml).toContain('<a:accent1><a:srgbClr val="AD84C6"/></a:accent1>');
     expect(xml).toMatch(/<a:fontScheme name="Georgia and Verdana"><a:majorFont><a:latin typeface="Georgia"/);
+    expect(errors).toEqual([]);
+  }, 60_000);
+});
+
+describe('charts', () => {
+  const dialog = () => page.getByTestId('chart-dialog');
+  /** Insert a chart of a kind from the Insert tab; its data dialog opens. */
+  async function insertChart(kind: string): Promise<void> {
+    await page.getByRole('tab', { name: 'Insert' }).click();
+    await page.getByTestId('insert-chart').click();
+    await page.locator('.menu-panel').getByRole('menuitem', { name: kind, exact: true }).click();
+    await dialog().waitFor();
+  }
+  /** The selected chart's data, read from its part. */
+  const data = () => state<{ categories: string[]; names: string[]; values: (string | null)[][] }>(`
+    const find = (e, n) => e && e.children.find(c => c.kind === 'element' && c.local === n);
+    const all = (e, n) => (e ? e.children.filter(c => c.kind === 'element' && c.local === n) : []);
+    const el = s.selection[0]; const ed = s.session.ed;
+    const rId = find(find(find(el, 'graphic'), 'graphicData'), 'chart').attrs.find(a => a.local === 'id').value;
+    const root = ed.doc.root(ed.doc.target(s.slide, rId));
+    const plot = find(find(root, 'chart'), 'plotArea');
+    const ser = plot.children.filter(c => c.kind === 'element' && c.local.endsWith('Chart')).flatMap(g => all(g, 'ser'));
+    const text = e => (e ? e.children.map(c => c.value ?? '').join('') : '');
+    const pts = lit => { const out = []; for (const p of all(lit, 'pt')) out[Number(p.attrs.find(a => a.local === 'idx').value)] = text(find(p, 'v')); const n = Number(find(lit, 'ptCount').attrs[0].value); return Array.from({ length: n }, (_, i) => out[i] ?? null); };
+    return { categories: pts(find(find(ser[0], 'cat'), 'strLit')), names: ser.map(x => text(find(find(x, 'tx'), 'v'))), values: ser.map(x => pts(find(find(x, 'val'), 'numLit'))) };`);
+  const pixel = async (x: number, y: number) => {
+    await frames();
+    const p = await slidePoint(x, y);
+    return page.evaluate(([px, py]) => {
+      const c = document.querySelector('[data-testid="canvas"] canvas') as HTMLCanvasElement;
+      const r = c.getBoundingClientRect();
+      const d = c.getContext('2d')!.getImageData(Math.round((px - r.left) * (c.width / r.width)), Math.round((py - r.top) * (c.height / r.height)), 1, 1).data;
+      return [d[0]!, d[1]!, d[2]!];
+    }, [p.x, p.y] as const);
+  };
+  /** How many pixels of the slide area are (close to) a colour. */
+  const count = (rgb: [number, number, number]) => page.evaluate(([r, g, b]) => {
+    const c = document.querySelector('[data-testid="canvas"] canvas') as HTMLCanvasElement;
+    const d = c.getContext('2d')!.getImageData(0, 0, c.width, c.height).data;
+    let n = 0;
+    for (let i = 0; i < d.length; i += 4) if (d[i] === r && d[i + 1] === g && d[i + 2] === b) n++;       // exactly: the inside of a filled column, not the edges of text
+    return n;
+  }, rgb);
+
+  test('Insert > Chart > Column inserts a chart with sample data, opens its data, and the chart is drawn in the theme\'s colours', async () => {
+    await insertChart('Column');
+    expect(await page.getByTestId('series-0').inputValue()).toBe('Series 1');
+    expect(await page.getByTestId('category-3').inputValue()).toBe('Category 4');
+    expect(await page.getByTestId('cell-0-0').inputValue()).toBe('4.3');
+    await dialog().getByRole('button', { name: 'Cancel' }).click();
+    expect(await dialog().count()).toBe(0);
+    expect(await state<string>('return s.selection[0].local;')).toBe('graphicFrame');
+    expect(await state<string>('return s.session.ed.log.undoLabel;')).toBe('Insert Chart');
+    expect((await data()).names).toEqual(['Series 1', 'Series 2', 'Series 3']);
+    // drawn: columns in accent 1, 2 and 3
+    await page.keyboard.press('Escape');
+    await frames();
+    for (const accent of [[0x44, 0x72, 0xc4], [0xed, 0x7d, 0x31], [0xa5, 0xa5, 0xa5]] as [number, number, number][]) expect(await count(accent)).toBeGreaterThan(400);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('Edit Data: values, names and categories change; rows and columns are added and removed; Apply is one undo step', async () => {
+    await insertChart('Column');
+    await dialog().getByRole('button', { name: 'Cancel' }).click();
+    await page.keyboard.press('Escape');
+    await frames();
+    const grey = await count([0xa5, 0xa5, 0xa5]);                        // the third series' columns
+    expect(grey).toBeGreaterThan(400);
+    const middle = await slidePoint(6096000, 3429000);                   // the chart is in the middle of the slide
+    await page.mouse.click(middle.x, middle.y);
+    await page.getByRole('tab', { name: 'Home' }).click();
+    await page.getByTestId('chart-edit-data').click();
+    await page.getByTestId('series-0').fill('This year');
+    await page.getByTestId('category-0').fill('North');
+    await page.getByTestId('cell-0-0').fill('10');
+    await page.getByTestId('chart-remove-column').click();              // Series 3 goes
+    await page.getByTestId('chart-remove-row').click();                 // Category 4 goes
+    await page.getByTestId('chart-add-row').click();
+    await page.getByTestId('category-3').fill('West');
+    await page.getByTestId('cell-3-0').fill('7.5');
+    await page.getByTestId('chart-apply').click();
+    expect(await dialog().count()).toBe(0);
+    expect(await data()).toEqual({
+      categories: ['North', 'Category 2', 'Category 3', 'West'], names: ['This year', 'Series 2'],
+      values: [['10', '2.5', '3.5', '7.5'], ['2.4', '4.4', '1.8', null]],
+    });
+    expect(await state<string>('return s.session.ed.log.undoLabel;')).toBe('Chart Data');
+    // the third series' colour is no longer drawn
+    await page.keyboard.press('Escape');
+    await frames();
+    expect(await count([0xa5, 0xa5, 0xa5])).toBeLessThan(grey / 10);
+    await page.keyboard.press('Control+z');
+    await frames();
+    expect(await count([0xa5, 0xa5, 0xa5])).toBeGreaterThan(grey * 0.8);       // the third series is back
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('a value that is not a number is marked and holds Apply back; the dialog opens again from the ribbon, the menu and a double click', async () => {
+    await insertChart('Line');
+    await page.getByTestId('cell-1-1').fill('abc');
+    expect(await page.getByTestId('chart-error').innerText()).toContain('Values must be numbers');
+    expect(await page.getByTestId('chart-apply').isDisabled()).toBe(true);
+    expect(await page.getByTestId('cell-1-1').getAttribute('class')).toContain('bad');
+    await page.getByTestId('cell-1-1').fill('');                         // empty is no value, and fine
+    expect(await page.getByTestId('chart-apply').isDisabled()).toBe(false);
+    await page.getByTestId('cell-1-0').fill('3,5');                      // a comma for the decimal point is read as one
+    await page.getByTestId('chart-apply').click();
+    const d = await data();
+    expect(d.values[0]![1]).toBe('3.5');
+    expect(d.values[1]![1]).toBeNull();
+
+    await page.getByRole('tab', { name: 'Home' }).click();
+    await page.getByTestId('chart-edit-data').click();
+    expect(await page.getByTestId('cell-1-0').inputValue()).toBe('3.5');
+    await page.keyboard.press('Escape');
+    expect(await dialog().count()).toBe(0);
+    const box = await state<{ x: number; y: number; cx: number; cy: number }>(`const x = s.session.ed.view(s.slide, s.selection[0]).xfrm; return { x: x.x, y: x.y, cx: x.cx, cy: x.cy };`);
+    const mid = await slidePoint(box.x + box.cx / 2, box.y + box.cy / 2);
+    await page.mouse.click(mid.x, mid.y, { button: 'right' });
+    await page.getByTestId('menu-chart-data').click();
+    await dialog().waitFor();
+    await page.keyboard.press('Escape');
+    await frames();
+    await page.mouse.dblclick(mid.x, mid.y);
+    await dialog().waitFor();
+    await page.keyboard.press('Escape');
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('a pie chart, and the saved file: the chart part with its data, related from the slide', async () => {
+    await insertChart('Pie');
+    expect(await page.getByTestId('series-1').count()).toBe(0);          // a pie is one series
+    await page.getByTestId('cell-0-0').fill('50');
+    await page.getByTestId('chart-apply').click();
+    const ed = await saved();
+    const part = ed.doc.slideParts()[0]!;
+    const frame = ed.doc.slide(part).shapes.find(sh => sh.kind === 'graphicFrame')!;
+    expect(chartData(ed, part, frame)).toEqual({ categories: ['Category 1', 'Category 2', 'Category 3', 'Category 4'], series: [{ name: 'Series 1', values: [50, 2.5, 3.5, 4.5] }] });
+    expect(ed.doc.targets(part, 'chart').length).toBe(1);
+    expect(new TextDecoder().decode(ed.pkg.getPart(ed.doc.targets(part, 'chart')[0]!)!.bytes)).toContain('<c:pieChart>');
     expect(errors).toEqual([]);
   }, 60_000);
 });

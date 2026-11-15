@@ -2,8 +2,8 @@
 import {
   addSlide, align, applyLayout, compound, copyShapes, copySlide, pasteSlide, cropPicture, deleteShapes, deleteSlide, distribute, duplicateShapes, duplicateSlide, flip, group, importMasters, replacePicture,
   insertPicture, insertShape, insertTable, insertTextBox, moveBy, ROW_HEIGHT, moveSlide, pasteShapes, prepareImage, prepareSvg, prepareTemplate, rotateQuarter,
-  addSection, applyBackgroundToAll, fillColorOf, setFill, setSlideBackground, setThemeColors, setThemeFonts, themeOfSlide, themeSchemes, setFillTransparency, setGradientFill, setLine, setPictureFill, setShadow, setSlideHidden, setSlideSize, setTransforms, ungroup, zOrder,
-  type Alignment, type BackgroundSpec, type ColorScheme, type ColorSpec, type FontScheme, type LineSpec,
+  addSection, applyBackgroundToAll, chartData, chartPartOf, fillColorOf, insertChart, setChartData, setFill, setSlideBackground, setThemeColors, setThemeFonts, themeOfSlide, themeSchemes, setFillTransparency, setGradientFill, setLine, setPictureFill, setShadow, setSlideHidden, setSlideSize, setTransforms, ungroup, zOrder,
+  type Alignment, type BackgroundSpec, type ChartData, type ChartKind, type ColorScheme, type ColorSpec, type FontScheme, type LineSpec,
   type ScaleMode, type ZOrder,
 } from '@pptx/editor-core';
 import { OpcPackage } from '@pptx/opc';
@@ -252,6 +252,38 @@ export function insertTableHere(rows: number, cols: number): void {
   useEditor.setState({ text: null });
   c.s.run(r.command);
   c.s.select(inserted(r.id));
+}
+
+/** Insert a chart of a kind in the middle of the slide, with PowerPoint's sample data, and open its data to change. */
+export function insertChartHere(kind: ChartKind): void {
+  const c = ctx();
+  if (!c) return;
+  const size = c.ed.doc.presentation.slideSize;
+  const w = Math.round((size.cx * 2) / 3), h = Math.round(size.cy * 0.6);
+  const r = insertChart(c.ed, c.part, kind, { x: (size.cx - w) / 2, y: (size.cy - h) / 2, w, h });
+  useEditor.setState({ text: null });
+  c.s.run(r.command);
+  c.s.select(inserted(r.id));
+  useEditor.setState({ chartEditing: true });
+}
+
+/** The one selected shape, when it is a chart. */
+function selectedChart() {
+  const c = ctx();
+  const v = c?.views.length === 1 ? c.views[0] : undefined;
+  return c && v && chartPartOf(c.ed, c.part, v) ? { c, v } : undefined;
+}
+export const chartSelected = (): boolean => !!selectedChart();
+
+/** The selected chart's data as a table, for the data dialog. */
+export function selectedChartData(): ChartData | undefined {
+  const x = selectedChart();
+  return x ? chartData(x.c.ed, x.c.part, x.v) : undefined;
+}
+
+export function applyChartData(data: ChartData): void {
+  const x = selectedChart();
+  if (x) x.c.s.run(setChartData(x.c.ed, x.c.part, x.v, data));
 }
 
 const EXT: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpeg', 'image/gif': 'gif', 'image/bmp': 'bmp', 'image/webp': 'webp', 'image/svg+xml': 'svg', 'image/tiff': 'tiff', 'image/x-emf': 'emf', 'image/x-wmf': 'wmf' };
