@@ -47,7 +47,7 @@ export function CellEditor({ rs, stage, zoom, fonts }: { rs: RenderShape; stage:
 
   return (
     <textarea
-      ref={ref} className="cell-editor" aria-label="Cell text" data-testid="cell-editor" value={draft}
+      ref={ref} className="cell-editor" aria-label="Cell text" data-testid="cell-editor" value={draft} spellCheck
       style={{ left, top, width, minHeight: height, fontSize: Math.max(9, points * 12700 * zoom) }}
       onChange={e => { setDraft(e.target.value); setCellDraft(el, at, e.target.value); }}
       onBlur={finish}

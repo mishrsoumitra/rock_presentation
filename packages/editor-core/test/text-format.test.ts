@@ -6,7 +6,7 @@ import { resolveSlide } from '@pptx/resolve';
 import { serializeElement, type XmlElement } from '@pptx/xml';
 import { describe, expect, test } from 'vitest';
 import { deckBytes } from '../../resolve/test/deck.ts';
-import { clearRunFormatting, formatBody, formatParagraphs, formatRuns, insertTextBox, typeText, type Editor, type TextRange } from '../src/index.ts';
+import { bodyPlainText, clearRunFormatting, formatBody, formatParagraphs, formatRuns, insertTextBox, retypeText, typeText, type Editor, type TextRange } from '../src/index.ts';
 import { cycle, openEditor } from './helpers.ts';
 
 const SLIDE = '/ppt/slides/slide1.xml';
@@ -151,3 +151,60 @@ describe('typing over a selection', () => {
     expect(resolved(ed, id).paragraphs.map(p => p.runs.map(r => r.text).join(''))).toEqual(['Hello-ond']);
   });
 });
+
+describe('correcting text through a plain copy of it', () => {
+  /** "Hello world" with "world" bold, then "Second". Runs as [text, bold] per paragraph. */
+  function formatted() {
+    const t = withBox();
+    t.ed.run(formatRuns(t.ed, SLIDE, t.body(), WORLD, { b: true }));
+    t.ed.log.clear();
+    return t;
+  }
+  const runs = (ed: Editor, id: number) => resolved(ed, id).paragraphs.map(p => p.runs.map(r => [r.text, r.props.bold]));
+
+  test('a fix inside a word changes only that word\'s run; every other run keeps its text and look', () => {
+    const { ed, id, body } = formatted();
+    expect(cycle(ed, () => retypeText(ed, SLIDE, body(), 'Hello wurld\nSecond')!)).toEqual([]);
+    ed.run(retypeText(ed, SLIDE, body(), 'Helo world\nSecond')!);
+    expect(runs(ed, id)).toEqual([[['Helo ', false], ['world', true]], [['Second', false]]]);
+    ed.run(retypeText(ed, SLIDE, body(), 'Helo wide world\nSecond')!);
+    expect(runs(ed, id)).toEqual([[['Helo ', false], ['wide world', true]], [['Second', false]]]);
+    expect(ed.log.undoLabel).toBe('Correct Text');
+  });
+
+  test('text that already reads so needs no command', () => {
+    const { ed, body } = formatted();
+    expect(retypeText(ed, SLIDE, body(), 'Hello world\nSecond')).toBeUndefined();
+    expect(retypeText(ed, SLIDE, body(), 'Hello world\r\nSecond')).toBeUndefined();
+  });
+
+  test('a change across paragraphs, a paragraph added, and paragraphs joined', () => {
+    const { ed, id, body } = formatted();
+    ed.run(retypeText(ed, SLIDE, body(), 'Hello world\nA new line\nSecond')!);
+    expect(bodyPlainText(body())).toBe('Hello world\nA new line\nSecond');
+    expect(runs(ed, id)[0]).toEqual([['Hello ', false], ['world', true]]);
+    ed.run(retypeText(ed, SLIDE, body(), 'Hello world Second')!);
+    expect(bodyPlainText(body())).toBe('Hello world Second');
+    expect(resolved(ed, id).paragraphs.length).toBe(1);
+    ed.run(retypeText(ed, SLIDE, body(), '')!);
+    expect(bodyPlainText(body())).toBe('');
+  });
+
+  test('the whole text replaced with nothing in common, and text added at the very start and end', () => {
+    const { ed, body } = formatted();
+    ed.run(retypeText(ed, SLIDE, body(), 'XYZ')!);
+    expect(bodyPlainText(body())).toBe('XYZ');
+    ed.run(retypeText(ed, SLIDE, body(), '>XYZ<')!);
+    expect(bodyPlainText(body())).toBe('>XYZ<');
+  });
+
+  test('characters made of two code units are never cut in half', () => {
+    const t = withBox();
+    t.ed.run(retypeText(t.ed, SLIDE, t.body(), 'a😀b')!);
+    t.ed.run(retypeText(t.ed, SLIDE, t.body(), 'a😁b')!);              // the two faces share their first code unit
+    expect(bodyPlainText(t.body())).toBe('a😁b');
+    const again = openEditor(t.ed.save());
+    expect(bodyPlainText(again.shape(SLIDE, t.id)!.txBody!)).toBe('a😁b');
+  });
+});
+

@@ -312,6 +312,7 @@ export function Ribbon({ extraTabs }: { extraTabs?: Partial<Record<Tab, React.Re
                 <Btn icon="size" label="Ruler" wide disabled={!session} active={st.showRuler} onClick={() => useEditor.setState({ showRuler: !st.showRuler })} testid="view-ruler" />
                 <Btn icon="plus" label="Guides" wide disabled={!session} active={st.showGuides} onClick={() => useEditor.setState({ showGuides: !st.showGuides })} testid="view-guides" />
                 <Btn icon="comment" label="Comments" wide disabled={!session} active={st.pane === 'comments'} onClick={() => useEditor.setState({ pane: st.pane === 'comments' ? 'none' : 'comments' })} testid="view-comments" />
+                <Btn icon="text" label="Spelling" wide disabled={!session} active={st.pane === 'spelling'} onClick={() => useEditor.setState({ pane: st.pane === 'spelling' ? 'none' : 'spelling', text: null })} testid="view-spelling" />
               </section>
               <section className="group" aria-label="Guides">
                 <Btn label="Add Vertical Guide" wide disabled={!session} onClick={() => addGuide('x')} testid="add-guide-v" />

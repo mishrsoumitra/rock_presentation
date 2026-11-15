@@ -1769,6 +1769,85 @@ describe('comments', () => {
   }, 60_000);
 });
 
+describe('spelling', () => {
+  const pane = () => page.getByTestId('spelling-pane');
+  const fields = () => pane().getByTestId('spelling-text');
+  const openPane = async () => { await page.getByRole('tab', { name: 'View' }).click(); await page.getByTestId('view-spelling').click(); await pane().waitFor(); };
+  /** The runs of the slide's text box: "[b]" before a bold run. */
+  const runs = () => state<string>(`
+    const el = s.session.ed.doc.slide(s.slide).shapes.find(sh => sh.name.startsWith('TextBox')).el;
+    const body = el.children.find(c => c.local === 'txBody');
+    return body.children.filter(c => c.local === 'p').map(p => p.children.filter(c => c.local === 'r').map(r => {
+      const rPr = r.children.find(c => c.local === 'rPr');
+      return (rPr && rPr.attrs.some(a => a.local === 'b' && a.value === '1') ? '[b]' : '') + r.children.find(c => c.local === 't').children.map(c => c.value ?? '').join('');
+    }).join('|')).join('/');`);
+
+  test('the pane shows each text of the slide in a box the browser spell-checks; a correction there changes the slide and keeps its formatting', async () => {
+    await textBox('The quik brown fox');
+    for (let i = 0; i < 9; i++) await page.keyboard.press('Shift+ArrowLeft');     // "brown fox"
+    await page.getByTestId('bold').click();
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape');
+    expect(await runs()).toBe('The quik |[b]brown fox');
+
+    await openPane();
+    expect(await fields().count()).toBe(1);                              // the empty placeholders have no text to check
+    const box = fields().first();
+    expect(await box.inputValue()).toBe('The quik brown fox');
+    expect(await box.getAttribute('spellcheck')).toBe('true');
+    expect(await box.getAttribute('data-shape')).toMatch(/^TextBox/);
+
+    // correct the word as a person does: put the caret after "qui" and type the missing letter
+    await box.focus();
+    await box.evaluate(e => (e as HTMLTextAreaElement).setSelectionRange(7, 7));
+    await page.keyboard.type('c');
+    expect(await runs()).toBe('The quick |[b]brown fox');                // the bold words are still bold, the fix is plain
+    expect(await box.inputValue()).toBe('The quick brown fox');
+    expect(await state<string>('return s.session.ed.log.undoLabel;')).toBe('Correct Text');
+    expect(await selectedNames()).toEqual([expect.stringMatching(/^TextBox/)]);      // the shape being corrected is the one selected
+
+    // Ctrl+Z in the box is the editor's undo
+    await page.keyboard.press('Control+z');
+    expect(await runs()).toBe('The quik |[b]brown fox');
+    await expect.poll(() => box.inputValue()).toBe('The quik brown fox');
+    await page.keyboard.press('Control+y');
+    expect(await runs()).toBe('The quick |[b]brown fox');
+    // a run of typing in one box is one undo step
+    await box.evaluate(e => { const t = e as HTMLTextAreaElement; t.setSelectionRange(t.value.length, t.value.length); });
+    await page.keyboard.type(' jumps');
+    expect(await runs()).toBe('The quick |[b]brown fox jumps');
+    await page.keyboard.press('Control+z');
+    expect(await runs()).toBe('The quick |[b]brown fox');
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('the pane follows the slide, steps through the deck, and says when a slide has no text', async () => {
+    await textBox('First slide text');
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape');
+    await page.getByTestId('new-slide').click();
+    await openPane();
+    expect(await page.getByTestId('spelling-empty').innerText()).toBe('This slide has no text.');
+    expect(await pane().innerText()).toContain('Slide 2 of 2');
+    expect(await page.getByTestId('spelling-next').isDisabled()).toBe(true);
+    await page.getByTestId('spelling-prev').click();
+    expect(await fields().first().inputValue()).toBe('First slide text');
+    expect(await page.getByTestId('spelling-prev').isDisabled()).toBe(true);
+    // a new paragraph typed in the box is a new paragraph on the slide
+    await fields().first().focus();
+    await fields().first().evaluate(e => { const t = e as HTMLTextAreaElement; t.setSelectionRange(t.value.length, t.value.length); });
+    await page.keyboard.press('Enter');
+    await page.keyboard.type('Second paragraph');
+    expect(await runs()).toBe('First slide text/Second paragraph');
+
+    await pane().getByRole('button', { name: 'Close' }).click();
+    expect(await pane().count()).toBe(0);
+    // notes and table cells are typed in real boxes, which the browser checks where they are
+    expect(await page.getByTestId('notes').getAttribute('spellcheck')).toBe('true');
+    expect(errors).toEqual([]);
+  }, 60_000);
+});
+
 describe('bullet and number styles', () => {
   test('pick a bullet character and a numbering scheme; the menus tick the one in force; text in a box gets a hanging indent', async () => {
     await textBox('one\ntwo');

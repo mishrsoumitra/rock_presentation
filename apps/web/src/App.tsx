@@ -12,6 +12,7 @@ import { Presenter } from './ui/Presenter.tsx';
 import { AnimationPane, AnimationsTab, TransitionsTab } from './ui/AnimationTabs.tsx';
 import { Ribbon } from './ui/Ribbon.tsx';
 import { SelectionPane } from './ui/SelectionPane.tsx';
+import { SpellingPane } from './ui/SpellingPane.tsx';
 import { SlideCanvas } from './ui/SlideCanvas.tsx';
 import { SlideGrid, SlidePanel } from './ui/SlidePanel.tsx';
 import { useClipboard } from './ui/clipboard.ts';
@@ -99,7 +100,7 @@ export function App() {
       <Ribbon extraTabs={{ Transitions: <TransitionsTab />, Animations: <AnimationsTab /> }} />
       <main className={`workspace${session && view === 'grid' ? ' grid-view' : session && pane !== 'none' ? ' with-pane' : ''}`}>
         {!session ? <Welcome /> : view === 'grid' ? <SlideGrid />
-          : <><SlidePanel /><div className="editing"><SlideCanvas /><NotesPane /><FindBar /></div>{pane === 'animation' && <AnimationPane />}{pane === 'selection' && <SelectionPane />}{pane === 'comments' && <CommentsPane />}</>}
+          : <><SlidePanel /><div className="editing"><SlideCanvas /><NotesPane /><FindBar /></div>{pane === 'animation' && <AnimationPane />}{pane === 'selection' && <SelectionPane />}{pane === 'comments' && <CommentsPane />}{pane === 'spelling' && <SpellingPane />}</>}
       </main>
       <StatusBar />
       <ContextMenu />

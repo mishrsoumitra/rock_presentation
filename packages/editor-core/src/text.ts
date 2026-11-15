@@ -639,3 +639,40 @@ export function bodyPlainText(txBody: XmlElement): string {
   return paragraphs(txBody).map(p => runsOf(p).map(r => (r.kind === 'br' ? '\u000b' : r.text)).join('')).join('\n');
 }
 
+/** Where a position in a body's plain text (paragraphs joined by "\n") is, as a paragraph and an offset in it. */
+function posOfFlat(txBody: XmlElement, flat: number): TextPos {
+  const ps = paragraphs(txBody);
+  let left = flat;
+  for (let p = 0; p < ps.length; p++) {
+    const len = paragraphLength(ps[p]!);
+    if (left <= len) return { p, offset: left };
+    left -= len + 1;
+  }
+  const last = Math.max(0, ps.length - 1);
+  return { p: last, offset: ps[last] ? paragraphLength(ps[last]!) : 0 };
+}
+
+/**
+ * Make a body's text read as `text`, changing as little as possible: only what lies between the longest start and
+ * the longest end the old and new text share is retyped, so the formatting of everything else stays, and what is
+ * retyped looks like the first character it replaces. This is how a correction made to a plain copy of the text (a
+ * spelling fix, for one) goes back into formatted text. Undefined when the text already reads so.
+ * Paragraphs are "\n" in `text` and line breaks "\v", as in `bodyPlainText`.
+ */
+export function retypeText(ed: Editor, part: string, txBody: XmlElement, text: string, options: TextOptions = {}): Command | undefined {
+  const old = bodyPlainText(txBody);
+  const next = clean(text).replace(/\r\n|\r/g, '\n');
+  if (old === next) return undefined;
+  let start = 0;
+  const max = Math.min(old.length, next.length);
+  while (start < max && old[start] === next[start]) start++;
+  let end = 0;
+  while (end < max - start && old[old.length - 1 - end] === next[next.length - 1 - end]) end++;
+  // never cut a character made of two code units in half
+  const high = (c: string | undefined) => !!c && c >= '\ud800' && c <= '\udbff', low = (c: string | undefined) => !!c && c >= '\udc00' && c <= '\udfff';
+  if (start > 0 && high(old[start - 1])) start--;
+  if (end > 0 && low(old[old.length - end])) end--;
+  const range = { start: posOfFlat(txBody, start), end: posOfFlat(txBody, old.length - end) };
+  return typeText(ed, part, txBody, range, next.slice(start, next.length - end), { label: 'Correct Text', likeReplaced: true, ...options }).command;
+}
+

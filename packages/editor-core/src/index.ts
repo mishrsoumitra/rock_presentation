@@ -11,7 +11,7 @@ export {
 } from './shapes.ts';
 export {
   bodyPlainText, deleteText, formatBody, formatParagraphs, formatRuns, layoutToModel, modelToLayout, paragraphLength, paragraphs,
-  clearRunFormatting, patchRunProps, replaceText, textIn, typeText,
+  clearRunFormatting, patchRunProps, replaceText, retypeText, textIn, typeText,
   type BodyPatch, type BulletSpec, type ColorSpec, type ParaPatch, type RunPatch, type SpacingSpec, type TextEdit, type TextOptions, type TextPos,
   type TextRange,
 } from './text.ts';
