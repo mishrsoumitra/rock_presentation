@@ -187,6 +187,8 @@ export function Ribbon({ extraTabs }: { extraTabs?: Partial<Record<Tab, React.Re
                 <MenuItem label="Rotate Left 90°" disabled={!hasSel} onClick={() => { close(); act.rotateSelection(-1); }} />
                 <MenuItem label="Flip Vertical" disabled={!hasSel} onClick={() => { close(); act.flipSelection('v'); }} />
                 <MenuItem label="Flip Horizontal" disabled={!hasSel} onClick={() => { close(); act.flipSelection('h'); }} />
+                <hr />
+                <MenuItem label="Selection Pane…" onClick={() => { close(); useEditor.setState({ pane: useEditor.getState().pane === 'selection' ? 'none' : 'selection' }); }} />
               </>)}</Menu>
             </section>
           </>

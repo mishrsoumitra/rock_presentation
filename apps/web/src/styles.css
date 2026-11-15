@@ -102,6 +102,17 @@ select { height: 28px; border: 1px solid var(--line); border-radius: var(--radiu
 .find-count { color: var(--muted); font-size: 12px; white-space: nowrap; min-width: 62px; text-align: right; }
 .find-row.options { gap: 14px; color: var(--muted); }
 
+/* the selection pane */
+.selection-pane li { grid-template-columns: 1fr auto; }
+.selection-pane li.hidden-shape .what { color: var(--muted); font-style: italic; }
+.selection-pane .eye { border: 0; background: none; cursor: pointer; color: var(--muted); padding: 0 4px; }
+.pane-name { width: 100%; height: 22px; border: 1px solid var(--focus); border-radius: var(--radius); padding: 0 4px; background: var(--panel); }
+.pane-tools { display: flex; gap: 4px; margin-bottom: 6px; }
+.pane-tools button { border: 1px solid var(--line); background: var(--panel); border-radius: var(--radius); padding: 2px 8px; cursor: pointer; }
+.pane-tools button:disabled { opacity: 0.4; cursor: default; }
+.alt-text { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 8px; display: grid; gap: 4px; }
+.alt-text textarea { width: 100%; height: 84px; resize: vertical; border: 1px solid var(--line); border-radius: var(--radius); padding: 6px; background: var(--panel); }
+
 /* the right-click menu */
 .context-menu { position: fixed; z-index: 60; min-width: 220px; padding: 4px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 10px 28px rgba(0, 0, 0, 0.22); }
 .context-menu hr { border: 0; border-top: 1px solid var(--line); margin: 4px 0; }

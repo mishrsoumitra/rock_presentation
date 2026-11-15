@@ -138,6 +138,13 @@ export async function insertPictureFile(file: File): Promise<void> {
   c.s.select(inserted(r.id));
 }
 
+/** Open the selection pane with the keyboard in its alt text box, for the one selected shape. */
+export function editAltText(): void {
+  useEditor.setState({ pane: 'selection' });
+  // the pane (and its box) is in the page after this render
+  setTimeout(() => window.dispatchEvent(new CustomEvent('focus-alt-text')), 0);
+}
+
 /** Select every shape of the slide itself (not the layout's or master's), as Ctrl+A does. */
 export function selectAllShapes(): void {
   const s = st();

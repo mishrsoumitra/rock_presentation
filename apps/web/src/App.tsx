@@ -9,6 +9,7 @@ import { NotesPane } from './ui/NotesPane.tsx';
 import { Presenter } from './ui/Presenter.tsx';
 import { AnimationPane, AnimationsTab, TransitionsTab } from './ui/AnimationTabs.tsx';
 import { Ribbon } from './ui/Ribbon.tsx';
+import { SelectionPane } from './ui/SelectionPane.tsx';
 import { SlideCanvas } from './ui/SlideCanvas.tsx';
 import { SlidePanel } from './ui/SlidePanel.tsx';
 import { useShortcuts } from './ui/shortcuts.ts';
@@ -78,8 +79,8 @@ export function App() {
   return (
     <div className="app">
       <Ribbon extraTabs={{ Transitions: <TransitionsTab />, Animations: <AnimationsTab /> }} />
-      <main className={`workspace${session && pane === 'animation' ? ' with-pane' : ''}`}>
-        {session ? <><SlidePanel /><div className="editing"><SlideCanvas /><NotesPane /><FindBar /></div>{pane === 'animation' && <AnimationPane />}</> : <Welcome />}
+      <main className={`workspace${session && pane !== 'none' ? ' with-pane' : ''}`}>
+        {session ? <><SlidePanel /><div className="editing"><SlideCanvas /><NotesPane /><FindBar /></div>{pane === 'animation' && <AnimationPane />}{pane === 'selection' && <SelectionPane />}</> : <Welcome />}
       </main>
       <StatusBar />
       <ContextMenu />

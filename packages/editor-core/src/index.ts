@@ -5,7 +5,7 @@ export {
   align, distribute, effectiveXfrm, flip, moveBy, parentGroup, parentMatrix, rotateQuarter, setTransforms, unionBounds, visualBounds,
   type Alignment, type Box, type TransformChange,
 } from './transform.ts';
-export { group, rename, setAltText, ungroup, zOrder, type ZOrder } from './arrange.ts';
+export { group, rename, setAltText, setShapesHidden, ungroup, zOrder, type ZOrder } from './arrange.ts';
 export {
   copyShapes, deleteShapes, duplicateShapes, insertShape, insertTextBox, paragraphsXml, pasteShapes, shapeName, type Rect, type ShapeClip,
 } from './shapes.ts';

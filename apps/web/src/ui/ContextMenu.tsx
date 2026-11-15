@@ -55,6 +55,9 @@ export function menuEntries(s: EditorState): MenuEntry[] {
     'separator',
     { label: 'Group', run: act.groupSelection, disabled: n < 2, keys: 'Ctrl+G', testid: 'menu-group' },
     { label: 'Ungroup', run: act.ungroupSelection, disabled: !hasGroup, keys: 'Ctrl+Shift+G', testid: 'menu-ungroup' },
+    'separator',
+    { label: 'Alt Text…', run: act.editAltText, disabled: n !== 1, testid: 'menu-alt-text' },
+    { label: 'Selection Pane…', run: () => useEditor.setState({ pane: 'selection' }), testid: 'menu-selection-pane' },
   ];
 }
 

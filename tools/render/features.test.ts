@@ -80,6 +80,34 @@ async function ticked(menu: string): Promise<string[]> {
   return labels.map(l => l.replace('✓', '').trim());
 }
 
+/** Where a point of the slide (EMU) is on the page. */
+const slidePoint = (x: number, y: number) => page.evaluate(([x, y]) => {
+  const st = (globalThis as unknown as { __stage: { getAbsoluteTransform(): { point(p: { x: number; y: number }): { x: number; y: number } }; container(): HTMLElement } }).__stage;
+  const p = st.getAbsoluteTransform().point({ x, y });
+  const r = st.container().getBoundingClientRect();
+  return { x: r.left + p.x, y: r.top + p.y };
+}, [x, y] as const);
+/** The slide as it is now is on screen: two frames have been drawn since the last change (a person is never faster). */
+const frames = () => page.evaluate(() => new Promise<void>(done => requestAnimationFrame(() => requestAnimationFrame(() => done()))));
+/** Draw a preset shape on the slide by dragging over a box given in EMU; it ends up selected. */
+async function drawShape(prst: string, x: number, y: number, w: number, h: number): Promise<void> {
+  await frames();
+  await page.getByRole('tab', { name: 'Home' }).click();
+  await page.getByTestId('shapes').click();
+  await page.locator(`[data-testid="shape-gallery"] button[data-prst="${prst}"]`).first().click();
+  const a = await slidePoint(x, y), b = await slidePoint(x + w, y + h);
+  await page.mouse.move(a.x, a.y);
+  await page.mouse.down();
+  await page.mouse.move(b.x, b.y, { steps: 4 });
+  await page.mouse.up();
+  await frames();
+}
+/** Names of the selected shapes, and of the shapes the slide draws (hidden ones are not drawn). */
+const selectedNames = () => state<string[]>(`
+  const nameOf = el => { const nv = el.children.find(c => c.kind === 'element' && c.local.startsWith('nv')); const c = nv && nv.children.find(x => x.kind === 'element' && x.local === 'cNvPr'); const a = c && c.attrs.find(a => a.local === 'name'); return a ? a.value : ''; };
+  return s.selection.map(nameOf);`);
+const drawnNames = () => state<string[]>(`return s.session.scenes.get(s.slide).slide.shapes.filter(x => x.layer === 'slide' && x.source).map(x => x.source.view.name);`);
+
 describe('text formatting from the ribbon', () => {
   test('superscript and subscript toggle and replace each other; the buttons show which is on', async () => {
     await textBox('Hello world');
@@ -379,7 +407,7 @@ describe('the right-click menu', () => {
 
     await rightClick(1700000, 5900000);
     expect(await menu().getAttribute('data-kind')).toBe('shape');
-    expect(await labels()).toEqual(['Cut', 'Copy', 'Paste', 'Duplicate', 'Delete', 'Edit Text', 'Bring to Front', 'Bring Forward', 'Send Backward', 'Send to Back', 'Group', 'Ungroup']);
+    expect(await labels()).toEqual(['Cut', 'Copy', 'Paste', 'Duplicate', 'Delete', 'Edit Text', 'Bring to Front', 'Bring Forward', 'Send Backward', 'Send to Back', 'Group', 'Ungroup', 'Alt Text…', 'Selection Pane…']);
     expect(await disabled()).toEqual(['Paste', 'Group', 'Ungroup']);     // nothing copied yet; one shape, not a group
     await page.getByTestId('menu-duplicate').click();
     expect(await menu().count()).toBe(0);                                // choosing closes the menu
@@ -451,7 +479,10 @@ describe('the right-click menu', () => {
     expect(await page.evaluate(() => document.activeElement?.getAttribute('data-testid'))).toBe('menu-duplicate');
     await page.keyboard.press('ArrowUp');
     await page.keyboard.press('ArrowUp');
-    await page.keyboard.press('ArrowUp');                                 // round the top to the last enabled command
+    await page.keyboard.press('ArrowUp');                                 // round the top to the last command
+    expect(await page.evaluate(() => document.activeElement?.getAttribute('data-testid'))).toBe('menu-selection-pane');
+    await page.keyboard.press('ArrowUp');
+    await page.keyboard.press('ArrowUp');                                 // past Alt Text, and Group and Ungroup, which are off
     expect(await page.evaluate(() => document.activeElement?.getAttribute('data-testid'))).toBe('menu-back');
     await page.keyboard.press('Enter');
     expect(await menu().count()).toBe(0);
@@ -524,6 +555,151 @@ describe('the right-click menu', () => {
     expect(await labels()).toContain('Show Slide');
     await page.getByTestId('menu-delete-slide').click();
     expect(await order()).toEqual(['2', '3']);
+    expect(errors).toEqual([]);
+  }, 60_000);
+});
+
+describe('the selection pane', () => {
+  const rows = () => page.getByTestId('pane-row');
+  const names = async () => rows().evaluateAll(els => els.map(e => (e as HTMLElement).dataset.name));
+  const row = (name: string) => page.locator(`[data-testid="pane-row"][data-name="${name}"]`);
+  const openPane = async () => {
+    await page.getByRole('tab', { name: 'Home' }).click();
+    await page.getByTestId('arrange').click();
+    await page.getByRole('menuitem', { name: 'Selection Pane…' }).click();
+    await page.getByTestId('selection-pane').waitFor();
+  };
+  /** A title slide with a rectangle and, above it, an ellipse, both under the placeholders. */
+  async function twoShapes(): Promise<void> {
+    await drawShape('rect', 1000000, 5500000, 1500000, 800000);
+    await drawShape('ellipse', 4000000, 5500000, 1500000, 800000);
+  }
+
+  test('lists the shapes topmost first; a click selects, Shift+click adds, and the arrows change the order', async () => {
+    await twoShapes();
+    await openPane();
+    expect(await names()).toEqual(['Oval 4', 'Rectangle 3', 'Subtitle 2', 'Title 1']);
+    expect(await rows().evaluateAll(els => els.filter(e => e.classList.contains('selected')).map(e => (e as HTMLElement).dataset.name))).toEqual(['Oval 4']);
+
+    await row('Rectangle 3').click();
+    expect(await selectedNames()).toEqual(['Rectangle 3']);
+    await row('Oval 4').click({ modifiers: ['Shift'] });
+    expect(await selectedNames()).toEqual(['Rectangle 3', 'Oval 4']);
+    await row('Oval 4').click({ modifiers: ['Shift'] });
+    expect(await selectedNames()).toEqual(['Rectangle 3']);
+
+    await page.getByTestId('pane-forward').click();
+    expect(await names()).toEqual(['Rectangle 3', 'Oval 4', 'Subtitle 2', 'Title 1']);
+    await page.getByTestId('pane-backward').click();
+    await page.getByTestId('pane-backward').click();
+    expect(await names()).toEqual(['Oval 4', 'Subtitle 2', 'Rectangle 3', 'Title 1']);
+    expect(await state<string>('return s.session.ed.log.undoLabel;')).toBe('Send Backward');
+
+    // a shape picked on the slide is the one marked in the pane
+    await page.keyboard.press('Escape');
+    const p = await slidePoint(4700000, 5900000);
+    await page.mouse.click(p.x, p.y);
+    expect(await rows().evaluateAll(els => els.filter(e => e.classList.contains('selected')).map(e => (e as HTMLElement).dataset.name))).toEqual(['Oval 4']);
+
+    await page.getByTestId('selection-pane').getByRole('button', { name: 'Close' }).click();
+    expect(await page.getByTestId('selection-pane').count()).toBe(0);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('a double click renames: Enter keeps the new name, Escape and an empty name keep the old one', async () => {
+    await twoShapes();
+    await openPane();
+    await row('Rectangle 3').dblclick();
+    await page.getByTestId('pane-rename').fill('Logo');
+    await page.keyboard.press('Enter');
+    expect(await names()).toEqual(['Oval 4', 'Logo', 'Subtitle 2', 'Title 1']);
+    expect(await state<string>('return s.session.ed.log.undoLabel;')).toBe('Rename');
+    expect(await drawnNames()).toContain('Logo');                       // typing a name never typed into the shape
+
+    await row('Logo').dblclick();
+    await page.getByTestId('pane-rename').fill('Thrown away');
+    await page.keyboard.press('Escape');
+    expect(await names()).toContain('Logo');
+    await row('Logo').dblclick();
+    await page.getByTestId('pane-rename').fill('   ');
+    await page.keyboard.press('Enter');
+    expect(await names()).toContain('Logo');
+    // Delete in the name box edits the name; it does not delete the shape
+    await row('Logo').dblclick();
+    await page.getByTestId('pane-rename').press('End');
+    await page.getByTestId('pane-rename').press('Backspace');
+    await page.keyboard.press('Enter');
+    expect(await names()).toEqual(['Oval 4', 'Log', 'Subtitle 2', 'Title 1']);
+
+    await page.keyboard.press('Control+z');
+    expect(await names()).toContain('Logo');
+    const ed = await saved();
+    expect(ed.doc.slide(ed.doc.slideParts()[0]!).shapes.map(sh => sh.name)).toContain('Logo');
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('the dot hides a shape and shows it again; hidden shapes stay in the list and can still be selected', async () => {
+    await twoShapes();
+    await openPane();
+    await row('Rectangle 3').getByTestId('pane-eye').click();
+    expect(await drawnNames()).not.toContain('Rectangle 3');
+    expect(await names()).toContain('Rectangle 3');
+    expect(await row('Rectangle 3').getAttribute('class')).toContain('hidden-shape');
+    expect(await state<string>('return s.session.ed.log.undoLabel;')).toBe('Hide');
+    // a click where it was now finds nothing there
+    await frames();
+    const p = await slidePoint(1700000, 5900000);
+    await page.mouse.click(p.x, p.y);
+    expect(await selectedNames()).toEqual([]);
+    // it can be picked in the pane, and shown from there
+    await row('Rectangle 3').click();
+    expect(await selectedNames()).toEqual(['Rectangle 3']);
+    await row('Rectangle 3').getByTestId('pane-eye').click();
+    expect(await drawnNames()).toContain('Rectangle 3');
+
+    await page.getByTestId('pane-hide-all').click();
+    expect(await drawnNames()).toEqual([]);
+    expect(await page.getByTestId('pane-hide-all').isDisabled()).toBe(true);
+    await page.getByTestId('pane-show-all').click();
+    expect((await drawnNames()).sort()).toEqual(['Oval 4', 'Rectangle 3', 'Subtitle 2', 'Title 1']);
+    expect(await page.getByTestId('pane-show-all').isDisabled()).toBe(true);
+
+    await row('Oval 4').getByTestId('pane-eye').click();
+    const ed = await saved();
+    const shapes = ed.doc.slide(ed.doc.slideParts()[0]!).shapes;
+    expect(shapes.filter(sh => sh.hidden).map(sh => sh.name)).toEqual(['Oval 4']);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('alt text: typed for the selected shape, kept when the box is left, and opened from the right-click menu', async () => {
+    await twoShapes();
+    const p = await slidePoint(1700000, 5900000);
+    await page.mouse.click(p.x, p.y, { button: 'right' });
+    await page.getByTestId('menu-alt-text').click();
+    await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('data-testid'))).toBe('alt-text');
+    await page.keyboard.type('A blue rectangle');
+    await page.keyboard.press('Backspace');                             // edits the text, not the shape
+    await page.keyboard.type('e');
+    expect(await selectedNames()).toEqual(['Rectangle 3']);
+    await page.getByTestId('selection-pane').getByText('Selection', { exact: true }).click();    // leave the box
+    expect(await state<string>(`return s.selection[0].children[0].children[0].attrs.find(a => a.local === 'descr').value;`)).toBe('A blue rectangle');
+    expect(await state<string>('return s.session.ed.log.undoLabel;')).toBe('Alt Text');
+
+    // another shape shows its own (empty) alt text; coming back shows what was typed
+    await row('Oval 4').click();
+    expect(await page.getByTestId('alt-text').inputValue()).toBe('');
+    await row('Rectangle 3').click();
+    expect(await page.getByTestId('alt-text').inputValue()).toBe('A blue rectangle');
+    // Escape gives up a change
+    await page.getByTestId('alt-text').fill('Something else');
+    await page.getByTestId('alt-text').press('Escape');
+    expect(await page.getByTestId('alt-text').inputValue()).toBe('A blue rectangle');
+    // with two shapes selected there is no alt text box
+    await row('Oval 4').click({ modifiers: ['Shift'] });
+    expect(await page.getByTestId('alt-text').count()).toBe(0);
+
+    const ed = await saved();
+    expect(ed.doc.slide(ed.doc.slideParts()[0]!).shapes.find(sh => sh.name === 'Rectangle 3')!.descr).toBe('A blue rectangle');
     expect(errors).toEqual([]);
   }, 60_000);
 });
