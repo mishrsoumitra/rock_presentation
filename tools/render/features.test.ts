@@ -779,6 +779,97 @@ describe('fills, arrows and shadows', () => {
   }, 60_000);
 });
 
+describe('the format painter', () => {
+  /** The fill each drawn shape has of its own ("red" for FF0000, "-" for none of its own), by shape name. */
+  const fills = () => state<Record<string, string>>(`
+    const out = {};
+    for (const sh of s.session.ed.doc.slide(s.slide).shapes.filter(x => !x.placeholder)) {
+      const pr = sh.el.children.find(c => c.local === 'spPr');
+      const solid = pr && pr.children.find(c => c.local === 'solidFill');
+      const clr = solid && solid.children[0];
+      out[sh.name.replace(/ \\d+$/, '')] = clr ? clr.attrs.find(a => a.local === 'val').value : '-';
+    }
+    return out;`);
+  const painter = () => page.getByTestId('format-painter');
+  const click = async (x: number, y: number) => { await frames(); const p = await slidePoint(x, y); await page.mouse.click(p.x, p.y); };
+  /** A red rectangle, a plain ellipse and a plain triangle in a row under the placeholders; the rectangle selected. */
+  async function threeShapes(): Promise<void> {
+    await drawShape('ellipse', 4000000, 5500000, 1500000, 800000);
+    await drawShape('triangle', 7000000, 5500000, 1500000, 800000);
+    await drawShape('rect', 1000000, 5500000, 1500000, 800000);
+    await page.getByTestId('shape-fill').click();
+    await page.locator('.menu-panel .swatch[title="Red"]').click();
+  }
+  const RECT = [1700000, 5900000] as const, OVAL = [4700000, 5900000] as const, TRIANGLE = [7750000, 6100000] as const, EMPTY = [600000, 600000] as const;
+
+  test('one click on the painter, one click on a shape: it takes the look, is selected, and the painter goes off', async () => {
+    await threeShapes();
+    expect(await painter().getAttribute('aria-pressed')).toBe('false');
+    await painter().click();
+    expect(await painter().getAttribute('aria-pressed')).toBe('true');
+    expect(await page.getByTestId('canvas').getAttribute('class')).toContain('painting');
+    await click(...OVAL);
+    expect(await fills()).toEqual({ Oval: 'FF0000', 'Isosceles Triangle': '-', Rectangle: 'FF0000' });
+    expect(await selectedNames()).toEqual(['Oval 3']);
+    expect(await painter().getAttribute('aria-pressed')).toBe('false');
+    expect(await state<string>('return s.session.ed.log.undoLabel;')).toBe('Format Painter');
+    // the next click is an ordinary click again
+    await click(...TRIANGLE);
+    expect((await fills())['Isosceles Triangle']).toBe('-');
+    await page.keyboard.press('Control+z');
+    expect((await fills()).Oval).toBe('-');
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('a double click keeps the painter on for shape after shape, until Escape; a click on the empty slide also puts it down', async () => {
+    await threeShapes();
+    await painter().dblclick();
+    expect(await painter().getAttribute('aria-pressed')).toBe('true');
+    await click(...OVAL);
+    await click(...TRIANGLE);
+    expect(await fills()).toEqual({ Oval: 'FF0000', 'Isosceles Triangle': 'FF0000', Rectangle: 'FF0000' });
+    expect(await painter().getAttribute('aria-pressed')).toBe('true');
+    await page.keyboard.press('Escape');
+    expect(await painter().getAttribute('aria-pressed')).toBe('false');
+    expect(await selectedNames()).toEqual(['Isosceles Triangle 4']);      // Escape put the painter down, not the selection
+
+    await painter().click();
+    await click(...EMPTY);
+    expect(await painter().getAttribute('aria-pressed')).toBe('false');
+    // clicking the painter again while it is on turns it off
+    await click(...RECT);
+    await painter().click();
+    await painter().click();
+    expect(await painter().getAttribute('aria-pressed')).toBe('false');
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('Ctrl+Alt+C picks a look up and Ctrl+Alt+V puts it on the selection, as often as wanted', async () => {
+    await threeShapes();
+    await page.keyboard.press('Control+Alt+c');
+    await click(...OVAL);
+    await page.keyboard.press('Control+Alt+v');
+    await click(...TRIANGLE);
+    await page.keyboard.press('Control+Alt+v');
+    expect(await fills()).toEqual({ Oval: 'FF0000', 'Isosceles Triangle': 'FF0000', Rectangle: 'FF0000' });
+    expect(await painter().getAttribute('aria-pressed')).toBe('false');
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('picked up from selected text, only the text of the shape clicked changes', async () => {
+    await threeShapes();
+    await page.keyboard.type('Bold');
+    await page.keyboard.press('Control+a');
+    await page.getByTestId('bold').click();
+    await painter().click();                                            // from the text selection: character formatting only
+    await click(...OVAL);
+    expect((await fills()).Oval).toBe('-');
+    await page.keyboard.type('x');
+    expect(await shapeXml()).toMatch(/<a:rPr[^>]*b="1"/);
+    expect(errors).toEqual([]);
+  }, 60_000);
+});
+
 describe('bullet and number styles', () => {
   test('pick a bullet character and a numbering scheme; the menus tick the one in force; text in a box gets a hanging indent', async () => {
     await textBox('one\ntwo');

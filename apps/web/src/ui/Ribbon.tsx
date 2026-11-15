@@ -6,7 +6,7 @@ import { BULLET_STYLES, bulletPatch, NUMBER_STYLES, numberSample } from './bulle
 import { linkContext } from './linkActions.ts';
 import * as tables from './tables.ts';
 import { clearFormatting, formatPara, formatText, formatTextBox, formattingHere } from './textActions.ts';
-import { Btn, ColorGrid, keepFocus, Menu, MenuItem, pickFile, refocusText, ShapeGallery, TableGrid } from './widgets.tsx';
+import { Btn, ColorGrid, Icon, keepFocus, Menu, MenuItem, pickFile, refocusText, ShapeGallery, TableGrid } from './widgets.tsx';
 
 const FONTS = ['Calibri', 'Calibri Light', 'Cambria', 'Arial', 'Times New Roman', 'Courier New', 'Aptos', 'Georgia', 'Verdana', 'Segoe UI'];
 const SIZES = [8, 9, 10, 10.5, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 40, 44, 48, 54, 60, 66, 72, 80, 88, 96];
@@ -44,7 +44,7 @@ function shown(s: EditorState): string {
     run?.latin, run?.size, run?.bold, run?.italic, run?.underline, run?.strike, para?.bullet?.kind, para?.bullet?.char, para?.bullet?.scheme, para?.marL, para?.indent, para?.level, para?.align,
     run?.baseline, run?.spacing, para?.lineSpacing.kind, para?.lineSpacing.val, para?.spaceBefore.val, para?.spaceAfter.val,
     here.body?.anchor, here.body?.numCol, here.body && Object.values(here.body.insets).join(','),
-    s.cells && [s.cells.anchor.r, s.cells.anchor.c, s.cells.focus.r, s.cells.focus.c].join(','), !!linkContext(), s.text && [s.text.anchor.p, s.text.anchor.offset, s.text.caret.p, s.text.caret.offset].join(','), Object.values(tables.tableAbilities()).join(','),
+    s.painting, s.cells && [s.cells.anchor.r, s.cells.anchor.c, s.cells.focus.r, s.cells.focus.c].join(','), !!linkContext(), s.text && [s.text.anchor.p, s.text.anchor.offset, s.text.caret.p, s.text.caret.offset].join(','), Object.values(tables.tableAbilities()).join(','),
   ].join('|');
 }
 
@@ -62,6 +62,7 @@ export function Ribbon({ extraTabs }: { extraTabs?: Partial<Record<Tab, React.Re
   const marginsAre = (l: number, t: number) => !!body && body.insets.l === l && body.insets.r === l && body.insets.t === t && body.insets.b === t;
   const hasSel = selection.length > 0;
   const table = tables.tableAbilities();
+  const painting = useEditor.getState().painting;
   const isPicture = selection.length === 1 && selection[0]!.local === 'pic';
   const tabs: Tab[] = ['File', 'Home', 'Insert', 'Design', 'Transitions', 'Animations', 'Slide Show'];
 
@@ -92,6 +93,9 @@ export function Ribbon({ extraTabs }: { extraTabs?: Partial<Record<Tab, React.Re
               <Btn icon="paste" label="Paste" disabled={!useEditor.getState().clipboard} onClick={() => void act.paste()} />
               <Btn icon="cut" label="Cut" disabled={!hasSel} onClick={() => act.copySelection(true)} />
               <Btn icon="copy" label="Copy" disabled={!hasSel} onClick={() => act.copySelection()} />
+              <button type="button" className={`btn${painting ? ' active' : ''}`} title="Format Painter (double-click to keep it on)" aria-label="Format Painter" aria-pressed={!!painting}
+                disabled={!hasSel && !useEditor.getState().text && !painting} onMouseDown={keepFocus} data-testid="format-painter"
+                onClick={e => act.togglePainter(e.detail >= 2)}><Icon name="brush" /></button>
             </section>
             <section className="group" aria-label="Editing">
               <Btn icon="search" label="Find and Replace" disabled={!session} onClick={() => useEditor.setState({ finding: !useEditor.getState().finding })} testid="find" />

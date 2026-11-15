@@ -14,6 +14,7 @@ import { promptOf } from './prompts.ts';
 import { selectAll } from './textActions.ts';
 import { TextInput } from './TextInput.tsx';
 import { CellEditor } from './CellEditor.tsx';
+import { paintFormat } from './actions.ts';
 import { activeCells, cellAtPoint, cellCorners, editCell, rangeOf } from './tables.ts';
 import * as act from './actions.ts';
 
@@ -148,6 +149,7 @@ export function SlideCanvas() {
   const text = useEditor(s => s.text);
   const zoomSetting = useEditor(s => s.zoom);
   const drawing = useEditor(s => s.drawing);
+  const painting = useEditor(s => s.painting);
   const set = useEditor(s => s.setState);
   const host = useRef<HTMLDivElement>(null);
   const stageRef = useRef<Konva.Stage>(null);
@@ -390,6 +392,23 @@ export function SlideCanvas() {
   };
 
   /**
+   * The format painter is on and the mouse goes down on a shape: it takes the look and is selected; the painter
+   * goes off unless it is sticky. True when it did that, and the press is over.
+   */
+  const paintShape = (rs: RenderShape, e: Konva.KonvaEventObject<MouseEvent>): boolean => {
+    const st = useEditor.getState();
+    if (!st.painting || st.drawing || e.evt.button !== 0) return false;
+    e.cancelBubble = true;
+    e.evt.preventDefault();
+    const el = rs.source.view.el;
+    ed.log.seal();
+    paintFormat([el]);
+    ed.log.seal();
+    set({ selection: [el], text: null, cells: null, painting: st.painting === 'sticky' ? 'sticky' : false });
+    return true;
+  };
+
+  /**
    * Shift and the mouse down on the table whose cells are picked: the block from the cell picked before to the cell
    * under the mouse (rather than taking the table out of the selection, as Shift+click does to a shape). True when
    * it did that, and the press is over.
@@ -529,6 +548,7 @@ export function SlideCanvas() {
     if (e.target !== e.target.getStage() && e.target.name() !== 'underlay') return;
     // empty slide, or the grey around it: text editing ends (its selection with it) and nothing is selected
     const st = useEditor.getState();
+    if (st.painting) st.setState({ painting: false });      // a click on nothing puts the painter down
     if (st.text) {
       st.session?.ed.log.seal();
       st.setState({ text: null, pending: null });
@@ -587,7 +607,7 @@ export function SlideCanvas() {
 
   return (
     <div
-      ref={host} className={`canvas-host${drawing ? ' drawing' : ''}`} data-testid="canvas"
+      ref={host} className={`canvas-host${drawing ? ' drawing' : ''}${painting ? ' painting' : ''}`} data-testid="canvas"
       onContextMenu={e => {
         // the press that came first selected what is under the pointer: the menu is for that
         e.preventDefault();
@@ -672,7 +692,7 @@ export function SlideCanvas() {
                     ctx.strokeShape(shape);
                   }
                 }}
-                onMouseDown={e => { if (extendCells(rs, e)) return; onShapeDown(rs, p, e); onTableDown(rs, e); }}
+                onMouseDown={e => { if (paintShape(rs, e) || extendCells(rs, e)) return; onShapeDown(rs, p, e); onTableDown(rs, e); }}
                 onMouseEnter={() => { hovered.current = el; showHover(); }}
                 onMouseLeave={() => {
                   if (hovered.current === el) { hovered.current = null; showHover(); }

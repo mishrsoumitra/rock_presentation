@@ -30,6 +30,10 @@ export function useShortcuts(): void {
         if (e.key === 'Escape') { handled(); s.setState({ cells: null }); return; }
         if (e.key.length === 1) { handled(); editCell(e.key); return; }
       }
+      // the format painter: Escape puts it down; Ctrl/Cmd+Alt+C picks a look up and Ctrl/Cmd+Alt+V puts it on the selection
+      if (e.key === 'Escape' && s.painting) { handled(); s.setState({ painting: false }); return; }
+      if (mod && e.altKey && e.code === 'KeyC') { handled(); act.pickUpFormat(); return; }
+      if (mod && e.altKey && e.code === 'KeyV') { handled(); act.paintFormat(); return; }
       if (mod && k === 'z') { handled(); if (e.shiftKey) s.redo(); else s.undo(); }
       else if (mod && k === 'y') { handled(); s.redo(); }
       // (copy, cut and paste are the browser's clipboard events: see clipboard.ts)

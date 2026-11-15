@@ -1,7 +1,7 @@
 // apps/web/src/state/store.ts  -- the editor's state: the open deck, the slide on screen, selection, text editing
 import { create } from 'zustand';
 import { isEncryptedPackage, OfficeCryptoError } from '@pptx/crypto';
-import { Editor, paragraphLength, paragraphs, prepareForSave, type CellRef, type Command, type ShapeClip, type SlideClip, type RunPatch, type TextPos } from '@pptx/editor-core';
+import { Editor, paragraphLength, paragraphs, prepareForSave, type CellRef, type Command, type FormatClip, type ShapeClip, type SlideClip, type RunPatch, type TextPos } from '@pptx/editor-core';
 import { ShapeView } from '@pptx/model';
 import { OpcError, OpcPackage } from '@pptx/opc';
 import type { FontRegistry } from '@pptx/text';
@@ -59,6 +59,10 @@ export interface EditorState {
   /** The find and replace panel is open. */
   finding: boolean;
   clipboard: ShapeClip | null;
+  /** The look the format painter picked up last (kept for Ctrl+Alt+V after the painter has been used). */
+  formatClip: FormatClip | null;
+  /** The format painter is on: the next shape clicked takes the look; 'sticky' keeps it on until Escape. */
+  painting: false | 'once' | 'sticky';
   /** A copied or cut slide, held apart from the deck, and the mark it carries on the system clipboard. */
   slideClip: { clip: SlideClip; id: string } | null;
   /** The mark the copied shapes carry on the system clipboard, so a paste of that clipboard brings them back whole. */
@@ -102,7 +106,7 @@ function fitted(s: Session, t: TextEditing | null): TextEditing | null {
 
 export const useEditor = create<EditorState>((set, get) => ({
   session: null, version: 0, slide: null, selection: [], entered: null, text: null, cells: null, pending: null,
-  zoom: 'fit', drawing: null, mode: 'edit', pane: 'none', finding: false, linking: false, menu: null, clipboard: null, clipId: null, slideClip: null, message: null, askPassword: null,
+  zoom: 'fit', drawing: null, mode: 'edit', pane: 'none', finding: false, linking: false, menu: null, clipboard: null, clipId: null, slideClip: null, formatClip: null, painting: false, message: null, askPassword: null,
 
   async open(bytes, name, password) {
     performance.mark('open-start');

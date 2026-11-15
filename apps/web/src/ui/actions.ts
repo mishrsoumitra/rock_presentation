@@ -7,7 +7,8 @@ import {
   type ScaleMode, type ZOrder,
 } from '@pptx/editor-core';
 import { OpcPackage } from '@pptx/opc';
-import { paragraphLength, paragraphs } from '@pptx/editor-core';
+import { copyFormat, copyTextFormat, paragraphLength, paragraphs, pasteFormat } from '@pptx/editor-core';
+import { runsOf } from '@pptx/model';
 import { ShapeView } from '@pptx/model';
 import type { XmlElement } from '@pptx/xml';
 import { blankPresentation } from '../engine/blank.ts';
@@ -152,6 +153,50 @@ export async function insertPictureFile(file: File): Promise<void> {
   const r = insertPicture(c.ed, c.part, prepared, undefined, file.name.replace(/\.[^.]+$/, ''));
   c.s.run(r.command);
   c.s.select(inserted(r.id));
+}
+
+/**
+ * Pick up a look for the format painter: from the text selected in the box being edited (its character formatting
+ * only), or from the first selected shape (its fill, line, effects and text look). False when there is nothing to
+ * pick up from.
+ */
+export function pickUpFormat(): boolean {
+  const s = st();
+  if (!s.session || !s.slide) return false;
+  const t = s.text;
+  if (t && (t.anchor.p !== t.caret.p || t.anchor.offset !== t.caret.offset)) {
+    // the run the selection starts in
+    const body = new ShapeView(t.el, s.session.ed.doc.owner(t.part)).txBody;
+    const start = t.anchor.p < t.caret.p || (t.anchor.p === t.caret.p && t.anchor.offset <= t.caret.offset) ? t.anchor : t.caret;
+    const p = body ? paragraphs(body)[start.p] : undefined;
+    let at = 0;
+    let rPr = p ? runsOf(p)[0]?.rPr : undefined;
+    for (const r of p ? runsOf(p) : []) {
+      const len = r.kind === 'br' ? 1 : r.text.length;
+      if (start.offset >= at && start.offset < at + len) { rPr = r.rPr; break; }
+      at += len;
+    }
+    useEditor.setState({ formatClip: copyTextFormat(rPr) });
+    return true;
+  }
+  const el = t?.el ?? s.selection[0];
+  if (!el) return false;
+  useEditor.setState({ formatClip: copyFormat(new ShapeView(el, s.session.ed.doc.owner(s.slide))) });
+  return true;
+}
+
+/** Put the picked-up look on shapes (the selected ones by default). */
+export function paintFormat(els: XmlElement[] = st().selection): void {
+  const s = st();
+  if (!s.session || !s.slide || !s.formatClip || !els.length) return;
+  s.run(pasteFormat(s.session.ed, s.slide, els.map(el => new ShapeView(el, s.session!.ed.doc.owner(s.slide!))), s.formatClip));
+}
+
+/** The Format Painter button: on (for one shape, or until Escape when `sticky`), or off again. */
+export function togglePainter(sticky = false): void {
+  const s = st();
+  if (s.painting && !sticky) { useEditor.setState({ painting: false }); return; }
+  if (pickUpFormat()) useEditor.setState({ painting: sticky ? 'sticky' : 'once' });
 }
 
 /** Open the selection pane with the keyboard in its alt text box, for the one selected shape. */

@@ -83,6 +83,7 @@ select { height: 28px; border: 1px solid var(--line); border-radius: var(--radiu
 .canvas-host { position: relative; overflow: auto; background: var(--canvas); min-width: 0; }
 .canvas-host.empty { display: grid; place-items: center; color: var(--muted); }
 .canvas-host.drawing { cursor: crosshair; }
+.canvas-host.painting, .canvas-host.painting .konvajs-content { cursor: copy !important; }
 .slide-error { position: absolute; left: 50%; top: 16px; transform: translateX(-50%); background: var(--panel); color: var(--danger);
   border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; max-width: 80%; }
 .cell-editor { position: absolute; z-index: 5; margin: 0; padding: 2px 6px; border: 2px solid var(--select); border-radius: 0; resize: none; overflow: hidden;
