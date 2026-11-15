@@ -14,6 +14,7 @@ import { promptOf } from './prompts.ts';
 import { selectAll } from './textActions.ts';
 import { TextInput } from './TextInput.tsx';
 import { CellEditor } from './CellEditor.tsx';
+import { Rulers } from './Rulers.tsx';
 import { connectionSites, connectorEnds, cropAndPlace, isConnector, nearestSite, pictureCrop, setConnectorEnds, type Point } from '@pptx/editor-core';
 import { attachable, paintFormat } from './actions.ts';
 import { CROP_HANDLES, dragCrop, fullCorners, handlePoint, type CropHandle, type Cropped } from './crop.ts';
@@ -163,6 +164,9 @@ export function SlideCanvas() {
   const drawing = useEditor(s => s.drawing);
   const painting = useEditor(s => s.painting);
   const cropEl = useEditor(s => s.cropping);
+  const showRuler = useEditor(s => s.showRuler);
+  const showGuides = useEditor(s => s.showGuides);
+  const userGuides = useEditor(s => s.guides);
   const set = useEditor(s => s.setState);
   const host = useRef<HTMLDivElement>(null);
   const stageRef = useRef<Konva.Stage>(null);
@@ -408,6 +412,36 @@ export function SlideCanvas() {
     beginPress({ kind: 'click', el, rs, node, down: evt, at, edit: text });
   };
 
+  /**
+   * A guide follows the mouse until it comes up: an existing one (by its place in the list), or a new one pulled out
+   * of a ruler. Let go off the slide, it is removed. Guides are not part of the deck: nothing here is undone or saved.
+   */
+  const startGuide = (axis: 'x' | 'y', which: number | 'new', down: MouseEvent) => {
+    const stage = stageRef.current;
+    if (!stage || down.button !== 0) return;
+    const limit = axis === 'x' ? cx : cy;
+    const at = (ev: MouseEvent) => { stage.setPointersPositions(ev); const p = stage.getRelativePointerPosition(); return Math.round(p ? p[axis] : 0); };
+    let index: number;
+    const st = useEditor.getState();
+    if (which === 'new') {
+      index = st.guides[axis].length;
+      set({ showGuides: true, guides: { ...st.guides, [axis]: [...st.guides[axis], at(down)] } });
+    } else index = which;
+    const put = (v: number) => { const g = useEditor.getState().guides; set({ guides: { ...g, [axis]: g[axis].map((old, i) => (i === index ? v : old)) } }); };
+    const move = (ev: MouseEvent) => put(at(ev));
+    const up = (ev: MouseEvent) => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+      const v = at(ev);
+      const g = useEditor.getState().guides;
+      if (v < 0 || v > limit) set({ guides: { ...g, [axis]: g[axis].filter((_, i) => i !== index) } });
+      else put(v);
+      setCursor('');
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  };
+
   /** How near (in slide units) an end must be let go to a connection point to attach to it: fourteen screen pixels. */
   const reach = () => 14 / zoom;
   /** The connection points worth showing for an end at a point: those of every shape that has one within a few reaches. */
@@ -563,6 +597,9 @@ export function SlideCanvas() {
     const tol = 6 / zoom;
     const r = node.getClientRect({ relativeTo: node.getLayer()! });
     const xs = [0, cx / 2, cx], ys = [0, cy / 2, cy];
+    // the guides laid on the slide, while they show
+    const laid = useEditor.getState();
+    if (laid.showGuides) { xs.push(...laid.guides.x); ys.push(...laid.guides.y); }
     for (const o of others) {
       const b = boundsOf(o);
       xs.push(b.x, b.x + b.w / 2, b.x + b.w);
@@ -732,6 +769,7 @@ export function SlideCanvas() {
         set({ zoom: next });
       }}
     >
+      {showRuler && <Rulers host={host} ox={ox} oy={oy} zoom={zoom} onPull={(axis, e) => startGuide(axis, 'new', e)} />}
       <Stage
         ref={stageRef} width={stageW} height={stageH} scaleX={zoom} scaleY={zoom} x={ox} y={oy}
         onMouseDown={onStageDown} onMouseMove={onStageMove} onMouseUp={onStageUp}
@@ -861,6 +899,10 @@ export function SlideCanvas() {
             return <Rect key={`crop${h.x},${h.y}`} name="crop-handle" x={q.x - size / 2} y={q.y - size / 2} width={size} height={size} fill="#111" stroke="#fff" strokeWidth={1.5 / zoom}
               onMouseDown={e => startCrop(h, e)} onMouseEnter={() => setCursor('crosshair')} onMouseLeave={() => setCursor('')} />;
           })}
+          {showGuides && userGuides.x.map((g, i) => <Line key={`ux${i}`} name="user-guide" points={[g, -cy * 4, g, cy * 5]} stroke="#d9480f" strokeWidth={1 / zoom} dash={[6 / zoom, 4 / zoom]}
+            hitStrokeWidth={10 / zoom} onMouseDown={e => { e.cancelBubble = true; e.evt.preventDefault(); startGuide('x', i, e.evt); }} onMouseEnter={() => setCursor('col-resize')} onMouseLeave={() => setCursor('')} />)}
+          {showGuides && userGuides.y.map((g, i) => <Line key={`uy${i}`} name="user-guide" points={[-cx * 4, g, cx * 5, g]} stroke="#d9480f" strokeWidth={1 / zoom} dash={[6 / zoom, 4 / zoom]}
+            hitStrokeWidth={10 / zoom} onMouseDown={e => { e.cancelBubble = true; e.evt.preventDefault(); startGuide('y', i, e.evt); }} onMouseEnter={() => setCursor('row-resize')} onMouseLeave={() => setCursor('')} />)}
           {hints.map((h, i) => <Circle key={`hint${i}`} name="site-hint" x={h.x} y={h.y} radius={4 / zoom} fill="#fff" stroke="#2b6cb0" strokeWidth={1.5 / zoom} listening={false} />)}
           {lineEnds && (['start', 'end'] as const).map(which => (
             <Circle key={which} name="end-handle" x={lineEnds[which].x} y={lineEnds[which].y} radius={6 / zoom} fill="#fff" stroke="#2b6cb0" strokeWidth={1.5 / zoom}

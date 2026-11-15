@@ -4,13 +4,14 @@ import { useEditor, type EditorState } from '../state/store.ts';
 import * as act from './actions.ts';
 import { BULLET_STYLES, bulletPatch, NUMBER_STYLES, numberSample } from './bullets.ts';
 import { linkContext } from './linkActions.ts';
+import { newGuideAt } from './rulers.ts';
 import * as tables from './tables.ts';
 import { clearFormatting, formatPara, formatText, formatTextBox, formattingHere } from './textActions.ts';
 import { Btn, ColorGrid, Icon, keepFocus, Menu, MenuItem, pickFile, refocusText, ShapeGallery, TableGrid } from './widgets.tsx';
 
 const FONTS = ['Calibri', 'Calibri Light', 'Cambria', 'Arial', 'Times New Roman', 'Courier New', 'Aptos', 'Georgia', 'Verdana', 'Segoe UI'];
 const SIZES = [8, 9, 10, 10.5, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 40, 44, 48, 54, 60, 66, 72, 80, 88, 96];
-type Tab = 'File' | 'Home' | 'Insert' | 'Design' | 'Transitions' | 'Animations' | 'Slide Show';
+type Tab = 'File' | 'Home' | 'Insert' | 'Design' | 'Transitions' | 'Animations' | 'Slide Show' | 'View';
 
 function FilePicker({ accept, onFile, children }: { accept: string; onFile: (f: File) => void; children: (open: () => void) => React.ReactNode }) {
   const ref = useRef<HTMLInputElement>(null);
@@ -44,7 +45,7 @@ function shown(s: EditorState): string {
     run?.latin, run?.size, run?.bold, run?.italic, run?.underline, run?.strike, para?.bullet?.kind, para?.bullet?.char, para?.bullet?.scheme, para?.marL, para?.indent, para?.level, para?.align,
     run?.baseline, run?.spacing, para?.lineSpacing.kind, para?.lineSpacing.val, para?.spaceBefore.val, para?.spaceAfter.val,
     here.body?.anchor, here.body?.numCol, here.body && Object.values(here.body.insets).join(','),
-    s.painting, !!s.cropping, s.cells && [s.cells.anchor.r, s.cells.anchor.c, s.cells.focus.r, s.cells.focus.c].join(','), !!linkContext(), s.text && [s.text.anchor.p, s.text.anchor.offset, s.text.caret.p, s.text.caret.offset].join(','), Object.values(tables.tableAbilities()).join(','),
+    s.painting, !!s.cropping, s.view, s.showRuler, s.showGuides, s.guides.x.length + s.guides.y.length, s.cells && [s.cells.anchor.r, s.cells.anchor.c, s.cells.focus.r, s.cells.focus.c].join(','), !!linkContext(), s.text && [s.text.anchor.p, s.text.anchor.offset, s.text.caret.p, s.text.caret.offset].join(','), Object.values(tables.tableAbilities()).join(','),
   ].join('|');
 }
 
@@ -65,7 +66,7 @@ export function Ribbon({ extraTabs }: { extraTabs?: Partial<Record<Tab, React.Re
   const painting = useEditor.getState().painting;
   const cropping = !!useEditor.getState().cropping;
   const isPicture = selection.length === 1 && selection[0]!.local === 'pic';
-  const tabs: Tab[] = ['File', 'Home', 'Insert', 'Design', 'Transitions', 'Animations', 'Slide Show'];
+  const tabs: Tab[] = ['File', 'Home', 'Insert', 'Design', 'Transitions', 'Animations', 'Slide Show', 'View'];
 
   return (
     <header className="ribbon">
@@ -284,6 +285,32 @@ export function Ribbon({ extraTabs }: { extraTabs?: Partial<Record<Tab, React.Re
           </>
         )}
         {(tab === 'Transitions' || tab === 'Animations') && (extraTabs?.[tab] ?? <section className="group"><span className="hint">Select a slide or shape.</span></section>)}
+        {tab === 'View' && (() => {
+          const st = useEditor.getState();
+          const size = session?.ed.doc.presentation.slideSize;
+          const addGuide = (axis: 'x' | 'y') => {
+            if (!size) return;
+            const g = useEditor.getState().guides;
+            useEditor.setState({ showGuides: true, guides: { ...g, [axis]: [...g[axis], newGuideAt(g[axis], axis === 'x' ? size.cx : size.cy)] } });
+          };
+          return (
+            <>
+              <section className="group" aria-label="Views">
+                <Btn icon="layout" label="Grid View" wide disabled={!session} active={st.view === 'grid'} testid="view-tab-grid"
+                  onClick={() => useEditor.setState({ view: st.view === 'grid' ? 'normal' : 'grid', text: null, selection: [], cells: null, cropping: null })} />
+              </section>
+              <section className="group" aria-label="Show">
+                <Btn icon="size" label="Ruler" wide disabled={!session} active={st.showRuler} onClick={() => useEditor.setState({ showRuler: !st.showRuler })} testid="view-ruler" />
+                <Btn icon="plus" label="Guides" wide disabled={!session} active={st.showGuides} onClick={() => useEditor.setState({ showGuides: !st.showGuides })} testid="view-guides" />
+              </section>
+              <section className="group" aria-label="Guides">
+                <Btn label="Add Vertical Guide" wide disabled={!session} onClick={() => addGuide('x')} testid="add-guide-v" />
+                <Btn label="Add Horizontal Guide" wide disabled={!session} onClick={() => addGuide('y')} testid="add-guide-h" />
+                <Btn label="Clear Guides" wide disabled={!session || (!st.guides.x.length && !st.guides.y.length)} onClick={() => useEditor.setState({ guides: { x: [], y: [] } })} testid="clear-guides" />
+              </section>
+            </>
+          );
+        })()}
         {tab === 'Slide Show' && (
           <>
             <section className="group">

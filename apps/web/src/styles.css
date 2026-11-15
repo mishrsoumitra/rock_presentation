@@ -97,6 +97,15 @@ select { height: 28px; border: 1px solid var(--line); border-radius: var(--radiu
 .slide-grid .thumb { padding: 6px; }
 .status .zoom .view-toggle { margin-right: 10px; }
 
+/* rulers along the top and left of the slide area */
+.rulers { position: sticky; top: 0; left: 0; width: 0; height: 0; z-index: 4; }
+.ruler { position: absolute; top: 0; left: 0; background: var(--panel); cursor: crosshair; display: block; }
+.ruler line { stroke: var(--muted); stroke-width: 1; }
+.ruler text { fill: var(--muted); font-size: 9px; user-select: none; }
+.ruler-h { border-bottom: 1px solid var(--line); }
+.ruler-v { border-right: 1px solid var(--line); }
+.ruler-corner { position: absolute; top: 0; left: 0; width: 18px; height: 18px; background: var(--panel); border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+
 /* the slide with its speaker notes under it */
 .editing { display: grid; grid-template-rows: minmax(0, 1fr) auto; min-width: 0; min-height: 0; }
 .notes { border-top: 1px solid var(--line); background: var(--panel); }

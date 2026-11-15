@@ -51,6 +51,10 @@ export interface EditorState {
   /** A preset picked from the shape gallery, waiting to be drawn by dragging on the slide. */
   drawing: string | null;
   mode: 'edit' | 'present';
+  /** Rulers along the slide area, and the guides laid on the slide (EMU from its left and top; this session only). */
+  showRuler: boolean;
+  showGuides: boolean;
+  guides: { x: number[]; y: number[] };
   /** What fills the window while editing: one slide with the panel beside it, or every slide in a grid. */
   view: 'normal' | 'grid';
   pane: Pane;
@@ -110,7 +114,7 @@ function fitted(s: Session, t: TextEditing | null): TextEditing | null {
 
 export const useEditor = create<EditorState>((set, get) => ({
   session: null, version: 0, slide: null, selection: [], entered: null, text: null, cells: null, pending: null,
-  zoom: 'fit', drawing: null, mode: 'edit', view: 'normal', pane: 'none', finding: false, linking: false, menu: null, clipboard: null, clipId: null, slideClip: null, formatClip: null, painting: false, cropping: null, message: null, askPassword: null,
+  zoom: 'fit', drawing: null, mode: 'edit', view: 'normal', showRuler: false, showGuides: true, guides: { x: [], y: [] }, pane: 'none', finding: false, linking: false, menu: null, clipboard: null, clipId: null, slideClip: null, formatClip: null, painting: false, cropping: null, message: null, askPassword: null,
 
   async open(bytes, name, password) {
     performance.mark('open-start');
@@ -137,7 +141,7 @@ export const useEditor = create<EditorState>((set, get) => ({
         set(s => ({ version: s.version + 1 }));
       });
       set({
-        session, slide: ed.doc.slideParts()[0] ?? null, selection: [], entered: null, text: null, cells: null, pending: null, askPassword: null,
+        session, slide: ed.doc.slideParts()[0] ?? null, selection: [], entered: null, text: null, cells: null, pending: null, askPassword: null, guides: { x: [], y: [] },
         version: get().version + 1,
         message: ed.mainKind === 'template' ? { kind: 'info', text: 'Opened a template: saving writes a presentation (.pptx).' }
           : ed.mainKind === 'macro' || pkg.partNames().some(n => /vbaProject\.bin$/i.test(n))

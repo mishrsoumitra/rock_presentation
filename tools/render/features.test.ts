@@ -1250,6 +1250,120 @@ describe('grid view', () => {
   }, 60_000);
 });
 
+describe('rulers and guides', () => {
+  const guides = () => state<{ x: number[]; y: number[] }>('return s.guides;');
+  const view = async (testid: string) => { await page.getByRole('tab', { name: 'View' }).click(); await page.getByTestId(testid).click(); };
+  const zoomNow = () => page.evaluate(() => (globalThis as unknown as { __stage: { scaleX(): number } }).__stage.scaleX());
+  /** The selected shape's frame. */
+  const frame = () => state<{ x: number; y: number; cx: number; cy: number }>(`const x = s.session.ed.view(s.slide, s.selection[0]).xfrm; return { x: x.x, y: x.y, cx: x.cx, cy: x.cy };`);
+  /** Drag on the page between two page points, in small steps. */
+  async function dragPage(a: { x: number; y: number }, b: { x: number; y: number }): Promise<void> {
+    await page.mouse.move(a.x, a.y);
+    await page.mouse.down();
+    await page.mouse.move((a.x + b.x) / 2, (a.y + b.y) / 2, { steps: 4 });
+    await page.mouse.move(b.x, b.y, { steps: 4 });
+    await page.mouse.up();
+    await frames();
+  }
+
+  test('View > Ruler shows rulers in inches from the slide\'s corner that follow the zoom; the button hides them again', async () => {
+    expect(await page.getByTestId('ruler-h').count()).toBe(0);
+    await view('view-ruler');
+    await page.getByTestId('ruler-h').waitFor();
+    await frames();
+    expect(await page.getByTestId('view-ruler').getAttribute('aria-pressed')).toBe('true');
+    // a 13.33 inch wide slide: the numbers 0 to 13 across, 0 to 7 down, each where that inch is on the slide
+    const labels = async (id: string) => page.getByTestId(id).locator('text').evaluateAll(els => els.map(e => [e.textContent, Number(e.getAttribute(e.closest('.ruler-h') ? 'x' : 'y'))] as [string, number]));
+    const across = await labels('ruler-h');
+    for (const n of ['0', '1', '6', '13']) expect(across.map(l => l[0])).toContain(n);
+    expect((await labels('ruler-v')).map(l => l[0])).toEqual(expect.arrayContaining(['0', '3', '7']));
+    const host = (await page.getByTestId('canvas').boundingBox())!;
+    const zero = await slidePoint(0, 0), six = await slidePoint(6 * 914400, 0);
+    const at = (n: string) => across.filter(l => l[0] === n).map(l => l[1]).find(x => Math.abs(x - 3 - ((n === '0' ? zero.x : six.x) - host.x)) < 1.5);
+    expect(at('0')).toBeDefined();
+    expect(at('6')).toBeDefined();
+
+    // zoomed to 200% the marks spread out: fewer inches fit, and an inch on the ruler is 192 pixels
+    const gap = (ls: [string, number][]) => { const xs = ls.map(l => l[1]).sort((m, n) => m - n); return xs[1]! - xs[0]!; };
+    const fitGap = gap(across);
+    await page.locator('.status .zoom button', { hasText: '200%' }).click();
+    await frames();
+    const wide = await labels('ruler-h');
+    expect(wide.length).toBeLessThan(across.length);
+    expect(gap(wide)).toBeCloseTo(192, 0);
+    expect(gap(wide)).toBeGreaterThan(fitGap * 1.5);
+    await page.locator('.status .zoom button', { hasText: 'Fit' }).click();
+
+    await page.getByTestId('view-ruler').click();
+    expect(await page.getByTestId('ruler-h').count()).toBe(0);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('guides: added in the middle, a dragged shape snaps to one, a guide is dragged to a new place and off the slide to remove it', async () => {
+    await view('add-guide-v');
+    await view('add-guide-h');
+    expect(await guides()).toEqual({ x: [6096000], y: [3429000] });
+    await page.getByTestId('add-guide-v').click();
+    expect((await guides()).x).toEqual([6096000, 6096000 + 457200]);     // not on top of the first
+    expect(await page.evaluate(() => (globalThis as unknown as { __stage: { find(s: string): unknown[] } }).__stage.find('.user-guide').length)).toBe(3);
+
+    // a rectangle dragged until its left edge is a few pixels from the first vertical guide snaps onto it
+    await drawShape('rect', 1000000, 5500000, 1500000, 800000);
+    const z = await zoomNow();
+    const before = await frame();
+    const from = await slidePoint(before.x + before.cx / 2, before.y + before.cy / 2);
+    const wanted = (6096000 - before.x) * z;                             // how far right the left edge has to go
+    await dragPage(from, { x: from.x + wanted + 4, y: from.y - 40 });
+    expect((await frame()).x).toBe(6096000);
+
+    // the guide itself dragged left by 200 pixels
+    await page.keyboard.press('Escape');
+    const g = await slidePoint(6096000, 600000);
+    await dragPage(g, { x: g.x - 200, y: g.y + 5 });
+    const moved = (await guides()).x[0]!;
+    expect(Math.abs(moved - (6096000 - 200 / z))).toBeLessThan(3 / z);
+    expect(await state<string | undefined>('return s.session.ed.log.undoLabel;')).toBe('Move');      // moving a guide is not a deck change
+
+    // dragged off the left edge of the slide, it is gone
+    const g2 = await slidePoint(moved, 600000);
+    const off = await slidePoint(-300000, 600000);
+    await dragPage(g2, off);
+    expect((await guides()).x).toEqual([6096000 + 457200]);
+
+    // hidden guides do not snap; Clear Guides removes them all
+    await view('view-guides');
+    expect(await page.evaluate(() => (globalThis as unknown as { __stage: { find(s: string): unknown[] } }).__stage.find('.user-guide').length)).toBe(0);
+    await page.getByTestId('clear-guides').click();
+    expect(await guides()).toEqual({ x: [], y: [] });
+    expect(await page.getByTestId('clear-guides').isDisabled()).toBe(true);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('a guide is pulled out of a ruler: down from the top ruler for a horizontal one, across from the left for a vertical one', async () => {
+    await view('view-ruler');
+    await page.getByTestId('ruler-h').waitFor();
+    await frames();
+    const top = (await page.getByTestId('ruler-h').boundingBox())!;
+    const to = await slidePoint(3000000, 2000000);
+    await dragPage({ x: top.x + 300, y: top.y + 8 }, { x: to.x, y: to.y });
+    const z = await zoomNow();
+    let g = await guides();
+    expect(g.x).toEqual([]);
+    expect(g.y.length).toBe(1);
+    expect(Math.abs(g.y[0]! - 2000000)).toBeLessThan(3 / z);
+
+    const left = (await page.getByTestId('ruler-v').boundingBox())!;
+    await dragPage({ x: left.x + 8, y: left.y + 300 }, { x: to.x, y: to.y });
+    g = await guides();
+    expect(g.x.length).toBe(1);
+    expect(Math.abs(g.x[0]! - 3000000)).toBeLessThan(3 / z);
+    // pulled out but let go before reaching the slide: no guide is left
+    await dragPage({ x: top.x + 300, y: top.y + 8 }, { x: top.x + 300, y: top.y + 14 });
+    expect((await guides()).y.length).toBe(1);
+    expect(errors).toEqual([]);
+  }, 60_000);
+});
+
 describe('bullet and number styles', () => {
   test('pick a bullet character and a numbering scheme; the menus tick the one in force; text in a box gets a hanging indent', async () => {
     await textBox('one\ntwo');
