@@ -6,7 +6,7 @@ import { resolveSlide } from '@pptx/resolve';
 import { serializeElement, type XmlElement } from '@pptx/xml';
 import { describe, expect, test } from 'vitest';
 import { deckBytes } from '../../resolve/test/deck.ts';
-import { clearRunFormatting, formatBody, formatParagraphs, formatRuns, insertTextBox, type Editor, type TextRange } from '../src/index.ts';
+import { clearRunFormatting, formatBody, formatParagraphs, formatRuns, insertTextBox, typeText, type Editor, type TextRange } from '../src/index.ts';
 import { cycle, openEditor } from './helpers.ts';
 
 const SLIDE = '/ppt/slides/slide1.xml';
@@ -123,5 +123,31 @@ describe('text box options', () => {
     expect(resolved(ed, id).body).toMatchObject({ anchor: 'b', numCol: 1, insets: { l: 0, t: 0, r: 0, b: 0 } });
     ed.undo();
     expect(resolved(ed, id).body).toMatchObject({ anchor: 'ctr', numCol: 2 });
+  });
+});
+
+describe('typing over a selection', () => {
+  test('text typed over everything looks like the first character it replaces, not the last', () => {
+    const { ed, id, body } = withBox();
+    ed.run(formatRuns(ed, SLIDE, body(), { start: { p: 1, offset: 0 }, end: { p: 1, offset: 6 } }, { u: 'sng', b: true }));
+    ed.log.seal();
+    expect(cycle(ed, () => typeText(ed, SLIDE, body(), ALL, 'New').command)).toEqual([]);
+    ed.run(typeText(ed, SLIDE, body(), ALL, 'New').command);
+    const p = resolved(ed, id).paragraphs;
+    expect(p.length).toBe(1);
+    expect(p[0]!.runs.map(r => [r.text, r.props.bold, r.props.underline])).toEqual([['New', false, 'none']]);
+  });
+
+  test('and over a selection that starts in formatted text, like that text', () => {
+    const { ed, id, body } = withBox();
+    ed.run(formatRuns(ed, SLIDE, body(), { start: { p: 0, offset: 0 }, end: { p: 0, offset: 11 } }, { i: true }));
+    ed.run(typeText(ed, SLIDE, body(), ALL, 'New').command);
+    expect(resolved(ed, id).paragraphs[0]!.runs.map(r => [r.text, r.props.italic])).toEqual([['New', true]]);
+  });
+
+  test('a selection that leaves text in the first paragraph still joins the paragraphs as before', () => {
+    const { ed, id, body } = withBox();
+    ed.run(typeText(ed, SLIDE, body(), { start: { p: 0, offset: 5 }, end: { p: 1, offset: 3 } }, '-').command);
+    expect(resolved(ed, id).paragraphs.map(p => p.runs.map(r => r.text).join(''))).toEqual(['Hello-ond']);
   });
 });

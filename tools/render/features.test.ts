@@ -202,6 +202,98 @@ describe('text formatting from the ribbon', () => {
   }, 60_000);
 });
 
+/**
+ * A clipboard event on the element that has the keyboard, as the browser sends one for Ctrl/Cmd+C, X or V, with a
+ * clipboard of its own (the test never touches the computer's real clipboard). Returns what the clipboard holds
+ * afterwards and whether the app handled the event.
+ */
+const clipboardEvent = (type: 'copy' | 'cut' | 'paste', data: Record<string, string> = {}) => page.evaluate(([type, data]) => {
+  const dt = new DataTransfer();
+  for (const [k, v] of Object.entries(data)) dt.setData(k, v);
+  const e = new ClipboardEvent(type, { clipboardData: dt, bubbles: true, cancelable: true });
+  (document.activeElement ?? document.body).dispatchEvent(e);
+  return { plain: dt.getData('text/plain'), html: dt.getData('text/html'), handled: e.defaultPrevented };
+}, [type, data] as const);
+
+describe('the clipboard in text', () => {
+  /** The runs of the box being edited, a paragraph per line: "[b]" and "[i]" before a run that has them. */
+  const runs = () => state<string[]>(`
+    const body = s.text.el.children.find(c => c.local === 'txBody');
+    const flag = (r, n) => { const rPr = r.children.find(c => c.local === 'rPr'); return !!rPr && rPr.attrs.some(a => a.local === n && a.value !== '0' && a.value !== 'none'); };
+    return body.children.filter(c => c.local === 'p').map(p => p.children.filter(c => c.local === 'r').map(r =>
+      (flag(r, 'b') ? '[b]' : '') + (flag(r, 'i') ? '[i]' : '') + (flag(r, 'u') ? '[u]' : '') + r.children.find(c => c.local === 't').children.map(c => c.value ?? '').join('')).join('|'));`);
+  /** Select characters from..to of the first paragraph with the keyboard. */
+  async function select(from: number, to: number): Promise<void> {
+    await page.keyboard.press('Control+Home');
+    for (let i = 0; i < from; i++) await page.keyboard.press('ArrowRight');
+    for (let i = from; i < to; i++) await page.keyboard.press('Shift+ArrowRight');
+  }
+
+  test('copy puts the selected text on the clipboard as plain text and as HTML that keeps bold; cut takes it out of the box', async () => {
+    await textBox('Hello big world');
+    await select(6, 9);
+    await page.getByTestId('bold').click();
+    await page.keyboard.press('Control+a');
+    expect(await clipboardEvent('copy')).toEqual({ plain: 'Hello big world', html: '<p>Hello <b>big</b> world</p>', handled: true });
+    expect(await runs()).toEqual(['Hello |[b]big| world']);             // copying changes nothing
+
+    await select(6, 10);
+    expect(await clipboardEvent('cut')).toEqual({ plain: 'big ', html: '<p><b>big</b> </p>', handled: true });
+    expect(await runs()).toEqual(['Hello |world']);
+    expect(await state<string>('return s.session.ed.log.undoLabel;')).toBe('Delete');
+    await page.keyboard.press('Control+z');
+    expect(await runs()).toEqual(['Hello |[b]big| world']);
+
+    // with only a caret there is nothing to copy: the event is left alone
+    await page.keyboard.press('Control+End');
+    expect(await clipboardEvent('copy')).toEqual({ plain: '', html: '', handled: false });
+    expect(await clipboardEvent('cut')).toEqual({ plain: '', html: '', handled: false });
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('paste: plain text is typed where the caret is; HTML from another app keeps its bold, italic, underline and paragraphs', async () => {
+    await textBox('Start.');
+    expect((await clipboardEvent('paste', { 'text/plain': ' Plain text' })).handled).toBe(true);
+    expect(await runs()).toEqual(['Start. Plain text']);
+
+    await page.keyboard.press('Control+z');
+    const html = '<meta charset="utf-8"><p>one <b>two</b> <span style="font-style:italic">three</span></p><p><u>four</u><script>alert(1)</script></p>';
+    await clipboardEvent('paste', { 'text/plain': 'one two three\nfour', 'text/html': html });
+    expect(await runs()).toEqual(['Start.|one |[b]two| |[i]three', '[u]four']);
+    // the paste is one undo step
+    await page.keyboard.press('Control+z');
+    expect(await runs()).toEqual(['Start.']);
+    await page.keyboard.press('Control+y');
+    expect(await runs()).toEqual(['Start.|one |[b]two| |[i]three', '[u]four']);
+
+    // pasting over a selection replaces it
+    await page.keyboard.press('Control+a');
+    await clipboardEvent('paste', { 'text/plain': 'All new' });
+    expect(await runs()).toEqual(['All new']);
+    // HTML with no formatting in it is pasted as its plain text (so it takes the look of where it lands)
+    await clipboardEvent('paste', { 'text/plain': '!', 'text/html': '<span>!</span>' });
+    expect(await runs()).toEqual(['All new!']);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('what is copied in one box pastes into another with its formatting', async () => {
+    await textBox('Hello big world');
+    await select(6, 9);
+    await page.keyboard.press('Control+b');
+    await page.keyboard.press('Control+a');
+    const copied = await clipboardEvent('copy');
+    expect(copied.html).toContain('<b>big</b>');
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape');
+    await textBox('');
+    await clipboardEvent('paste', { 'text/plain': copied.plain, 'text/html': copied.html });
+    expect(await runs()).toEqual(['Hello |[b]big| world']);
+    const ed = await saved();
+    expect(new TextDecoder().decode(ed.pkg.getPart(ed.doc.slideParts()[0]!)!.bytes).match(/<a:t>big<\/a:t>/g)?.length).toBe(2);
+    expect(errors).toEqual([]);
+  }, 60_000);
+});
+
 describe('bullet and number styles', () => {
   test('pick a bullet character and a numbering scheme; the menus tick the one in force; text in a box gets a hanging indent', async () => {
     await textBox('one\ntwo');

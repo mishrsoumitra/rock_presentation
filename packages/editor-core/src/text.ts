@@ -270,11 +270,15 @@ function deleteRange(txBody: XmlElement, range: TextRange): void {
   const moved = runElsBetween(last, 0, endIndex(last));
   first.children.splice(at, 0, ...moved);
   for (const r of moved) r.parent = first;
-  const mark = child(last, 'a:endParaRPr');
-  removeChildren(first, 'a:endParaRPr');
-  if (mark) {
-    const m = clone(mark, first);
-    insertInOrder(first, m);
+  // the merged paragraph takes the last one's mark, unless it is left empty: then it keeps the first one's, which
+  // holds the look of the first character deleted, so what is typed over a selection looks like its start
+  if (runsOf(first).length > 0 || !child(first, 'a:endParaRPr')) {
+    const mark = child(last, 'a:endParaRPr');
+    removeChildren(first, 'a:endParaRPr');
+    if (mark) {
+      const m = clone(mark, first);
+      insertInOrder(first, m);
+    }
   }
   txBody.children.splice(txBody.children.indexOf(last), 1);
 }

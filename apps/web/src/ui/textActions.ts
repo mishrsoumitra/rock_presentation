@@ -9,6 +9,8 @@ import type { XmlElement } from '@pptx/xml';
 import { refit } from '../engine/textfit.ts';
 import { session, useEditor } from '../state/store.ts';
 import { tableOf, regionOf } from '@pptx/editor-core';
+import { runsOf } from '@pptx/model';
+import { hasLook, type Para } from './richText.ts';
 import { keyOf } from './SlideCanvas.tsx';
 import { activeCells, tableBodies } from './tables.ts';
 
@@ -75,6 +77,55 @@ export function deleteChars(direction: 'back' | 'forward'): void {
   const edit = deleteText(s.ed, t.part, body, at, direction, opts(t.part, t.el, `type:${keyOf(t.el)}`));
   runOn(t.part, t.el, edit.command);
   useEditor.setState({ text: { ...t, caret: edit.caret, anchor: edit.caret } });
+}
+
+/**
+ * The text selected in the box being edited, as paragraphs of runs with the bold, italic and underline the runs
+ * themselves carry, for the clipboard. Undefined with only a caret.
+ */
+export function selectedText(): Para[] | undefined {
+  const st = useEditor.getState();
+  const s = st.session, t = st.text;
+  if (!s || !t) return undefined;
+  const body = new ShapeView(t.el, s.ed.doc.owner(t.part)).txBody;
+  const { start, end } = ordered(t.anchor, t.caret);
+  if (!body || (start.p === end.p && start.offset === end.offset)) return undefined;
+  const flag = (rPr: XmlElement | undefined, name: string) => rPr?.attrs.find(a => a.ns === '' && a.local === name)?.value;
+  const out: Para[] = [];
+  paragraphs(body).forEach((p, pi) => {
+    if (pi < start.p || pi > end.p) return;
+    const para: Para = [];
+    let at = 0;
+    for (const r of runsOf(p)) {
+      const text = r.kind === 'br' ? '\u000b' : r.text;
+      const from = Math.max(pi === start.p ? start.offset : 0, at), to = Math.min(pi === end.p ? end.offset : Infinity, at + text.length);
+      if (to > from) {
+        const b = flag(r.rPr, 'b') === '1', i = flag(r.rPr, 'i') === '1', u = flag(r.rPr, 'u');
+        para.push({ text: text.slice(from - at, to - at), ...(b ? { b } : {}), ...(i ? { i } : {}), ...(u && u !== 'none' ? { u: true } : {}) });
+      }
+      at += text.length;
+    }
+    out.push(para);
+  });
+  return out;
+}
+
+/**
+ * Type paragraphs of runs at the caret (a paste). Text with bold, italic or underline somewhere is typed with each
+ * run's look set outright; plain text is typed as the keyboard would, taking the look of where it lands. It is one
+ * undo step with the typing around it.
+ */
+export function typeRich(paras: Para[]): void {
+  const look = hasLook(paras);
+  paras.forEach((p, i) => {
+    if (i) typeChars('\n');
+    for (const seg of p) {
+      if (!seg.text) continue;
+      if (look) useEditor.setState({ pending: { b: !!seg.b, i: !!seg.i, u: seg.u ? 'sng' : 'none' } });
+      typeChars(seg.text);
+    }
+  });
+  if (look) useEditor.setState({ pending: null });
 }
 
 /** Replace one found match; autofit text is refitted in the same undo step, as when typing. */
