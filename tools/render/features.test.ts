@@ -1940,6 +1940,96 @@ describe('theme colours and fonts', () => {
   }, 60_000);
 });
 
+describe('WordArt', () => {
+  async function insertWordArt(name: string): Promise<void> {
+    await page.getByRole('tab', { name: 'Insert' }).click();
+    await page.getByTestId('insert-wordart').click();
+    await page.getByTestId('wordart-gallery').getByRole('button', { name, exact: true }).click();
+  }
+  /** How many pixels of the slide are exactly a colour: the inside of painted letters. */
+  const count = (rgb: [number, number, number]) => page.evaluate(([r, g, b]) => {
+    const c = document.querySelector('[data-testid="canvas"] canvas') as HTMLCanvasElement;
+    const d = c.getContext('2d')!.getImageData(0, 0, c.width, c.height).data;
+    let n = 0;
+    for (let i = 0; i < d.length; i += 4) if (d[i] === r && d[i + 1] === g && d[i + 2] === b) n++;
+    return n;
+  }, rgb);
+
+  test('Insert > WordArt puts large text in the look chosen with its sample text selected, so typing replaces it and keeps the look', async () => {
+    await insertWordArt('Fill: Accent colour 1; Shadow');
+    let xml = await shapeXml();
+    expect(xml).toContain('<a:t>Your text here</t>');
+    expect(xml).toContain('<a:bodyPr wrap="none" rtlCol="0">');
+    expect(await state<string>('return s.session.ed.log.undoLabel;')).toBe('Insert WordArt');
+    await page.keyboard.type('Launch');
+    xml = await shapeXml();
+    expect(xml).toContain('<a:t>Launch</t>');
+    expect(xml).not.toContain('Your text here');
+    expect(xml).toMatch(/<a:rPr lang="en-US" sz="5400" b="1"><a:solidFill><a:schemeClr val="accent1"><\/schemeClr><\/solidFill><a:effectLst>/);
+    // drawn in the theme's first accent colour
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape');
+    await frames();
+    expect(await count([0x44, 0x72, 0xc4])).toBeGreaterThan(300);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('the gallery offers six named looks, and each one inserted is written in its own way', async () => {
+    await page.getByRole('tab', { name: 'Insert' }).click();
+    await page.getByTestId('insert-wordart').click();
+    const names = await page.getByTestId('wordart-gallery').getByRole('button').evaluateAll(els => els.map(e => e.getAttribute('aria-label')));
+    expect(names.length).toBe(6);
+    expect(names).toContain('Outline: Accent colour 2; No fill');
+    await page.getByTestId('insert-wordart').click();
+    await insertWordArt('Outline: Accent colour 2; No fill');
+    let xml = await shapeXml();
+    expect(xml).toMatch(/<a:ln w="22225"><a:solidFill><a:schemeClr val="accent2">/);
+    expect(xml).toContain('<a:noFill></noFill></rPr>');
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape');
+    await insertWordArt('Gradient fill: Accent colour 4');
+    xml = await shapeXml();
+    expect(xml).toContain('<a:gradFill><a:gsLst>');
+    expect(await state<number>('return s.session.ed.doc.slide(s.slide).shapes.length;')).toBe(4);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('WordArt Styles on the Home tab puts a look on the selected text only; Clear WordArt takes it off and leaves the rest', async () => {
+    await textBox('plain words');
+    await page.keyboard.down('Shift');
+    for (let i = 0; i < 5; i++) await page.keyboard.press('ArrowLeft');
+    await page.keyboard.up('Shift');
+    await page.getByTestId('bold').click();
+    await page.getByTestId('wordart-styles').click();
+    await page.getByTestId('wordart-styles-gallery').getByRole('button', { name: 'Fill: Accent colour 5; Outline: White; Shadow', exact: true }).click();
+    let xml = await shapeXml();
+    expect(xml).toMatch(/<a:rPr[^>]*b="1"[^>]*><a:ln w="9525">.*?<\/ln><a:solidFill><a:schemeClr val="accent5"><\/schemeClr><\/solidFill><a:effectLst>.*?<\/effectLst><\/rPr><a:t>words<\/t>/);
+    expect(xml).toMatch(/<a:t>plain <\/t>/);
+    expect(xml.match(/<a:ln /g)?.length).toBe(2);                         // the word, and the paragraph mark after it
+    expect(await state<string>('return s.session.ed.log.undoLabel;')).toBe('WordArt Style');
+
+    await page.getByTestId('wordart-styles').click();
+    await page.locator('.menu-panel').getByRole('menuitem', { name: 'Clear WordArt', exact: true }).click();
+    xml = await shapeXml();
+    expect(xml).not.toContain('<a:ln ');
+    expect(xml).not.toContain('accent5');
+    expect(xml).toMatch(/<a:rPr[^>]*b="1"[^>]*><\/rPr><a:t>words<\/t>/);
+    await page.keyboard.press('Control+z');
+    expect(await shapeXml()).toContain('accent5');
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('the look is in the saved file', async () => {
+    await insertWordArt('Fill: White; Outline: Accent colour 1; Shadow');
+    await page.keyboard.type('Kept');
+    const ed = await saved();
+    const part = ed.doc.slideParts()[0]!;
+    const xml = new TextDecoder().decode(ed.pkg.getPart(part)!.bytes);
+    expect(xml).toMatch(/<a:rPr lang="en-US" sz="5400" b="1"><a:ln w="15875"><a:solidFill><a:schemeClr val="accent1"\/><\/a:solidFill><a:prstDash val="solid"\/><\/a:ln><a:solidFill><a:schemeClr val="bg1"\/><\/a:solidFill><a:effectLst>.*?<\/a:effectLst><\/a:rPr><a:t>Kept<\/a:t>/);
+    expect(errors).toEqual([]);
+  }, 60_000);
+});
+
 describe('header and footer', () => {
   /** What each slide shows at its foot: placeholder type to its text, in slide order. */
   const feet = () => state<Record<string, string>[]>(`

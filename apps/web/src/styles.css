@@ -126,6 +126,12 @@ select { height: 28px; border: 1px solid var(--line); border-radius: var(--radiu
 .master-name { font-size: 11px; color: var(--muted); max-width: 168px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .master-status button { margin-left: 8px; border: 1px solid var(--line); background: var(--panel); border-radius: var(--radius); padding: 1px 8px; cursor: pointer; }
 
+/* the WordArt gallery: a letter painted in each look */
+.wordart-gallery { display: grid; grid-template-columns: repeat(3, 56px); gap: 4px; padding: 8px; }
+.wordart { width: 56px; height: 52px; padding: 0; border: 1px solid var(--line); border-radius: var(--radius); background: #fff; cursor: pointer; font: 700 34px/1 Georgia, 'Times New Roman', serif; }
+.wordart:hover, .wordart:focus-visible { border-color: var(--accent); outline: 1px solid var(--accent); }
+.wordart[data-style="fill-light-outline-accent1"], .wordart[data-style="fill-accent5-outline-light"] { background: #e8e8e8; }
+
 /* the Symbol menu: characters in groups */
 .symbols { padding: 6px 8px; max-height: 60vh; overflow: auto; }
 .symbol-cells { display: grid; grid-template-columns: repeat(11, 28px); gap: 2px; margin-bottom: 6px; }

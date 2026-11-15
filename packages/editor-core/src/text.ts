@@ -30,6 +30,16 @@ export interface RunPatch {
   latin?: string | null;
   ea?: string | null;
   cs?: string | null;
+  /** A WordArt look: the text's fill, outline and shadow together. Null takes all three off again. */
+  effect?: TextEffect | null;
+}
+
+/** How WordArt text is painted: its fill (a colour, a two-colour gradient, or none), an outline, a shadow. */
+export interface TextEffect {
+  fill: ColorSpec | { from: ColorSpec; to: ColorSpec; angle: number } | 'none';
+  /** The outline's colour and width (EMU). */
+  outline?: { color: ColorSpec; width: number };
+  shadow?: boolean;
 }
 
 export type BulletSpec = { kind: 'none' } | { kind: 'char'; char: string; font?: string } | { kind: 'autonum'; scheme: string; startAt?: number };
@@ -424,6 +434,18 @@ export function patchRunProps(ed: Editor, rPr: XmlElement, patch: RunPatch): voi
   if (patch.fill !== undefined) {
     removeChildren(rPr, ...FILLS);
     if (patch.fill) insertInOrder(rPr, element(rPr, `<a:solidFill>${colorXml(patch.fill)}</a:solidFill>`, ed.strict));
+  }
+  if (patch.effect !== undefined) {
+    removeChildren(rPr, 'a:ln', ...FILLS, 'a:effectLst', 'a:effectDag');
+    const e = patch.effect;
+    if (e) {
+      if (e.outline) insertInOrder(rPr, element(rPr, `<a:ln w="${Math.round(e.outline.width)}"><a:solidFill>${colorXml(e.outline.color)}</a:solidFill><a:prstDash val="solid"/></a:ln>`, ed.strict));
+      const fill = e.fill === 'none' ? '<a:noFill/>'
+        : 'from' in e.fill ? `<a:gradFill><a:gsLst><a:gs pos="0">${colorXml(e.fill.from)}</a:gs><a:gs pos="100000">${colorXml(e.fill.to)}</a:gs></a:gsLst><a:lin ang="${Math.round((((e.fill.angle % 360) + 360) % 360) * 60000)}" scaled="0"/></a:gradFill>`
+          : `<a:solidFill>${colorXml(e.fill)}</a:solidFill>`;
+      insertInOrder(rPr, element(rPr, fill, ed.strict));
+      if (e.shadow) insertInOrder(rPr, element(rPr, '<a:effectLst><a:outerShdw blurRad="38100" dist="38100" dir="2700000" algn="tl"><a:srgbClr val="000000"><a:alpha val="43000"/></a:srgbClr></a:outerShdw></a:effectLst>', ed.strict));
+    }
   }
   if (patch.highlight !== undefined) {
     removeChildren(rPr, 'a:highlight');

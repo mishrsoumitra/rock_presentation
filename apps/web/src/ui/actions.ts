@@ -2,8 +2,8 @@
 import {
   addSlide, align, applyLayout, compound, copyShapes, copySlide, pasteSlide, cropPicture, deleteShapes, deleteSlide, distribute, duplicateShapes, duplicateSlide, flip, group, importMasters, replacePicture,
   insertPicture, insertShape, insertTable, insertTextBox, moveBy, ROW_HEIGHT, moveSlide, pasteShapes, prepareImage, prepareSvg, prepareTemplate, rotateQuarter,
-  addSection, applyBackgroundToAll, chartData, chartPartOf, fillColorOf, headerFooter, insertChart, insertMedia, prepareMedia, setChartData, setFill, setHeaderFooter, setHeaderFooterAll, setSlideBackground, setThemeColors, setThemeFonts, themeOfSlide, themeSchemes, setFillTransparency, setGradientFill, setLine, setPictureFill, setShadow, setSlideHidden, setSlideSize, setTransforms, ungroup, zOrder,
-  type Alignment, type BackgroundSpec, type ChartData, type ChartKind, type ColorScheme, type HeaderFooter, type ColorSpec, type FontScheme, type LineSpec,
+  addSection, applyBackgroundToAll, chartData, chartPartOf, fillColorOf, headerFooter, insertChart, insertMedia, insertWordArt, prepareMedia, setChartData, setFill, setHeaderFooter, setHeaderFooterAll, setSlideBackground, setThemeColors, setThemeFonts, themeOfSlide, themeSchemes, setFillTransparency, setGradientFill, setLine, setPictureFill, setShadow, setSlideHidden, setSlideSize, setTransforms, ungroup, zOrder,
+  type Alignment, type BackgroundSpec, type ChartData, type ChartKind, type ColorScheme, type HeaderFooter, type WordArtStyle, type ColorSpec, type FontScheme, type LineSpec,
   type ScaleMode, type ZOrder,
 } from '@pptx/editor-core';
 import { OpcPackage } from '@pptx/opc';
@@ -239,6 +239,23 @@ export function insertTextBoxHere(): void {
   c.s.run(r.command);
   const els = inserted(r.id);
   if (els[0]) useEditor.setState({ selection: els, text: { part: c.part, el: els[0], caret: { p: 0, offset: 0 }, anchor: { p: 0, offset: 0 } } });
+}
+
+/**
+ * Insert WordArt in a look from the gallery: in the middle of the slide, its sample text selected so that typing
+ * replaces it, as PowerPoint leaves it.
+ */
+export function insertWordArtHere(style: WordArtStyle): void {
+  const c = ctx();
+  if (!c) return;
+  const size = c.ed.doc.presentation.slideSize;
+  const w = 5486400, h = 923330;
+  const text = 'Your text here';
+  const r = insertWordArt(c.ed, c.part, style, { x: (size.cx - w) / 2, y: (size.cy - h) / 2, w, h }, text);
+  useEditor.setState({ text: null });
+  c.s.run(r.command);
+  const els = inserted(r.id);
+  if (els[0]) useEditor.setState({ selection: els, text: { part: c.part, el: els[0], anchor: { p: 0, offset: 0 }, caret: { p: 0, offset: text.length } } });
 }
 
 /** Today's date as PowerPoint's first date format writes it: month, day, year. */

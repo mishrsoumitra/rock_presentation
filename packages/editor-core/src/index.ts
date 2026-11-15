@@ -12,12 +12,13 @@ export {
 export {
   bodyPlainText, deleteText, formatBody, formatParagraphs, formatRuns, layoutToModel, modelToLayout, paragraphLength, paragraphs,
   clearRunFormatting, patchRunProps, replaceText, retypeText, textIn, typeText,
-  type BodyPatch, type BulletSpec, type ColorSpec, type ParaPatch, type RunPatch, type SpacingSpec, type TextEdit, type TextOptions, type TextPos,
+  type BodyPatch, type BulletSpec, type ColorSpec, type ParaPatch, type RunPatch, type TextEffect, type SpacingSpec, type TextEdit, type TextOptions, type TextPos,
   type TextRange,
 } from './text.ts';
 export { applyBackgroundToAll, cropAndPlace, cropPicture, pictureCrop, insertMedia, insertPicture, prepareMedia, setSlideBackground, type BackgroundSpec, type MediaData, naturalSize, prepareImage, prepareSvg, replacePicture, retarget, setPictureFill, type ImageData, type SvgImage } from './pictures.ts';
 export { addSlide, applyLayout, copySlide, deleteSlide, duplicateSlide, moveSlide, pasteSlide, setBackground, setSlideHidden, type SlideClip } from './slides.ts';
 export { notesText, setNotes } from './notes.ts';
+export { insertWordArt, WORDART_STYLES, type WordArtStyle } from './wordart.ts';
 export { headerFooter, setHeaderFooter, setHeaderFooterAll, type FooterKind, type HeaderFooter } from './footers.ts';
 export { chartData, chartPartOf, insertChart, SAMPLE_DATA, setChartData, type ChartData, type ChartKind } from './charts.ts';
 export { addSection, removeAllSections, removeSection, renameSection, sections, type Section } from './sections.ts';
