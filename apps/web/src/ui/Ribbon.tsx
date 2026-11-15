@@ -6,7 +6,7 @@ import { BULLET_STYLES, bulletPatch, NUMBER_STYLES, numberSample } from './bulle
 import { linkContext } from './linkActions.ts';
 import * as tables from './tables.ts';
 import { clearFormatting, formatPara, formatText, formatTextBox, formattingHere } from './textActions.ts';
-import { Btn, ColorGrid, keepFocus, Menu, MenuItem, refocusText, ShapeGallery, TableGrid } from './widgets.tsx';
+import { Btn, ColorGrid, keepFocus, Menu, MenuItem, pickFile, refocusText, ShapeGallery, TableGrid } from './widgets.tsx';
 
 const FONTS = ['Calibri', 'Calibri Light', 'Cambria', 'Arial', 'Times New Roman', 'Courier New', 'Aptos', 'Georgia', 'Verdana', 'Segoe UI'];
 const SIZES = [8, 9, 10, 10.5, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 40, 44, 48, 54, 60, 66, 72, 80, 88, 96];
@@ -194,13 +194,29 @@ export function Ribbon({ extraTabs }: { extraTabs?: Partial<Record<Tab, React.Re
             )}
             <section className="group" aria-label="Drawing">
               <Menu icon="outline" label="Shapes" testid="shapes">{close => <ShapeGallery onPick={p => { close(); act.startDrawing(p); }} />}</Menu>
-              <Menu icon="fill" label="Shape Fill" wide={false}>{close => <ColorGrid onPick={c => { close(); act.fillSelection(c); }} extra={<>
+              <Menu icon="fill" label="Shape Fill" wide={false} testid="shape-fill">{close => <ColorGrid onPick={c => { close(); act.fillSelection(c); }} extra={<>
                 <MenuItem label="No Fill" onClick={() => { close(); act.fillSelection('none'); }} />
-                <MenuItem label="Theme default" onClick={() => { close(); act.fillSelection(null); }} /></>} />}</Menu>
-              <Menu icon="outline" label="Shape Outline" wide={false}>{close => <ColorGrid onPick={c => { close(); act.outlineSelection({ color: c }); }} extra={<>
+                <MenuItem label="Theme default" onClick={() => { close(); act.fillSelection(null); }} />
+                <hr />
+                {([['Down', 90], ['Right', 0], ['Diagonal', 45]] as const).map(([l, a]) => <MenuItem key={l} label={`Gradient: ${l}`} disabled={!hasSel} onClick={() => { close(); act.gradientSelection(a); }} />)}
+                <MenuItem label="Picture…" disabled={!hasSel} onClick={() => { close(); void pickFile('image/png,image/jpeg,image/gif,image/bmp,image/webp').then(f => (f ? act.pictureFillSelection(f) : undefined)); }} />
+                <hr />
+                {[0, 25, 50, 75].map(t => <MenuItem key={t} label={`Transparency: ${t}%`} disabled={!hasSel} onClick={() => { close(); act.transparencySelection(t); }} />)}</>} />}</Menu>
+              <Menu icon="outline" label="Shape Outline" wide={false} testid="shape-outline">{close => <ColorGrid onPick={c => { close(); act.outlineSelection({ color: c }); }} extra={<>
                 <MenuItem label="No Outline" onClick={() => { close(); act.outlineSelection({ color: 'none' }); }} />
                 {[0.75, 1.5, 3, 6].map(w => <MenuItem key={w} label={`Weight ${w} pt`} onClick={() => { close(); act.outlineSelection({ width: w * 12700 }); }} />)}
-                {['solid', 'sysDash', 'dash', 'lgDash', 'sysDot'].map(d => <MenuItem key={d} label={`Dashes: ${d}`} onClick={() => { close(); act.outlineSelection({ dash: d }); }} />)}</>} />}</Menu>
+                {['solid', 'sysDash', 'dash', 'lgDash', 'sysDot'].map(d => <MenuItem key={d} label={`Dashes: ${d}`} onClick={() => { close(); act.outlineSelection({ dash: d }); }} />)}
+                <hr />
+                <MenuItem label="Arrows: None" disabled={!hasSel} onClick={() => { close(); act.outlineSelection({ headEnd: null, tailEnd: null }); }} />
+                <MenuItem label="Arrow at End" disabled={!hasSel} onClick={() => { close(); act.outlineSelection({ headEnd: null, tailEnd: 'triangle' }); }} />
+                <MenuItem label="Arrow at Start" disabled={!hasSel} onClick={() => { close(); act.outlineSelection({ headEnd: 'triangle', tailEnd: null }); }} />
+                <MenuItem label="Arrows at Both Ends" disabled={!hasSel} onClick={() => { close(); act.outlineSelection({ headEnd: 'triangle', tailEnd: 'triangle' }); }} /></>} />}</Menu>
+              <Menu icon="shadow" label="Shadow" wide={false} testid="shape-shadow">{close => (<>
+                <MenuItem label="No Shadow" disabled={!hasSel} onClick={() => { close(); act.shadowSelection(null); }} />
+                <MenuItem label="Shadow: Bottom Right" disabled={!hasSel} onClick={() => { close(); act.shadowSelection('bottom-right'); }} />
+                <MenuItem label="Shadow: Bottom" disabled={!hasSel} onClick={() => { close(); act.shadowSelection('bottom'); }} />
+                <MenuItem label="Shadow: All Around" disabled={!hasSel} onClick={() => { close(); act.shadowSelection('center'); }} />
+              </>)}</Menu>
               <Menu icon="front" label="Arrange" testid="arrange">{close => (<>
                 <MenuItem label="Bring to Front" disabled={!hasSel} onClick={() => { close(); act.order('front'); }} />
                 <MenuItem label="Bring Forward" disabled={!hasSel} onClick={() => { close(); act.order('forward'); }} />

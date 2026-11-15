@@ -156,3 +156,30 @@ export function retarget(ed: Editor, part: string, id: string, target: string): 
   }
   ed.pkg.markDirty(rels);
 }
+
+const SHAPE_FILLS = ['a:noFill', 'a:solidFill', 'a:gradFill', 'a:blipFill', 'a:pattFill', 'a:grpFill'];
+
+/**
+ * Fill shapes with a picture, stretched over each shape and turning with it. The picture is stored once (an
+ * identical one already in the deck is reused). Pictures and graphic frames have no fill and are left alone.
+ */
+export function setPictureFill(ed: Editor, part: string, shapes: ShapeView[], img: ImageData): Command {
+  const root = ed.doc.root(part);
+  return ed.edit({
+    label: 'Shape Fill', parts: [part], structural: true, scope: () => [root],
+    apply: () => {
+      const before = new Set(relRefs(root).map(r => r.value));
+      const xml = `<a:blipFill dpi="0" rotWithShape="1">${blipXml(ed, part, img)}<a:srcRect/><a:stretch><a:fillRect/></a:stretch></a:blipFill>`;
+      for (const s of shapes) {
+        if (s.kind === 'graphicFrame' || s.kind === 'pic' || s.kind === 'contentPart') continue;
+        const name = s.kind === 'grpSp' ? 'p:grpSpPr' : 'p:spPr';
+        const spPr = child(s.el, name) ?? (() => { const e = element(s.el, `<${name}/>`, ed.strict); insertInOrder(s.el, e); return e; })();
+        removeChildren(spPr, ...SHAPE_FILLS);
+        insertInOrder(spPr, element(spPr, xml, ed.strict));
+      }
+      // a picture fill this replaced may have been the last use of its picture
+      dropUnreferenced(ed.pkg, part, before);
+    },
+  });
+}
+

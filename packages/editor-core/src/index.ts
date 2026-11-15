@@ -15,7 +15,7 @@ export {
   type BodyPatch, type BulletSpec, type ColorSpec, type ParaPatch, type RunPatch, type SpacingSpec, type TextEdit, type TextOptions, type TextPos,
   type TextRange,
 } from './text.ts';
-export { cropPicture, insertPicture, naturalSize, prepareImage, prepareSvg, replacePicture, retarget, type ImageData, type SvgImage } from './pictures.ts';
+export { cropPicture, insertPicture, naturalSize, prepareImage, prepareSvg, replacePicture, retarget, setPictureFill, type ImageData, type SvgImage } from './pictures.ts';
 export { addSlide, applyLayout, copySlide, deleteSlide, duplicateSlide, moveSlide, pasteSlide, setBackground, setSlideHidden, type SlideClip } from './slides.ts';
 export { notesText, setNotes } from './notes.ts';
 export { setShapeLink, setTextLink, shapeLink, textLinkAt, type LinkTarget } from './links.ts';
@@ -27,7 +27,7 @@ export { compareMatches, findInText, findText, matchRange, replaceAll, replaceMa
 export { importMasters, partText, prepareTemplate } from './templates.ts';
 export { lightnessClass, STANDARD_COLORS, themePalette, type PaletteColumn, type Swatch } from './palette.ts';
 export { setSlideSize, type ScaleMode } from './slide-size.ts';
-export { colorXml, setFill, setLine, type LineSpec } from './format.ts';
+export { colorXml, fillColorOf, setFill, setFillTransparency, setGradientFill, setLine, setShadow, SHADOWS, type GradientSpec, type LineSpec } from './format.ts';
 export { addAnimation, moveAnimation, removeAnimation, setAnimationTiming, setSlideTransition, setTransitionOnAll } from './animation.ts';
 export { prepareForSave } from './save.ts';
 export { collectOrphans, copyPart, dropUnreferenced, findMedia, freeName, hashMedia, mediaPart, referencedIds, relRefs } from './parts.ts';

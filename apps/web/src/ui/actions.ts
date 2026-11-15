@@ -2,7 +2,8 @@
 import {
   addSlide, align, applyLayout, compound, copyShapes, copySlide, pasteSlide, cropPicture, deleteShapes, deleteSlide, distribute, duplicateShapes, duplicateSlide, flip, group, importMasters, replacePicture,
   insertPicture, insertShape, insertTable, insertTextBox, moveBy, ROW_HEIGHT, moveSlide, pasteShapes, prepareImage, prepareSvg, prepareTemplate, rotateQuarter,
-  setBackground, setFill, setLine, setSlideHidden, setSlideSize, setTransforms, ungroup, zOrder, type Alignment, type ColorSpec, type LineSpec,
+  fillColorOf, setBackground, setFill, setFillTransparency, setGradientFill, setLine, setPictureFill, setShadow, setSlideHidden, setSlideSize, setTransforms, ungroup, zOrder,
+  type Alignment, type ColorSpec, type LineSpec,
   type ScaleMode, type ZOrder,
 } from '@pptx/editor-core';
 import { OpcPackage } from '@pptx/opc';
@@ -274,6 +275,48 @@ export function nudge(dx: number, dy: number): void {
 export function fillSelection(fill: ColorSpec | 'none' | null): void {
   const c = ctx();
   if (c?.views.length) c.s.run(setFill(c.ed, c.part, c.views, fill));
+}
+
+/** A lighter version of a colour, for the light end of a gradient: a theme colour by its tint, any other by mixing with white. */
+function lighter(c: ColorSpec): ColorSpec {
+  if (c.kind === 'scheme') return c.lumMod === undefined ? { kind: 'scheme', val: c.val, lumMod: 40000, lumOff: 60000 } : { kind: 'srgb', hex: 'FFFFFF' };
+  const n = parseInt(c.hex.replace(/^#/, ''), 16);
+  const mix = (v: number) => Math.round(v + (255 - v) * 0.6);
+  return { kind: 'srgb', hex: [(n >> 16) & 255, (n >> 8) & 255, n & 255].map(v => mix(v).toString(16).padStart(2, '0')).join('').toUpperCase() };
+}
+
+/**
+ * A gradient in the selection's own colour: from a lighter version of it to the colour itself, along an angle
+ * (90 runs down). A shape with no colour of its own to start from (no fill, a picture) gets the theme's accent.
+ */
+export function gradientSelection(angle: number): void {
+  const c = ctx();
+  if (!c?.views.length) return;
+  const to = c.views.map(fillColorOf).find(x => x) ?? { kind: 'scheme', val: 'accent1' };
+  c.s.run(setGradientFill(c.ed, c.part, c.views, { from: lighter(to), to, angle }));
+}
+
+export function transparencySelection(percent: number): void {
+  const c = ctx();
+  if (c?.views.length) c.s.run(setFillTransparency(c.ed, c.part, c.views, percent));
+}
+
+export function shadowSelection(preset: 'bottom-right' | 'bottom' | 'center' | null): void {
+  const c = ctx();
+  if (c?.views.length) c.s.run(setShadow(c.ed, c.part, c.views, preset));
+}
+
+/** Fill the selected shapes with a picture from a file. */
+export async function pictureFillSelection(file: File): Promise<void> {
+  const c = ctx();
+  if (!c?.views.length) return;
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const type = sniffImage(bytes, file.name);
+  if (!type || type === 'image/svg+xml' || type === 'image/x-emf' || type === 'image/x-wmf') { c.s.notify('error', `${file.name} cannot fill a shape here.`); return; }
+  const img = await decodeImage(bytes, type).catch(() => undefined);
+  if (!img) { c.s.notify('error', `${file.name} could not be read as a picture.`); return; }
+  const width = (img as { width?: number }).width ?? 960, height = (img as { height?: number }).height ?? 720;
+  c.s.run(setPictureFill(c.ed, c.part, c.views, await prepareImage(c.ed, { bytes, contentType: type, ext: EXT[type]!, width, height })));
 }
 
 export function outlineSelection(line: LineSpec): void {

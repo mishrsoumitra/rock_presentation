@@ -1,9 +1,11 @@
 // Features the editor shares with Google Slides and PowerPoint, each driven in headless Chromium the way a person
 // would use it, and each checked in the deck's XML and in the saved file. Every test starts from a new presentation.
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium, type Browser, type Page } from 'playwright';
+import { PNG } from 'pngjs';
 import { createServer, type ViteDevServer } from 'vite';
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest';
 import { OpcPackage } from '@pptx/opc';
@@ -662,6 +664,117 @@ describe('hyperlinks', () => {
     const rel = ed.pkg.relationships(part).find(r => r.external)!;
     expect(rel.target).toBe('https://example.com');
     expect(new TextDecoder().decode(ed.pkg.getPart(part)!.bytes)).toContain(`<a:hlinkClick r:id="${rel.id}"/>`);
+    expect(errors).toEqual([]);
+  }, 60_000);
+});
+
+describe('fills, arrows and shadows', () => {
+  /** Open a ribbon menu (by its test id) and choose a plain item by its label. */
+  const pick = async (menu: string, item: string) => {
+    await page.getByTestId(menu).click();
+    await page.locator('.menu-panel').getByRole('menuitem', { name: item, exact: true }).click();
+  };
+  /** The selected shape's properties element, compactly. */
+  const spPr = () => state<string>(`
+    const el = s.selection[0]; const pr = el.children.find(c => c.local === 'spPr');
+    const ser = e => '<' + e.local + e.attrs.filter(a => a.prefix !== 'xmlns').map(a => ' ' + a.local + '="' + a.value + '"').join('') + '>' + e.children.map(c => (c.kind === 'element' ? ser(c) : '')).join('') + '</' + e.local + '>';
+    return ser(pr);`);
+  /** The colour drawn at a point of the slide (EMU), as [r, g, b]. */
+  const pixel = async (x: number, y: number) => {
+    await frames();
+    const p = await slidePoint(x, y);
+    return page.evaluate(([px, py]) => {
+      const c = document.querySelector('[data-testid="canvas"] canvas') as HTMLCanvasElement;
+      const r = c.getBoundingClientRect();
+      const d = c.getContext('2d')!.getImageData(Math.round((px - r.left) * (c.width / r.width)), Math.round((py - r.top) * (c.height / r.height)), 1, 1).data;
+      return [d[0]!, d[1]!, d[2]!];
+    }, [p.x, p.y] as const);
+  };
+  const RECT = { x: 1000000, y: 5400000, w: 2000000, h: 1000000 };
+
+  test('a gradient in the shape\'s colour, light at the top and the colour at the bottom; then half transparent', async () => {
+    await drawShape('rect', RECT.x, RECT.y, RECT.w, RECT.h);
+    await pick('shape-fill', 'Gradient: Down');
+    const xml = await spPr();
+    expect(xml).toContain('<gradFill rotWithShape="1"><gsLst><gs pos="0"><schemeClr val="accent1"><lumMod val="40000"></lumMod><lumOff val="60000"></lumOff></schemeClr></gs><gs pos="100000"><schemeClr val="accent1"></schemeClr></gs></gsLst><lin ang="5400000" scaled="0"></lin></gradFill>');
+    expect(await state<string>('return s.session.ed.log.undoLabel;')).toBe('Shape Fill');
+    // drawn: lighter near the top edge than near the bottom, and the bottom close to accent 1 (#4472C4)
+    await page.keyboard.press('Escape');
+    const top = await pixel(RECT.x + RECT.w / 2, RECT.y + 60000), bottom = await pixel(RECT.x + RECT.w / 2, RECT.y + RECT.h - 60000);
+    expect(top[0]! + top[1]! + top[2]!).toBeGreaterThan(bottom[0]! + bottom[1]! + bottom[2]! + 120);
+    expect(Math.abs(bottom[0]! - 0x44) + Math.abs(bottom[1]! - 0x72) + Math.abs(bottom[2]! - 0xc4)).toBeLessThan(40);
+
+    const mid = await slidePoint(RECT.x + RECT.w / 2, RECT.y + RECT.h / 2);
+    await page.mouse.click(mid.x, mid.y);
+    await pick('shape-fill', 'Transparency: 50%');
+    expect((await spPr()).match(/<alpha val="50000">/g)?.length).toBe(2);
+    await pick('shape-fill', 'Gradient: Right');
+    expect(await spPr()).toContain('<lin ang="0" scaled="0">');
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('a solid colour made transparent lets the slide show through; 0% makes it solid again', async () => {
+    await drawShape('rect', RECT.x, RECT.y, RECT.w, RECT.h);
+    await page.getByTestId('shape-fill').click();
+    await page.locator('.menu-panel .swatch[title="Red"]').click();
+    await pick('shape-fill', 'Transparency: 75%');
+    expect(await spPr()).toContain('<solidFill><srgbClr val="FF0000"><alpha val="25000"></alpha></srgbClr></solidFill>');
+    await page.keyboard.press('Escape');
+    const faint = await pixel(RECT.x + RECT.w / 2, RECT.y + RECT.h / 2);
+    expect(faint[0]).toBe(255);
+    expect(faint[1]!).toBeGreaterThan(170);                              // mostly the white slide
+    const mid = await slidePoint(RECT.x + RECT.w / 2, RECT.y + RECT.h / 2);
+    await page.mouse.click(mid.x, mid.y);
+    await pick('shape-fill', 'Transparency: 0%');
+    expect(await spPr()).toContain('<solidFill><srgbClr val="FF0000"></srgbClr></solidFill>');
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('a picture from a file fills the shape and is in the saved file', async () => {
+    const png = new PNG({ width: 8, height: 8 });
+    for (let i = 0; i < 64; i++) png.data.set([0, 160, 0, 255], i * 4);
+    const file = join(mkdtempSync(join(tmpdir(), 'fill-')), 'green.png');
+    writeFileSync(file, PNG.sync.write(png));
+
+    await drawShape('ellipse', RECT.x, RECT.y, RECT.w, RECT.h);
+    await page.getByTestId('shape-fill').click();
+    const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.locator('.menu-panel').getByRole('menuitem', { name: 'Picture…' }).click()]);
+    await chooser.setFiles(file);
+    await expect.poll(spPr, { timeout: 10_000 }).toMatch(/<blipFill dpi="0" rotWithShape="1"><blip embed="rId\d+"><\/blip><srcRect><\/srcRect><stretch><fillRect><\/fillRect><\/stretch><\/blipFill>/);
+    // drawn: the middle of the ellipse is the picture's green
+    await page.keyboard.press('Escape');
+    await expect.poll(() => pixel(RECT.x + RECT.w / 2, RECT.y + RECT.h / 2), { timeout: 10_000 }).toEqual([0, 160, 0]);
+    const ed = await saved();
+    expect(ed.pkg.partNames().filter(n => n.startsWith('/ppt/media/')).length).toBe(1);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('arrows on a line, and a shadow on a shape, from their menus', async () => {
+    await drawShape('line', RECT.x, RECT.y, RECT.w, 0);
+    await pick('shape-outline', 'Arrow at End');
+    expect(await spPr()).toContain('<tailEnd type="triangle">');
+    expect(await spPr()).not.toContain('headEnd');
+    await pick('shape-outline', 'Arrows at Both Ends');
+    expect(await spPr()).toMatch(/<headEnd type="triangle"><\/headEnd><tailEnd type="triangle"><\/tailEnd>/);
+    await pick('shape-outline', 'Arrow at Start');
+    expect(await spPr()).toContain('<headEnd type="triangle">');
+    expect(await spPr()).not.toContain('tailEnd');
+    await pick('shape-outline', 'Arrows: None');
+    expect(await spPr()).not.toMatch(/headEnd|tailEnd/);
+    expect(await state<string>('return s.session.ed.log.undoLabel;')).toBe('Shape Outline');
+
+    await drawShape('rect', 4000000, RECT.y, 1500000, 800000);
+    await pick('shape-shadow', 'Shadow: Bottom Right');
+    expect(await spPr()).toContain('<effectLst><outerShdw blurRad="50800" dist="38100" dir="2700000" algn="tl" rotWithShape="0">');
+    // drawn: just outside the bottom right corner is no longer plain white
+    await page.keyboard.press('Escape');
+    const beside = await pixel(4000000 + 1500000 + 25000, RECT.y + 800000 + 25000);
+    expect(beside[0]! + beside[1]! + beside[2]!).toBeLessThan(760);
+    const mid = await slidePoint(4700000, RECT.y + 400000);
+    await page.mouse.click(mid.x, mid.y);
+    await pick('shape-shadow', 'No Shadow');
+    expect(await spPr()).toContain('<effectLst></effectLst>');
+    expect(await state<string>('return s.session.ed.log.undoLabel;')).toBe('Shadow');
     expect(errors).toEqual([]);
   }, 60_000);
 });

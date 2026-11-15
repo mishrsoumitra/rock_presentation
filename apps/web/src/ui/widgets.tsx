@@ -23,6 +23,7 @@ const PATHS: Record<string, string> = {
   anchor: 'M3 3h18M3 21h18M7 10h10M7 14h10', columns: 'M3 5h7M3 10h7M3 15h7M3 20h7M14 5h7M14 10h7M14 15h7M14 20h7',
   search: 'M10.5 17a6.5 6.5 0 1 1 0-13 6.5 6.5 0 0 1 0 13zM15.5 15.5L21 21',
   table: 'M3 5h18v14H3zM3 10h18M3 14.5h18M9 5v14M15 5v14',
+  shadow: 'M4 4h12v12H4zM8 20h12V8',
   link: 'M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1',
   lock: 'M6 11h12v10H6zM8 11V7a4 4 0 0 1 8 0v4', anim: 'M4 12h4l3-7 3 14 3-7h3', layout: 'M3 4h18v16H3zM3 9h18M9 9v11',
 };
@@ -113,6 +114,21 @@ export function ColorGrid({ onPick, extra }: { onPick: (c: ColorSpec | 'none' | 
       {extra}
     </div>
   );
+}
+
+/**
+ * Ask for a file with the browser's own picker, from anywhere (a menu item that has already closed its menu, for
+ * one). Resolves to undefined when the picker is dismissed.
+ */
+export function pickFile(accept: string): Promise<File | undefined> {
+  return new Promise(resolve => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = accept;
+    input.onchange = () => resolve(input.files?.[0]);
+    input.oncancel = () => resolve(undefined);
+    input.click();
+  });
 }
 
 /** A small drawing of a preset shape, from its own geometry. */
