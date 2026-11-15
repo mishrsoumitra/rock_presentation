@@ -1,6 +1,6 @@
 // packages/editor-core/src/pictures.ts  -- inserting, cropping and replacing pictures
 import { normalizeName, relativeTarget, resolveTarget } from '@pptx/opc';
-import { attrNs, child, insertInOrder, path, relType, removeChildren, setAttrNs, ShapeView } from '@pptx/model';
+import { attr, attrNs, child, insertInOrder, int, path, relType, removeChildren, setAttrNs, ShapeView, type Xfrm } from '@pptx/model';
 import type { Editor } from './editor.ts';
 import type { Command } from './history.ts';
 import { collectOrphans, dropUnreferenced, hashMedia, mediaPart, relRefs } from './parts.ts';
@@ -102,6 +102,31 @@ export function cropPicture(ed: Editor, part: string, pic: ShapeView, crop: { l:
       const v = (n: number) => (Math.round(n) ? String(Math.round(n)) : undefined);
       const attrs = (['l', 't', 'r', 'b'] as const).map(k => [k, v(crop[k])] as const).filter(([, x]) => x !== undefined).map(([k, x]) => ` ${k}="${x}"`).join('');
       insertInOrder(blipFill, element(blipFill, `<a:srcRect${attrs}/>`, ed.strict));
+    },
+  });
+}
+
+/** A picture's crop as the file has it: thousandths of a percent cut off each side (0 when it has none). */
+export function pictureCrop(pic: ShapeView): { l: number; t: number; r: number; b: number } {
+  const src = child(pic.blipFill, 'a:srcRect');
+  return { l: int(attr(src, 'l'), 0), t: int(attr(src, 't'), 0), r: int(attr(src, 'r'), 0), b: int(attr(src, 'b'), 0) };
+}
+
+/**
+ * Crop a picture and place its frame in one step, for cropping with handles: the frame's edge moves over the
+ * picture, so both change together. Drags pass one `coalesceKey`, making the whole drag one undo step.
+ */
+export function cropAndPlace(ed: Editor, part: string, pic: ShapeView, crop: { l: number; t: number; r: number; b: number }, xfrm: Xfrm, coalesceKey?: string): Command {
+  return ed.edit({
+    label: 'Crop', parts: [part], scope: () => [pic.el], ...(coalesceKey ? { coalesceKey } : {}),
+    apply: () => {
+      const blipFill = pic.blipFill;
+      if (!blipFill) throw new Error('not a picture');
+      removeChildren(blipFill, 'a:srcRect');
+      const v = (n: number) => (Math.round(n) ? String(Math.round(n)) : undefined);
+      const attrs = (['l', 't', 'r', 'b'] as const).map(k => [k, v(crop[k])] as const).filter(([, x]) => x !== undefined).map(([k, x]) => ` ${k}="${x}"`).join('');
+      insertInOrder(blipFill, element(blipFill, `<a:srcRect${attrs}/>`, ed.strict));
+      pic.setXfrm({ ...xfrm, x: Math.round(xfrm.x), y: Math.round(xfrm.y), cx: Math.round(xfrm.cx), cy: Math.round(xfrm.cy) });
     },
   });
 }

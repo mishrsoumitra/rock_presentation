@@ -15,7 +15,7 @@ export {
   type BodyPatch, type BulletSpec, type ColorSpec, type ParaPatch, type RunPatch, type SpacingSpec, type TextEdit, type TextOptions, type TextPos,
   type TextRange,
 } from './text.ts';
-export { cropPicture, insertPicture, naturalSize, prepareImage, prepareSvg, replacePicture, retarget, setPictureFill, type ImageData, type SvgImage } from './pictures.ts';
+export { cropAndPlace, cropPicture, pictureCrop, insertPicture, naturalSize, prepareImage, prepareSvg, replacePicture, retarget, setPictureFill, type ImageData, type SvgImage } from './pictures.ts';
 export { addSlide, applyLayout, copySlide, deleteSlide, duplicateSlide, moveSlide, pasteSlide, setBackground, setSlideHidden, type SlideClip } from './slides.ts';
 export { notesText, setNotes } from './notes.ts';
 export { setShapeLink, setTextLink, shapeLink, textLinkAt, type LinkTarget } from './links.ts';

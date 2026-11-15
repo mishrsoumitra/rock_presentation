@@ -498,6 +498,14 @@ export function layouts(): { part: string; name: string; master: string }[] {
   return ed.doc.masterParts().flatMap(m => ed.doc.layoutsOf(m).map(l => ({ part: l, name: ed.doc.slide(l).name || 'Layout', master: m })));
 }
 
+/** Crop with handles: on for the one selected picture, or off again. */
+export function toggleCrop(): void {
+  const s = st();
+  if (s.cropping) { useEditor.setState({ cropping: null }); return; }
+  const pic = selectedPicture();
+  if (pic) useEditor.setState({ cropping: pic.v.el, text: null });
+}
+
 /** The selected picture, if exactly one picture is selected. */
 function selectedPicture() {
   const c = ctx();

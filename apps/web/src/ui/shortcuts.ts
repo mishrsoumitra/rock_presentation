@@ -32,6 +32,7 @@ export function useShortcuts(): void {
       }
       // the format painter: Escape puts it down; Ctrl/Cmd+Alt+C picks a look up and Ctrl/Cmd+Alt+V puts it on the selection
       if (e.key === 'Escape' && s.painting) { handled(); s.setState({ painting: false }); return; }
+      if ((e.key === 'Escape' || e.key === 'Enter') && s.cropping) { handled(); s.setState({ cropping: null }); return; }
       if (mod && e.altKey && e.code === 'KeyC') { handled(); act.pickUpFormat(); return; }
       if (mod && e.altKey && e.code === 'KeyV') { handled(); act.paintFormat(); return; }
       if (mod && k === 'z') { handled(); if (e.shiftKey) s.redo(); else s.undo(); }

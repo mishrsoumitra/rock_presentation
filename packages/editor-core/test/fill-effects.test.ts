@@ -7,7 +7,7 @@ import { serializeElement } from '@pptx/xml';
 import { describe, expect, test } from 'vitest';
 import { deckBytes } from '../../resolve/test/deck.ts';
 import {
-  fillColorOf, insertPicture, insertShape, prepareImage, setFill, setFillTransparency, setGradientFill, setLine, setPictureFill, setShadow, type Editor,
+  cropAndPlace, fillColorOf, insertPicture, insertShape, pictureCrop, prepareImage, setFill, setFillTransparency, setGradientFill, setLine, setPictureFill, setShadow, type Editor,
 } from '../src/index.ts';
 import { cycle, openEditor } from './helpers.ts';
 
@@ -185,3 +185,30 @@ describe('shadow', () => {
     expect(() => setShadow(ed, SLIDE, [shape(ed, rect)], 'sideways' as never)).toThrow(/no such shadow/);
   });
 });
+
+describe('cropping with handles', () => {
+  test('the crop and the frame change together; a drag of many moves is one undo step', async () => {
+    const { ed } = withShapes();
+    const img = await prepareImage(ed, { bytes: PNG, contentType: 'image/png', ext: 'png', width: 200, height: 100 });
+    const pic = insertPicture(ed, SLIDE, img);
+    ed.run(pic.command);
+    ed.log.clear();
+    const view = () => shape(ed, pic.id);
+    const x = view().xfrm!;
+    expect(pictureCrop(view())).toEqual({ l: 0, t: 0, r: 0, b: 0 });
+    expect(cycle(ed, () => cropAndPlace(ed, SLIDE, view(), { l: 0, t: 0, r: 25000, b: 0 }, { ...x, cx: x.cx * 0.75 }))).toEqual([]);
+    for (const r of [5000, 12000.4, 25000]) ed.run(cropAndPlace(ed, SLIDE, view(), { l: 0, t: 0, r, b: 0 }, { ...x, cx: x.cx * (1 - r / 100000) + 0.4 }, 'crop:1'));
+    expect(pictureCrop(view())).toEqual({ l: 0, t: 0, r: 25000, b: 0 });
+    expect(view().xfrm).toMatchObject({ x: x.x, cx: Math.round(x.cx * 0.75 + 0.4) });
+    expect(Number.isInteger(view().xfrm!.cx)).toBe(true);
+    const drawnPic = drawn(ed, pic.id).fill;
+    expect(drawnPic.kind === 'image' && drawnPic.srcRect.r).toBeCloseTo(0.25);
+    expect(ed.log.undoLabel).toBe('Crop');
+    ed.undo();
+    expect(pictureCrop(view())).toEqual({ l: 0, t: 0, r: 0, b: 0 });
+    expect(view().xfrm).toEqual(x);
+    expect(ed.log.canUndo).toBe(false);
+    expect(() => cropAndPlace(ed, SLIDE, shape(ed, 5), { l: 0, t: 0, r: 0, b: 0 }, x).do()).toThrow(/not a picture/);
+  });
+});
+

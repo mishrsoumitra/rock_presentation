@@ -14,7 +14,9 @@ import { promptOf } from './prompts.ts';
 import { selectAll } from './textActions.ts';
 import { TextInput } from './TextInput.tsx';
 import { CellEditor } from './CellEditor.tsx';
+import { cropAndPlace, pictureCrop } from '@pptx/editor-core';
 import { paintFormat } from './actions.ts';
+import { CROP_HANDLES, dragCrop, fullCorners, handlePoint, type CropHandle, type Cropped } from './crop.ts';
 import { activeCells, cellAtPoint, cellCorners, editCell, rangeOf } from './tables.ts';
 import * as act from './actions.ts';
 
@@ -150,6 +152,7 @@ export function SlideCanvas() {
   const zoomSetting = useEditor(s => s.zoom);
   const drawing = useEditor(s => s.drawing);
   const painting = useEditor(s => s.painting);
+  const cropEl = useEditor(s => s.cropping);
   const set = useEditor(s => s.setState);
   const host = useRef<HTMLDivElement>(null);
   const stageRef = useRef<Konva.Stage>(null);
@@ -207,7 +210,8 @@ export function SlideCanvas() {
   useEffect(() => {
     const stage = stageRef.current, tr = trRef.current;
     if (!stage || !tr) return;
-    const nodes = text ? [] : selection.map(el => stage.findOne(`#${keyOf(el)}`)).filter((n): n is Konva.Node => !!n);
+    // (a picture being cropped has crop handles instead of the resize handles)
+    const nodes = text || (cropEl && selection[0] === cropEl) ? [] : selection.map(el => stage.findOne(`#${keyOf(el)}`)).filter((n): n is Konva.Node => !!n);
     tr.nodes(nodes);
     tr.getLayer()?.batchDraw();
   });
@@ -389,6 +393,48 @@ export function SlideCanvas() {
       set({ text: null, selection: [el] });
     } else selectShape(el, false);
     beginPress({ kind: 'click', el, rs, node, down: evt, at, edit: text });
+  };
+
+  /** The picture being cropped, as the crop geometry reads it: its frame, and the fractions cut off each side. */
+  const cropState = (): { view: ShapeView; state: Cropped } | undefined => {
+    const st = useEditor.getState();
+    const el = st.cropping;
+    if (!el || st.selection.length !== 1 || st.selection[0] !== el || st.text) return undefined;
+    const view = ed.view(part, el);
+    const xfrm = view.xfrm;
+    if (view.kind !== 'pic' || !xfrm) return undefined;
+    const c = pictureCrop(view);
+    return { view, state: { xfrm, crop: { l: c.l / 100000, t: c.t / 100000, r: c.r / 100000, b: c.b / 100000 } } };
+  };
+
+  /**
+   * The mouse goes down on a crop handle: until it comes up, the frame's edge follows it over the picture, which
+   * stays where it is. Every move is the same command again, so the whole drag is one undo step.
+   */
+  const startCrop = (handle: CropHandle, e: Konva.KonvaEventObject<MouseEvent>) => {
+    const stage = stageRef.current;
+    const from = cropState();
+    if (!stage || !from || e.evt.button !== 0) return;
+    e.cancelBubble = true;
+    e.evt.preventDefault();
+    const p0 = pointer();
+    const key = `crop:${keyOf(from.view.el)}:${Date.now()}`;
+    ed.log.seal();
+    const move = (ev: MouseEvent) => {
+      stage.setPointersPositions(ev);
+      const p = stage.getRelativePointerPosition();
+      if (!p) return;
+      const next = dragCrop(from.state, handle, p.x - p0.x, p.y - p0.y);
+      const units = { l: next.crop.l * 100000, t: next.crop.t * 100000, r: next.crop.r * 100000, b: next.crop.b * 100000 };
+      useEditor.getState().run(cropAndPlace(ed, part, ed.view(part, from.view.el), units, next.xfrm, key));
+    };
+    const up = () => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+      ed.log.seal();
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
   };
 
   /**
@@ -600,6 +646,8 @@ export function SlideCanvas() {
   };
 
   const tv = text ? textViewOf(findRendered(slide, text.el)) : undefined;
+  // the picture being cropped: the whole picture outlined behind its frame, and a handle on each edge and corner
+  const crop = cropEl && selection.length === 1 && selection[0] === cropEl && !text ? cropState() : undefined;
   // the cells picked in the selected table: outlined, and typed in through the box laid over the cell
   const cells = activeCells({ cells: cellState, selection, text });
   const cellRs = cells ? findRendered(slide, cells.el) : undefined;
@@ -742,6 +790,15 @@ export function SlideCanvas() {
           {guides.map((g, i) => g.x !== undefined
             ? <Line key={`g${i}`} points={[g.x, -cy, g.x, 2 * cy]} stroke="#e53e3e" strokeWidth={1 / zoom} dash={[4 / zoom, 4 / zoom]} listening={false} />
             : <Line key={`g${i}`} points={[-cx, g.y!, 2 * cx, g.y!]} stroke="#e53e3e" strokeWidth={1 / zoom} dash={[4 / zoom, 4 / zoom]} listening={false} />)}
+          {crop && <Line points={fullCorners(crop.state)} closed stroke="#555" strokeWidth={1 / zoom} dash={[5 / zoom, 4 / zoom]} listening={false} name="crop-full" />}
+          {crop && <Line points={[{ x: -1, y: -1 }, { x: 1, y: -1 }, { x: 1, y: 1 }, { x: -1, y: 1 }].flatMap(h => { const q = handlePoint(crop.state.xfrm, h as CropHandle); return [q.x, q.y]; })}
+            closed stroke="#111" strokeWidth={1.5 / zoom} listening={false} name="crop-frame" />}
+          {crop && CROP_HANDLES.map(h => {
+            const q = handlePoint(crop.state.xfrm, h);
+            const size = 11 / zoom;
+            return <Rect key={`crop${h.x},${h.y}`} name="crop-handle" x={q.x - size / 2} y={q.y - size / 2} width={size} height={size} fill="#111" stroke="#fff" strokeWidth={1.5 / zoom}
+              onMouseDown={e => startCrop(h, e)} onMouseEnter={() => setCursor('crosshair')} onMouseLeave={() => setCursor('')} />;
+          })}
           {cellOutline && <Line points={cellOutline} closed stroke="#2b6cb0" strokeWidth={2 / zoom} fill="rgba(43,108,176,0.12)" listening={false} name="cell-outline" />}
           {marquee && <Rect x={Math.min(marquee.x0, marquee.x1)} y={Math.min(marquee.y0, marquee.y1)} width={Math.abs(marquee.x1 - marquee.x0)} height={Math.abs(marquee.y1 - marquee.y0)}
             fill="rgba(43,108,176,0.08)" stroke="#2b6cb0" strokeWidth={1 / zoom} listening={false} />}

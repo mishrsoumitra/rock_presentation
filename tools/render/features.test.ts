@@ -870,6 +870,131 @@ describe('the format painter', () => {
   }, 60_000);
 });
 
+describe('cropping a picture with handles', () => {
+  /** Insert a 200 by 100 pixel picture (left half red, right half blue); it ends up selected, with the Home tab showing. */
+  async function picture(): Promise<void> {
+    const png = new PNG({ width: 200, height: 100 });
+    for (let y = 0; y < 100; y++) for (let x = 0; x < 200; x++) png.data.set(x < 100 ? [200, 0, 0, 255] : [0, 0, 200, 255], (y * 200 + x) * 4);
+    await page.getByRole('tab', { name: 'Insert' }).click();
+    await page.locator('input[type=file][accept^="image/png"]').first().setInputFiles({ name: 'two.png', mimeType: 'image/png', buffer: PNG.sync.write(png) });
+    await expect.poll(() => state<string>('return s.selection[0] ? s.selection[0].local : "";'), { timeout: 10_000 }).toBe('pic');
+    await page.getByRole('tab', { name: 'Home' }).click();
+    await frames();
+  }
+  /** The selected picture's frame and its crop (thousandths of a percent). */
+  const pic = () => state<{ x: number; y: number; cx: number; cy: number; l: number; t: number; r: number; b: number }>(`
+    const el = s.selection[0]; const find = (e, n) => e.children.find(c => c.kind === 'element' && c.local === n);
+    const x = find(find(el, 'spPr'), 'xfrm'), off = find(x, 'off'), ext = find(x, 'ext'), src = find(find(el, 'blipFill'), 'srcRect');
+    const num = (e, n) => { const a = e && e.attrs.find(t => t.local === n); return a ? Number(a.value) : 0; };
+    return { x: num(off, 'x'), y: num(off, 'y'), cx: num(ext, 'cx'), cy: num(ext, 'cy'), l: num(src, 'l'), t: num(src, 't'), r: num(src, 'r'), b: num(src, 'b') };`);
+  /** Where the crop handles are on the page, in the order the app keeps them (the fifth is the right-hand middle). */
+  const handles = () => page.evaluate(() => {
+    const st = (globalThis as unknown as { __stage: { find(s: string): { getClientRect(): { x: number; y: number; width: number; height: number } }[]; container(): HTMLElement } }).__stage;
+    const r = st.container().getBoundingClientRect();
+    return st.find('.crop-handle').map(h => { const b = h.getClientRect(); return { x: r.left + b.x + b.width / 2, y: r.top + b.y + b.height / 2 }; });
+  });
+  const cropMenu = async (item: string) => {
+    await page.getByTestId('crop-menu').click();
+    await page.locator('.menu-panel').getByRole('menuitem', { name: item, exact: true }).click();
+    await frames();
+  };
+  const drag = async (from: { x: number; y: number }, dx: number, dy: number) => {
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down();
+    await page.mouse.move(from.x + dx / 2, from.y + dy / 2, { steps: 3 });
+    await page.mouse.move(from.x + dx, from.y + dy, { steps: 3 });
+    await page.mouse.up();
+    await frames();
+  };
+  const zoom = () => page.evaluate(() => (globalThis as unknown as { __stage: { scaleX(): number } }).__stage.scaleX());
+
+  test('Crop shows eight handles; dragging one in cuts the picture there, the rest staying put; the drag is one undo step', async () => {
+    await picture();
+    const start = await pic();
+    expect(start).toMatchObject({ cx: 1905000, cy: 952500, l: 0, t: 0, r: 0, b: 0 });      // 200 by 100 pixels at 96 dpi
+    expect((await handles()).length).toBe(0);
+    await cropMenu('Crop');
+    const hs = await handles();
+    expect(hs.length).toBe(8);
+
+    // the right-hand middle handle, a quarter of the picture's width to the left
+    const z = await zoom();
+    const quarter = (start.cx / 4) * z;
+    await drag(hs[4]!, -quarter, 0);
+    const cut = await pic();
+    expect(cut.x).toBe(start.x);
+    expect(cut.y).toBe(start.y);
+    expect(cut.cy).toBe(start.cy);
+    expect(Math.abs(cut.cx - start.cx * 0.75)).toBeLessThan(3 / z);
+    expect(Math.abs(cut.r - 25000)).toBeLessThan(400);
+    expect([cut.l, cut.t, cut.b]).toEqual([0, 0, 0]);
+    expect(await state<string>('return s.session.ed.log.undoLabel;')).toBe('Crop');
+
+    // the left-hand middle handle in: the frame starts further right, and the picture under it has not moved,
+    // so the frame's left edge is now on the blue half
+    const hs2 = await handles();
+    await drag(hs2[3]!, (start.cx * 0.6) * z, 0);
+    const both = await pic();
+    expect(Math.abs(both.l - 60000)).toBeLessThan(400);
+    expect(Math.abs(both.x - (start.x + start.cx * 0.6))).toBeLessThan(3 / z);
+    await page.keyboard.press('Escape');
+    expect((await handles()).length).toBe(0);
+    const edge = await slidePoint(both.x + 30000, both.y + both.cy / 2);
+    const px = await page.evaluate(([x, y]) => {
+      const c = document.querySelector('[data-testid="canvas"] canvas') as HTMLCanvasElement;
+      const r = c.getBoundingClientRect();
+      const d = c.getContext('2d')!.getImageData(Math.round((x - r.left) * (c.width / r.width)), Math.round((y - r.top) * (c.height / r.height)), 1, 1).data;
+      return [d[0], d[1], d[2]];
+    }, [edge.x, edge.y] as const);
+    expect(px).toEqual([0, 0, 200]);
+
+    // each drag was one undo step: two undos give the whole picture back
+    await page.keyboard.press('Control+z');
+    expect(await pic()).toMatchObject({ x: cut.x, cx: cut.cx, l: 0 });
+    await page.keyboard.press('Control+z');
+    expect(await pic()).toEqual(start);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('a handle cannot leave the picture; a corner crops two sides; Done Cropping, Enter and selecting something else end it', async () => {
+    await picture();
+    const start = await pic();
+    await cropMenu('Crop');
+    const z = await zoom();
+    let hs = await handles();
+    await drag(hs[4]!, 200, 0);                                         // outwards: there is no more picture to show
+    expect(await pic()).toEqual(start);
+    await drag(hs[7]!, -(start.cx / 2) * z, -(start.cy / 2) * z);       // the bottom right corner to the middle
+    const corner = await pic();
+    expect(Math.abs(corner.r - 50000)).toBeLessThan(600);
+    expect(Math.abs(corner.b - 50000)).toBeLessThan(600);
+    expect(corner.x).toBe(start.x);
+    expect(corner.y).toBe(start.y);
+
+    await cropMenu('Done Cropping');
+    expect((await handles()).length).toBe(0);
+    await cropMenu('Crop');
+    expect((await handles()).length).toBe(8);
+    await page.keyboard.press('Enter');
+    expect((await handles()).length).toBe(0);
+    await cropMenu('Crop');
+    const empty = await slidePoint(600000, 600000);
+    await page.mouse.click(empty.x, empty.y);
+    expect(await state<boolean>('return !!s.cropping;')).toBe(false);
+
+    // Reset Crop gives the whole picture back in its frame
+    const mid = await slidePoint(corner.x + corner.cx / 2, corner.y + corner.cy / 2);
+    await page.mouse.click(mid.x, mid.y);
+    await cropMenu('Reset Crop');
+    expect(await pic()).toMatchObject({ l: 0, t: 0, r: 0, b: 0 });
+    hs = await handles();
+    expect(hs.length).toBe(0);
+    const ed = await saved();
+    expect(ed.doc.slide(ed.doc.slideParts()[0]!).shapes.filter(sh => sh.kind === 'pic').length).toBe(1);
+    expect(errors).toEqual([]);
+  }, 60_000);
+});
+
 describe('bullet and number styles', () => {
   test('pick a bullet character and a numbering scheme; the menus tick the one in force; text in a box gets a hanging indent', async () => {
     await textBox('one\ntwo');

@@ -44,7 +44,7 @@ function shown(s: EditorState): string {
     run?.latin, run?.size, run?.bold, run?.italic, run?.underline, run?.strike, para?.bullet?.kind, para?.bullet?.char, para?.bullet?.scheme, para?.marL, para?.indent, para?.level, para?.align,
     run?.baseline, run?.spacing, para?.lineSpacing.kind, para?.lineSpacing.val, para?.spaceBefore.val, para?.spaceAfter.val,
     here.body?.anchor, here.body?.numCol, here.body && Object.values(here.body.insets).join(','),
-    s.painting, s.cells && [s.cells.anchor.r, s.cells.anchor.c, s.cells.focus.r, s.cells.focus.c].join(','), !!linkContext(), s.text && [s.text.anchor.p, s.text.anchor.offset, s.text.caret.p, s.text.caret.offset].join(','), Object.values(tables.tableAbilities()).join(','),
+    s.painting, !!s.cropping, s.cells && [s.cells.anchor.r, s.cells.anchor.c, s.cells.focus.r, s.cells.focus.c].join(','), !!linkContext(), s.text && [s.text.anchor.p, s.text.anchor.offset, s.text.caret.p, s.text.caret.offset].join(','), Object.values(tables.tableAbilities()).join(','),
   ].join('|');
 }
 
@@ -63,6 +63,7 @@ export function Ribbon({ extraTabs }: { extraTabs?: Partial<Record<Tab, React.Re
   const hasSel = selection.length > 0;
   const table = tables.tableAbilities();
   const painting = useEditor.getState().painting;
+  const cropping = !!useEditor.getState().cropping;
   const isPicture = selection.length === 1 && selection[0]!.local === 'pic';
   const tabs: Tab[] = ['File', 'Home', 'Insert', 'Design', 'Transitions', 'Animations', 'Slide Show'];
 
@@ -170,7 +171,9 @@ export function Ribbon({ extraTabs }: { extraTabs?: Partial<Record<Tab, React.Re
             </section>
             {isPicture && (
               <section className="group" aria-label="Picture">
-                <Menu icon="image" label="Crop">{close => (<>
+                <Menu icon="image" label="Crop" testid="crop-menu">{close => (<>
+                  <MenuItem label={cropping ? 'Done Cropping' : 'Crop'} onClick={() => { close(); act.toggleCrop(); }} />
+                  <hr />
                   {([['Square 1:1', 1], ['4:3', 4 / 3], ['3:4', 3 / 4], ['16:9', 16 / 9], ['9:16', 9 / 16], ['3:2', 3 / 2]] as const).map(([l, r]) =>
                     <MenuItem key={l} label={`Aspect Ratio ${l}`} onClick={() => { close(); act.cropToAspect(r); }} />)}
                   <MenuItem label="Reset Crop" onClick={() => { close(); act.cropToAspect(null); }} />
