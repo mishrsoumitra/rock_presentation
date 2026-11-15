@@ -457,6 +457,11 @@ function runsIn(txBody: XmlElement, range: TextRange): { runs: XmlElement[]; mar
   return { runs, marks };
 }
 
+/** The run elements (a:r, a:br, a:fld) a range covers, runs split at its edges. For commands that change those runs. */
+export function runElementsIn(txBody: XmlElement, range: TextRange): XmlElement[] {
+  return runsIn(txBody, range).runs;
+}
+
 /**
  * Character formatting over a range (bold, size, colour, font...). Runs are split at the range's edges; the
  * paragraph mark (a:endParaRPr) of each paragraph the range covers to its end is formatted too, as PowerPoint does,

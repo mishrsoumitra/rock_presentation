@@ -54,6 +54,8 @@ export interface EditorState {
   pane: Pane;
   /** The right-click menu, where it was opened (window coordinates) and on what. */
   menu: { x: number; y: number; kind: 'shape' | 'slide' | 'thumb' } | null;
+  /** The hyperlink dialog is open. */
+  linking: boolean;
   /** The find and replace panel is open. */
   finding: boolean;
   clipboard: ShapeClip | null;
@@ -100,7 +102,7 @@ function fitted(s: Session, t: TextEditing | null): TextEditing | null {
 
 export const useEditor = create<EditorState>((set, get) => ({
   session: null, version: 0, slide: null, selection: [], entered: null, text: null, cells: null, pending: null,
-  zoom: 'fit', drawing: null, mode: 'edit', pane: 'none', finding: false, menu: null, clipboard: null, clipId: null, slideClip: null, message: null, askPassword: null,
+  zoom: 'fit', drawing: null, mode: 'edit', pane: 'none', finding: false, linking: false, menu: null, clipboard: null, clipId: null, slideClip: null, message: null, askPassword: null,
 
   async open(bytes, name, password) {
     performance.mark('open-start');

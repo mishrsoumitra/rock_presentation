@@ -1,7 +1,11 @@
 // apps/web/src/ui/Dialogs.tsx  -- password prompts and the slide size dialog
 import { useEffect, useState } from 'react';
 import { useEditor } from '../state/store.ts';
+import type { LinkTarget } from '@pptx/editor-core';
 import { resizeSlides } from './actions.ts';
+import { applyLink, linkContext, slideChoices } from './linkActions.ts';
+import { normalizeUrl } from './links.ts';
+import { refocusText } from './widgets.tsx';
 
 function Dialog({ title, children, onClose }: { title: string; children: React.ReactNode; onClose: () => void }) {
   useEffect(() => {
@@ -110,3 +114,71 @@ export function SlideSizeDialog() {
     </Dialog>
   );
 }
+
+/**
+ * The hyperlink dialog (Insert > Link, Ctrl/Cmd+K, the right-click menu): a web or mail address, or a slide of this
+ * deck, for the selected text or shapes. It opens showing the link that is there, to change or remove.
+ */
+export function LinkDialog() {
+  const open = useEditor(s => s.linking);
+  useEffect(() => {
+    // Ctrl/Cmd+K anywhere in the editor, the text being typed in included
+    const onKey = (e: KeyboardEvent) => {
+      const s = useEditor.getState();
+      if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey || e.key.toLowerCase() !== 'k') return;
+      if (!s.session || s.mode !== 'edit' || s.linking || !linkContext()) return;
+      e.preventDefault();
+      e.stopPropagation();
+      useEditor.setState({ linking: true });
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, []);
+
+  // the form is made anew each time the dialog opens, so it starts from the link that is there then
+  return open ? <LinkForm /> : null;
+}
+
+function LinkForm() {
+  const slides = slideChoices();
+  const [target] = useState(() => linkContext()?.target);
+  const [kind, setKind] = useState<'url' | 'slide'>(target && 'slide' in target ? 'slide' : 'url');
+  const [url, setUrl] = useState(target && 'url' in target ? target.url : '');
+  const [slide, setSlide] = useState(target && 'slide' in target ? target.slide : slides[0]?.part ?? '');
+  const [error, setError] = useState('');
+  const existing = !!target;
+  const close = () => { useEditor.setState({ linking: false }); refocusText(); };
+  const apply = () => {
+    let target: LinkTarget;
+    if (kind === 'url') {
+      const address = normalizeUrl(url);
+      if (!address) { setError('Enter a web address (example.com) or an email address.'); return; }
+      target = { url: address };
+    } else {
+      if (!slides.some(x => x.part === slide)) return;
+      target = { slide };
+    }
+    applyLink(target);
+    close();
+  };
+  return (
+    <Dialog title="Link" onClose={close}>
+      <form data-testid="link-dialog" onSubmit={e => { e.preventDefault(); apply(); }}>
+        <div className="row link-kinds">
+          <label><input type="radio" name="link-kind" checked={kind === 'url'} onChange={() => setKind('url')} data-testid="link-kind-url" /> Web or email address</label>
+          <label><input type="radio" name="link-kind" checked={kind === 'slide'} onChange={() => setKind('slide')} data-testid="link-kind-slide" /> Slide in this presentation</label>
+        </div>
+        {kind === 'url'
+          ? <input type="text" autoFocus aria-label="Address" placeholder="example.com" value={url} data-testid="link-url" onChange={e => { setUrl(e.target.value); setError(''); }} />
+          : <select aria-label="Slide" value={slide} onChange={e => setSlide(e.target.value)} data-testid="link-slide">{slides.map(x => <option key={x.part} value={x.part}>{x.label}</option>)}</select>}
+        {error && <p className="dialog-error" role="alert" data-testid="link-error">{error}</p>}
+        <div className="dialog-buttons">
+          {existing && <button type="button" className="plain" onClick={() => { applyLink(null); close(); }} data-testid="link-remove">Remove Link</button>}
+          <button type="button" onClick={close}>Cancel</button>
+          <button type="submit" data-testid="link-apply">Apply</button>
+        </div>
+      </form>
+    </Dialog>
+  );
+}
+

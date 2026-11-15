@@ -18,6 +18,7 @@ export {
 export { cropPicture, insertPicture, naturalSize, prepareImage, prepareSvg, replacePicture, retarget, type ImageData, type SvgImage } from './pictures.ts';
 export { addSlide, applyLayout, copySlide, deleteSlide, duplicateSlide, moveSlide, pasteSlide, setBackground, setSlideHidden, type SlideClip } from './slides.ts';
 export { notesText, setNotes } from './notes.ts';
+export { setShapeLink, setTextLink, shapeLink, textLinkAt, type LinkTarget } from './links.ts';
 export {
   cellAt, cellBody, cellText, DEFAULT_TABLE_STYLE, deleteColumns, deleteRows, insertColumn, insertRow, insertTable, isMerged, mergeCells, regionOf,
   ROW_HEIGHT, setCellText, splitCell, tableOf, tableSize, wholeRegions, type CellRange, type CellRef,

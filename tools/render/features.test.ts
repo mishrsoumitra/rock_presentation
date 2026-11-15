@@ -519,6 +519,153 @@ describe('copy, cut and paste slides', () => {
   }, 60_000);
 });
 
+describe('hyperlinks', () => {
+  /** The slide's external relationships (addresses) and the slides it links to. */
+  const rels = () => state<{ urls: string[]; slides: number }>(`
+    const r = s.session.ed.pkg.relationships(s.slide);
+    return { urls: r.filter(x => x.external).map(x => x.target), slides: r.filter(x => !x.external && x.type.endsWith('/slide')).length };`);
+  /** The runs of the box being edited: "[link]" before a run that carries a link. */
+  const runs = () => state<string>(`
+    const body = s.text.el.children.find(c => c.local === 'txBody');
+    return body.children.filter(c => c.local === 'p').map(p => p.children.filter(c => c.local === 'r').map(r => {
+      const rPr = r.children.find(c => c.local === 'rPr');
+      return (rPr && rPr.children.some(c => c.local === 'hlinkClick') ? '[link]' : '') + r.children.find(c => c.local === 't').children.map(c => c.value ?? '').join('');
+    }).join('|')).join('/');`);
+  async function select(from: number, to: number): Promise<void> {
+    await page.keyboard.press('Control+Home');
+    for (let i = 0; i < from; i++) await page.keyboard.press('ArrowRight');
+    for (let i = from; i < to; i++) await page.keyboard.press('Shift+ArrowRight');
+  }
+  const dialog = () => page.getByTestId('link-dialog');
+
+  test('Ctrl+K links the selected words to an address typed without its scheme; the caret in the link edits or removes it', async () => {
+    await textBox('Visit our site now');
+    await select(6, 14);
+    await page.keyboard.press('Control+k');
+    await dialog().waitFor();
+    expect(await page.getByTestId('link-url').inputValue()).toBe('');
+    expect(await page.getByTestId('link-remove').count()).toBe(0);       // nothing to remove yet
+    await page.keyboard.type('example.com/docs');
+    await page.keyboard.press('Enter');
+    expect(await dialog().count()).toBe(0);
+    expect(await runs()).toBe('Visit |[link]our site| now');
+    expect(await rels()).toEqual({ urls: ['https://example.com/docs'], slides: 0 });
+    expect(await state<string>('return s.session.ed.log.undoLabel;')).toBe('Hyperlink');
+    // typing goes on in the box after the dialog closes
+    await page.keyboard.press('Control+End');
+    await page.keyboard.type('!');
+    expect(await runs()).toBe('Visit |[link]our site| now!');
+
+    // the caret anywhere in the link: the dialog shows it, and Apply changes all of it
+    await select(9, 9);
+    await page.keyboard.press('Control+k');
+    expect(await page.getByTestId('link-url').inputValue()).toBe('https://example.com/docs');
+    await page.getByTestId('link-url').fill('someone@example.com');
+    await page.getByTestId('link-apply').click();
+    expect(await rels()).toEqual({ urls: ['mailto:someone@example.com'], slides: 0 });
+    expect(await runs()).toBe('Visit |[link]our site| now!');
+
+    await page.keyboard.press('Control+k');
+    await page.getByTestId('link-remove').click();
+    expect(await runs()).toBe('Visit |our site| now!');
+    expect(await rels()).toEqual({ urls: [], slides: 0 });
+    expect(await state<string>('return s.session.ed.log.undoLabel;')).toBe('Remove Hyperlink');
+    await page.keyboard.press('Control+z');
+    expect(await rels()).toEqual({ urls: ['mailto:someone@example.com'], slides: 0 });
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('an address that is not a web or mail address is refused and nothing is linked; Cancel and Escape change nothing', async () => {
+    await textBox('Click here');
+    await select(6, 10);
+    await page.keyboard.press('Control+k');
+    for (const bad of ['javascript:alert(1)', 'file:///etc/passwd', 'not an address']) {
+      await page.getByTestId('link-url').fill(bad);
+      await page.getByTestId('link-apply').click();
+      expect(await page.getByTestId('link-error').innerText()).toContain('web address');
+      expect(await dialog().count()).toBe(1);
+    }
+    await page.keyboard.press('Escape');
+    expect(await dialog().count()).toBe(0);
+    expect(await runs()).toBe('Click here');
+    expect(await rels()).toEqual({ urls: [], slides: 0 });
+    await page.keyboard.press('Control+k');
+    await page.getByTestId('link-url').fill('example.com');
+    await dialog().getByRole('button', { name: 'Cancel' }).click();
+    expect(await rels()).toEqual({ urls: [], slides: 0 });
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('with only a caret, the address is typed in as the linked text', async () => {
+    await textBox('See ');
+    await page.keyboard.press('Control+k');
+    await page.getByTestId('link-url').fill('https://example.com');
+    await page.getByTestId('link-apply').click();
+    expect(await runs()).toBe('See |[link]https://example.com');
+    await page.keyboard.type(' today');
+    expect((await runs()).startsWith('See |[link]https://example.com')).toBe(true);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('a shape links to another slide, from Insert > Link and from the right-click menu; a click on it in the show would go there', async () => {
+    await page.getByTestId('new-slide').click();
+    await state('s.setSlide(s.session.ed.doc.slideParts()[0]);');
+    await drawShape('rect', 1000000, 5500000, 1500000, 800000);
+    await page.getByRole('tab', { name: 'Insert' }).click();
+    await page.getByTestId('insert-link').click();
+    await page.getByTestId('link-kind-slide').check();
+    expect(await page.getByTestId('link-slide').locator('option').allInnerTexts()).toEqual(['Slide 1', 'Slide 2']);
+    await page.getByTestId('link-slide').selectOption({ label: 'Slide 2' });
+    await page.getByTestId('link-apply').click();
+    expect(await rels()).toEqual({ urls: [], slides: 1 });
+    expect(await state<boolean>(`return s.selection[0].children[0].children[0].children.some(c => c.local === 'hlinkClick');`)).toBe(true);
+
+    // what the slide show follows at the middle of the shape
+    await frames();
+    const hit = await page.evaluate(`(async () => {
+      const m = await import('/src/ui/links.ts');
+      const s = globalThis.__editor.getState();
+      const link = m.linkAt(s.session.scenes.get(s.slide).slide, 1700000, 5900000);
+      return link ? s.session.ed.doc.slideParts().indexOf(link.slide) + 1 : 0;
+    })()`);
+    expect(hit).toBe(2);
+
+    // the menu opens the dialog on the link that is there; Remove takes it off the shape
+    await page.getByRole('tab', { name: 'Home' }).click();
+    const p = await slidePoint(1700000, 5900000);
+    await page.mouse.click(p.x, p.y, { button: 'right' });
+    await page.getByTestId('menu-link').click();
+    expect(await page.getByTestId('link-kind-slide').isChecked()).toBe(true);
+    expect(await page.getByTestId('link-slide').inputValue()).toContain('slide2');
+    await page.getByTestId('link-remove').click();
+    expect(await rels()).toEqual({ urls: [], slides: 0 });
+
+    // with nothing selected there is nothing to link: the button is off and Ctrl+K does nothing
+    await page.keyboard.press('Escape');
+    await page.getByRole('tab', { name: 'Insert' }).click();
+    expect(await page.getByTestId('insert-link').isDisabled()).toBe(true);
+    await page.keyboard.press('Control+k');
+    expect(await dialog().count()).toBe(0);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('links are in the saved file: the address as an external relationship the linked run points at', async () => {
+    await textBox('Docs');
+    await page.keyboard.press('Control+a');
+    await page.keyboard.press('Control+k');
+    await page.getByTestId('link-url').fill('example.com');
+    await page.getByTestId('link-apply').click();
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape');
+    const ed = await saved();
+    const part = ed.doc.slideParts()[0]!;
+    const rel = ed.pkg.relationships(part).find(r => r.external)!;
+    expect(rel.target).toBe('https://example.com');
+    expect(new TextDecoder().decode(ed.pkg.getPart(part)!.bytes)).toContain(`<a:hlinkClick r:id="${rel.id}"/>`);
+    expect(errors).toEqual([]);
+  }, 60_000);
+});
+
 describe('bullet and number styles', () => {
   test('pick a bullet character and a numbering scheme; the menus tick the one in force; text in a box gets a hanging indent', async () => {
     await textBox('one\ntwo');
@@ -778,7 +925,7 @@ describe('the right-click menu', () => {
 
     await rightClick(1700000, 5900000);
     expect(await menu().getAttribute('data-kind')).toBe('shape');
-    expect(await labels()).toEqual(['Cut', 'Copy', 'Paste', 'Duplicate', 'Delete', 'Edit Text', 'Bring to Front', 'Bring Forward', 'Send Backward', 'Send to Back', 'Group', 'Ungroup', 'Alt Text…', 'Selection Pane…']);
+    expect(await labels()).toEqual(['Cut', 'Copy', 'Paste', 'Duplicate', 'Delete', 'Edit Text', 'Bring to Front', 'Bring Forward', 'Send Backward', 'Send to Back', 'Group', 'Ungroup', 'Link…', 'Alt Text…', 'Selection Pane…']);
     expect(await disabled()).toEqual(['Paste', 'Group', 'Ungroup']);     // nothing copied yet; one shape, not a group
     await page.getByTestId('menu-duplicate').click();
     expect(await menu().count()).toBe(0);                                // choosing closes the menu
@@ -853,7 +1000,8 @@ describe('the right-click menu', () => {
     await page.keyboard.press('ArrowUp');                                 // round the top to the last command
     expect(await page.evaluate(() => document.activeElement?.getAttribute('data-testid'))).toBe('menu-selection-pane');
     await page.keyboard.press('ArrowUp');
-    await page.keyboard.press('ArrowUp');                                 // past Alt Text, and Group and Ungroup, which are off
+    await page.keyboard.press('ArrowUp');
+    await page.keyboard.press('ArrowUp');                                 // past Alt Text and Link, and Group and Ungroup, which are off
     expect(await page.evaluate(() => document.activeElement?.getAttribute('data-testid'))).toBe('menu-back');
     await page.keyboard.press('Enter');
     expect(await menu().count()).toBe(0);

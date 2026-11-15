@@ -175,6 +175,10 @@ select { height: 28px; border: 1px solid var(--line); border-radius: var(--radiu
 .dialog p { color: var(--muted); }
 .dialog input { display: block; width: 100%; margin: 6px 0; padding: 6px 8px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg); }
 .dialog .row { display: flex; gap: 12px; }
+.dialog input[type="text"], .dialog select { width: 100%; height: 30px; padding: 0 8px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); }
+.dialog .link-kinds { margin-bottom: 8px; flex-wrap: wrap; }
+.dialog-error { color: var(--danger); margin: 6px 0 0; }
+.dialog-buttons button.plain { margin-right: auto; background: var(--panel); border-color: var(--line); color: var(--danger); }
 .dialog-buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
 .dialog-buttons button { border: 1px solid var(--line); background: var(--panel); padding: 6px 14px; border-radius: var(--radius); cursor: pointer; }
 .dialog-buttons button[type="submit"], .dialog-buttons button:last-child { background: var(--accent); border-color: var(--accent); color: #fff; }

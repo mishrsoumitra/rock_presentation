@@ -3,6 +3,7 @@ import { useRef, useState } from 'react';
 import { useEditor, type EditorState } from '../state/store.ts';
 import * as act from './actions.ts';
 import { BULLET_STYLES, bulletPatch, NUMBER_STYLES, numberSample } from './bullets.ts';
+import { linkContext } from './linkActions.ts';
 import * as tables from './tables.ts';
 import { clearFormatting, formatPara, formatText, formatTextBox, formattingHere } from './textActions.ts';
 import { Btn, ColorGrid, keepFocus, Menu, MenuItem, refocusText, ShapeGallery, TableGrid } from './widgets.tsx';
@@ -43,7 +44,7 @@ function shown(s: EditorState): string {
     run?.latin, run?.size, run?.bold, run?.italic, run?.underline, run?.strike, para?.bullet?.kind, para?.bullet?.char, para?.bullet?.scheme, para?.marL, para?.indent, para?.level, para?.align,
     run?.baseline, run?.spacing, para?.lineSpacing.kind, para?.lineSpacing.val, para?.spaceBefore.val, para?.spaceAfter.val,
     here.body?.anchor, here.body?.numCol, here.body && Object.values(here.body.insets).join(','),
-    s.cells && [s.cells.anchor.r, s.cells.anchor.c, s.cells.focus.r, s.cells.focus.c].join(','), Object.values(tables.tableAbilities()).join(','),
+    s.cells && [s.cells.anchor.r, s.cells.anchor.c, s.cells.focus.r, s.cells.focus.c].join(','), !!linkContext(), s.text && [s.text.anchor.p, s.text.anchor.offset, s.text.caret.p, s.text.caret.offset].join(','), Object.values(tables.tableAbilities()).join(','),
   ].join('|');
 }
 
@@ -235,6 +236,9 @@ export function Ribbon({ extraTabs }: { extraTabs?: Partial<Record<Tab, React.Re
               </FilePicker>
               <Menu icon="outline" label="Shapes">{close => <ShapeGallery onPick={p => { close(); act.startDrawing(p); }} />}</Menu>
               <Btn icon="text" label="Text Box" wide disabled={!session} onClick={act.insertTextBoxHere} testid="text-box" />
+            </section>
+            <section className="group">
+              <Btn icon="link" label="Link" wide disabled={!linkContext()} onClick={() => useEditor.setState({ linking: true })} testid="insert-link" />
             </section>
           </>
         )}
