@@ -8,7 +8,7 @@ import { chromium, type Browser, type Page } from 'playwright';
 import { PNG } from 'pngjs';
 import { createServer, type ViteDevServer } from 'vite';
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest';
-import { OpcPackage } from '@pptx/opc';
+import { OpcPackage, readZip } from '@pptx/opc';
 import { cellText, Editor, notesText, tableOf, tableSize } from '../../packages/editor-core/src/index.ts';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
@@ -1604,6 +1604,83 @@ describe('saving, autosave and recovery', () => {
     const [download] = await Promise.all([page.waitForEvent('download'), page.keyboard.press('Control+s')]);
     expect(download.suggestedFilename()).toBe('Presentation1.pptx');
     await expect.poll(docName).toBe('Presentation1.pptx');
+    expect(errors).toEqual([]);
+  }, 60_000);
+});
+
+describe('export', () => {
+  /** Click an export button of the File tab and read the file the browser is given. */
+  async function exported(testid: string): Promise<{ name: string; bytes: Uint8Array }> {
+    await page.getByRole('tab', { name: 'File' }).click();
+    const [d] = await Promise.all([page.waitForEvent('download', { timeout: 30_000 }), page.getByTestId(testid).click()]);
+    await page.getByRole('tab', { name: 'Home' }).click();
+    return { name: d.suggestedFilename(), bytes: new Uint8Array(readFileSync((await d.path())!)) };
+  }
+  /** A red rectangle on the first slide and a second, hidden-then-shown slide with a blue one. */
+  async function twoSlides(): Promise<void> {
+    await drawShape('rect', 1000000, 5400000, 2000000, 1000000);
+    await page.getByTestId('shape-fill').click();
+    await page.locator('.menu-panel .swatch[title="Red"]').click();
+    await page.keyboard.press('Escape');
+    await page.getByTestId('new-slide').click();
+    await drawShape('rect', 8000000, 400000, 2000000, 1000000);
+    await page.getByTestId('shape-fill').click();
+    await page.locator('.menu-panel .swatch[title="Blue"]').click();
+    await page.keyboard.press('Escape');
+  }
+  const at = (png: PNG, x: number, y: number) => { const i = (y * png.width + x) * 4; return [png.data[i], png.data[i + 1], png.data[i + 2], png.data[i + 3]]; };
+
+  test('the current slide as a PNG: full HD, white where the slide is empty, and the shapes where they are', async () => {
+    await twoSlides();
+    await state('s.setSlide(s.session.ed.doc.slideParts()[0]);');
+    const file = await exported('export-png');
+    expect(file.name).toBe('Presentation1 - Slide 1.png');
+    const png = PNG.sync.read(Buffer.from(file.bytes));
+    expect([png.width, png.height]).toEqual([1920, 1080]);
+    expect(at(png, 20, 20)).toEqual([255, 255, 255, 255]);
+    // the rectangle spans 1M..3M by 5.4M..6.4M EMU of a 12.192M wide slide: its middle is at about (315, 929)
+    const px = at(png, Math.round((2000000 / 12192000) * 1920), Math.round((5900000 / 12192000) * 1920));
+    expect(px).toEqual([255, 0, 0, 255]);
+    expect(await state<string>('return s.session.ed.log.undoLabel;')).toBe('Shape Fill');      // exporting changes nothing
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('every slide as PNGs in a ZIP, named so they sort in order', async () => {
+    await twoSlides();
+    const file = await exported('export-pngs');
+    expect(file.name).toBe('Presentation1 - slides.zip');
+    const entries = readZip(file.bytes);
+    expect(entries.map(e => e.name)).toEqual(['Slide 1.png', 'Slide 2.png']);
+    const second = PNG.sync.read(Buffer.from(entries[1]!.data));
+    expect([second.width, second.height]).toEqual([1920, 1080]);
+    expect(at(second, Math.round((9000000 / 12192000) * 1920), Math.round((900000 / 12192000) * 1920))).toEqual([0, 112, 192, 255]);   // "Blue" is #0070C0
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('the deck as a PDF: a page per slide at the slide\'s size, each a JPEG; a hidden slide is left out', async () => {
+    await twoSlides();
+    let file = await exported('export-pdf');
+    expect(file.name).toBe('Presentation1.pdf');
+    let pdf = Buffer.from(file.bytes).toString('latin1');
+    expect(pdf.startsWith('%PDF-1.4')).toBe(true);
+    expect(pdf.trimEnd().endsWith('%%EOF')).toBe(true);
+    expect(pdf.match(/\/Type \/Page /g)?.length).toBe(2);
+    expect(pdf.match(/\/MediaBox \[0 0 960 540\]/g)?.length).toBe(2);     // 13.33 by 7.5 inches
+    expect(pdf.match(/\/Filter \/DCTDecode/g)?.length).toBe(2);
+    expect(pdf).toContain('/Width 1920 /Height 1080');
+    expect(pdf).toContain('/Title (Presentation1)');
+    // each picture really is a JPEG
+    const first = /\/Length (\d+) >>\nstream\n/.exec(pdf.slice(pdf.indexOf('/Subtype /Image')))!;
+    const from = pdf.indexOf('/Subtype /Image') + first.index + first[0].length;
+    expect([file.bytes[from], file.bytes[from + 1]]).toEqual([0xff, 0xd8]);
+    expect([file.bytes[from + Number(first[1]) - 2], file.bytes[from + Number(first[1]) - 1]]).toEqual([0xff, 0xd9]);
+
+    await page.getByRole('tab', { name: 'Slide Show' }).click();
+    await page.getByRole('button', { name: 'Hide Slide' }).click();
+    file = await exported('export-pdf');
+    pdf = Buffer.from(file.bytes).toString('latin1');
+    expect(pdf.match(/\/Type \/Page /g)?.length).toBe(1);
+    await expect.poll(() => page.locator('.status .message').innerText()).toContain('Exported Presentation1.pdf.');
     expect(errors).toEqual([]);
   }, 60_000);
 });

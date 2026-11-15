@@ -16,6 +16,7 @@ import type { XmlElement } from '@pptx/xml';
 import { blankPresentation } from '../engine/blank.ts';
 import { decodeImage } from '../engine/images.ts';
 import { autosave, type Autosaved } from '../engine/autosave.ts';
+import { deckPdf, slidePng, slidesZip } from '../engine/export.ts';
 import { markSaved, useEditor, type FileHandle } from '../state/store.ts';
 
 const st = () => useEditor.getState();
@@ -130,6 +131,43 @@ export async function openWithPicker(): Promise<boolean> {
     if (!cancelled(e)) st().notify('error', `That file could not be opened: ${e instanceof Error ? e.message : String(e)}`);
   }
   return true;
+}
+
+/** Hand a file made here to the browser to save. */
+function download(bytes: Uint8Array, name: string, type: string): void {
+  const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
+/**
+ * Export from the File tab: the deck as a PDF, the current slide as a PNG, or every slide as PNGs in a ZIP. The
+ * deck itself is not changed or saved by this.
+ */
+export async function exportAs(what: 'pdf' | 'png' | 'pngs'): Promise<void> {
+  const s = st();
+  const session = s.session;
+  if (!session || !s.slide) return;
+  const base = session.name.replace(/\.[^.]+$/, '');
+  const progress = (done: number, of: number) => s.notify('info', `Exporting slide ${done} of ${of}…`);
+  try {
+    if (what === 'png') {
+      const n = session.ed.doc.slideParts().indexOf(s.slide) + 1;
+      download(await slidePng(session, s.slide), `${base} - Slide ${n}.png`, 'image/png');
+      s.notify('info', `Exported slide ${n} as a picture.`);
+    } else if (what === 'pngs') {
+      download(await slidesZip(session, progress), `${base} - slides.zip`, 'application/zip');
+      s.notify('info', `Exported ${session.ed.doc.slideParts().length} slides as pictures.`);
+    } else {
+      download(await deckPdf(session, progress), `${base}.pdf`, 'application/pdf');
+      s.notify('info', `Exported ${base}.pdf.`);
+    }
+  } catch (e) {
+    s.notify('error', `The export failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
 }
 
 /** The deck kept by autosave, if there is one to offer on the welcome screen. */

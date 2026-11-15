@@ -83,6 +83,11 @@ export function Ribbon({ extraTabs }: { extraTabs?: Partial<Record<Tab, React.Re
               <Btn icon="save" label="Save" wide disabled={!session} onClick={() => void act.saveFile()} testid="save-file" />
               <Btn icon="save" label="Save As…" wide disabled={!session} onClick={() => void act.saveFile(true)} testid="save-as" />
               <Btn icon="save" label="Save a copy" wide disabled={!session} onClick={() => void act.saveAndDownload()} testid="save" /></section>
+            <section className="group" aria-label="Export">
+              <Btn icon="file" label="Export PDF" wide disabled={!session} onClick={() => void act.exportAs('pdf')} testid="export-pdf" />
+              <Btn icon="image" label="Slide as PNG" wide disabled={!session} onClick={() => void act.exportAs('png')} testid="export-png" />
+              <Btn icon="image" label="All Slides as PNG" wide disabled={!session} onClick={() => void act.exportAs('pngs')} testid="export-pngs" />
+            </section>
             <section className="group"><Btn icon="lock" label={session?.password ? 'Change password…' : 'Encrypt with password…'} wide disabled={!session}
               onClick={() => window.dispatchEvent(new CustomEvent('ask-new-password'))} />
               {session?.password && <Btn label="Remove password" wide onClick={() => { session.password = null; useEditor.getState().notify('info', 'The next save is not encrypted.'); }} />}</section>
