@@ -4,7 +4,7 @@ import { describe, expect, test } from 'vitest';
 import { checkOrder, children, is, type SlideView } from '@pptx/model';
 import { parseXml, serializeElement, serializeXml } from '@pptx/xml';
 import {
-  addEffect, clicksOf, findPreset, listEffects, moveEffect, parseTiming, removeEffect, removeEffectsOf, sample, setEffectTiming, walk,
+  addEffect, clicksOf, findPreset, listEffects, moveEffect, parseTiming, removeEffect, removeEffectsOf, sample, setEffectTiming, setEffectTriggerShape, walk,
 } from '../src/index.ts';
 import { chartXml, picXml, renderSlide, shape, slideView, slideXml, spXml } from './helpers.ts';
 
@@ -178,3 +178,80 @@ describe('round trip', () => {
     expect(parseXml(serializeXml(doc)).root.local).toBe('sld');
   });
 });
+
+describe('setEffectTriggerShape', () => {
+  const where = (v: SlideView) => listEffects(v).map(e => [e.index, e.trigger, e.triggerShape, e.spid, e.name]);
+
+  test('an effect of the slide\'s sequence moves to the sequence a shape\'s click starts, made for it', () => {
+    const { view } = slide();
+    addEffect(view, 2, fade);
+    addEffect(view, 3, fly, { trigger: 'after' });
+    setEffectTriggerShape(view, 1, 4);
+    expect(where(view)).toEqual([[0, 'click', undefined, 2, 'Fade'], [1, 'click', 4, 3, 'Fly In']]);
+    const xml = serializeElement(view.timing!);
+    expect(xml).toContain('nodeType="interactiveSeq"><p:stCondLst><p:cond evt="onClick" delay="0"><p:tgtEl><p:spTgt spid="4"/></p:tgtEl></p:cond></p:stCondLst>');
+    expect(xml.match(/nodeType="interactiveSeq"/g)?.length).toBe(1);
+    expect(clicksOf(view)).toBe(1);                                       // only the fade waits for a click of the slide now
+    expectWellFormed(view);
+  });
+
+  test('a second effect joins the same shape\'s sequence at its end; another shape gets its own', () => {
+    const { view } = slide();
+    addEffect(view, 2, fade);
+    addEffect(view, 3, fade);
+    addEffect(view, 5, fadeOut);
+    setEffectTriggerShape(view, 0, 4);
+    setEffectTriggerShape(view, 0, 4);                                    // the next one, now first
+    expect(where(view)).toEqual([[0, 'click', undefined, 5, 'Fade'], [1, 'click', 4, 2, 'Fade'], [2, 'click', 4, 3, 'Fade']]);
+    setEffectTriggerShape(view, 2, 2);
+    expect(where(view).map(w => w[2])).toEqual([undefined, 4, 2]);
+    expect(serializeElement(view.timing!).match(/nodeType="interactiveSeq"/g)?.length).toBe(2);
+    expectWellFormed(view);
+  });
+
+  test('back to the slide\'s clicks: the effect ends the main sequence, and an emptied trigger sequence is removed', () => {
+    const { view } = slide();
+    addEffect(view, 2, fade);
+    addEffect(view, 3, fly, { triggerShape: 4, duration: 2000, delay: 250 });
+    setEffectTriggerShape(view, 1, undefined);
+    expect(where(view)).toEqual([[0, 'click', undefined, 2, 'Fade'], [1, 'click', undefined, 3, 'Fly In']]);
+    expect(serializeElement(view.timing!)).not.toContain('interactiveSeq');
+    expect(listEffects(view)[1]).toMatchObject({ duration: 2000, delay: 250 });   // its timing is its own
+    expect(clicksOf(view)).toBe(2);
+    expectWellFormed(view);
+  });
+
+  test('with the main sequence emptied, only the trigger\'s sequence is left; an effect that followed the moved one starts on a click', () => {
+    const { view } = slide();
+    addEffect(view, 2, fade);
+    addEffect(view, 3, fly, { trigger: 'with' });
+    setEffectTriggerShape(view, 0, 4);
+    expect(where(view)).toEqual([[0, 'click', undefined, 3, 'Fly In'], [1, 'click', 4, 2, 'Fade']]);
+    setEffectTriggerShape(view, 0, 4);
+    expect(where(view).map(w => w[2])).toEqual([4, 4]);
+    expect(serializeElement(view.timing!)).not.toContain('nodeType="mainSeq"');
+    expectWellFormed(view);
+  });
+
+  test('the same trigger again changes nothing; a shape that is not there, or an effect that is not, is an error', () => {
+    const { view } = slide();
+    addEffect(view, 2, fade, { triggerShape: 4 });
+    const before = timingXml(view);
+    setEffectTriggerShape(view, 0, 4);
+    expect(timingXml(view)).toBe(before);
+    expect(() => setEffectTriggerShape(view, 0, 99)).toThrow(/no shape 99/);
+    expect(() => setEffectTriggerShape(view, 7, 4)).toThrow(RangeError);
+    expect(timingXml(view)).toBe(before);
+  });
+
+  test('a triggered effect plays on its shape\'s click, not on the slide\'s', () => {
+    const { view } = slide();
+    addEffect(view, 2, fade);
+    setEffectTriggerShape(view, 0, 4);
+    const scene = renderSlide([shape(2, 0, 0, 1e6, 1e6), shape(4, 2e6, 0, 1e6, 1e6)]);
+    const timing = parseTiming(view.timing!);
+    expect(sample(timing, scene, { clicks: 5, ms: 5000 }).get(2)?.hidden).toBe(true);            // slide clicks do not show it
+    expect(sample(timing, scene, { clicks: 0, ms: 0, triggers: [{ spid: 4, ms: 2000 }] }).get(2)?.hidden ?? false).toBe(false);
+  });
+});
+

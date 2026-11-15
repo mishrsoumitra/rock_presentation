@@ -4,7 +4,7 @@ import {
   type TransitionSpec,
 } from '@pptx/anim';
 import {
-  addAnimation, compound, moveAnimation, removeAnimation, setAnimationTiming, setSlideTransition, setTransitionOnAll, type Command,
+  addAnimation, compound, moveAnimation, removeAnimation, setAnimationTiming, setShapeAnimationTrigger, setSlideTransition, setTransitionOnAll, type Command,
 } from '@pptx/editor-core';
 import { ShapeView } from '@pptx/model';
 import { useEditor } from '../state/store.ts';
@@ -179,6 +179,18 @@ export function AnimationsTab() {
           <input type="number" min="0" step="0.25" disabled={!first} value={seconds(first?.delay)} aria-label="Animation delay in seconds"
             onChange={e => { const v = Number(e.target.value); if (v >= 0) retime({ delay: Math.round(v * 1000) }); }} />
         </label>
+        <Menu label="Trigger" testid="animation-trigger">{close => {
+          // what starts the selected shape's effects: the slide's clicks in order, or a click on one shape
+          const shapes = s && sel ? s.ed.doc.slide(sel.part).shapes : [];
+          const set = (spid: number | null) => { close(); if (s && sel) run(setShapeAnimationTrigger(s.ed, sel.part, sel.view.id, spid)); };
+          return (
+            <>
+              <MenuItem label="On Click Sequence" disabled={!first} checked={!!first && first.triggerShape === undefined} onClick={() => set(null)} />
+              <div className="colors-title">On Click of</div>
+              {shapes.map(sh => <MenuItem key={sh.id} label={sh.name || `Shape ${sh.id}`} disabled={!first} checked={first?.triggerShape === sh.id} onClick={() => set(sh.id)} />)}
+            </>
+          );
+        }}</Menu>
       </section>
       <section className="group">
         <Btn icon="anim" label="Animation Pane" wide active={pane === 'animation'} onClick={() => useEditor.setState({ pane: pane === 'animation' ? 'none' : 'animation' })} testid="animation-pane-toggle" />
@@ -215,7 +227,7 @@ export function AnimationPane() {
               <span className="num">{e.trigger === 'click' && e.triggerShape === undefined ? click : ''}</span>
               <span className={`mark ${e.presetClass ?? ''}`}>{CLASS_MARK[e.presetClass ?? ''] ?? '•'}</span>
               <span className="what">{e.name}{target ? `: ${target.name}` : ''}{e.paragraphs ? ` ¶${e.paragraphs.st + 1}` : ''}</span>
-              <span className="when">{e.trigger === 'click' ? '' : e.trigger === 'with' ? 'with' : 'after'}</span>
+              <span className="when" data-testid="effect-when">{e.triggerShape !== undefined ? `on click of ${ed.shape(part, e.triggerShape)?.name ?? 'a shape'}` : e.trigger === 'click' ? '' : e.trigger === 'with' ? 'with' : 'after'}</span>
               <span className="tools">
                 <button type="button" aria-label="Move earlier" disabled={i === 0} onClick={ev => { ev.stopPropagation(); run(moveAnimation(ed, part, i, i - 1)); }}>▲</button>
                 <button type="button" aria-label="Move later" disabled={i === effects.length - 1} onClick={ev => { ev.stopPropagation(); run(moveAnimation(ed, part, i, i + 1)); }}>▼</button>

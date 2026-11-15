@@ -1940,6 +1940,87 @@ describe('theme colours and fonts', () => {
   }, 60_000);
 });
 
+describe('animation triggers', () => {
+  /** The slide's effects: the shape each animates and the shape whose click starts it (null: the slide's clicks). */
+  const animModule = `/@fs${join(process.cwd(), 'packages/anim/src/index.ts')}`;
+  const effects = () => page.evaluate(`import(${JSON.stringify(animModule)}).then(anim => {
+    const s = window.__editor.getState();
+    const ed = s.session.ed;
+    return anim.listEffects(ed.slide(s.slide)).map(e => ({ shape: ed.shape(s.slide, e.spid)?.name, trigger: e.triggerShape === undefined ? null : ed.shape(s.slide, e.triggerShape)?.name, name: e.name }));
+  })`) as Promise<{ shape: string; trigger: string | null; name: string }[]>;
+  /** A rectangle that fades in, and an oval beside it; the rectangle is left selected with the Animations tab showing. */
+  async function fadingBox(): Promise<void> {
+    await drawShape('ellipse', 7000000, 4600000, 1400000, 1400000);
+    await drawShape('rect', 2000000, 4600000, 1400000, 1400000);
+    await page.getByRole('tab', { name: 'Animations' }).click();
+    await page.getByTestId('animation-gallery').click();
+    await page.locator('[data-testid="effect-gallery"] [data-effect="entr:10"]').click();
+  }
+  async function trigger(item: string): Promise<void> {
+    await page.getByTestId('animation-trigger').click();
+    await page.locator('.menu-panel').getByRole('menuitemradio', { name: item, exact: true }).click();
+  }
+  /** Is the middle of the rectangle painted (in the show's canvas)? Its fill is the theme's first accent. */
+  const boxShown = () => page.evaluate(() => {
+    const c = document.querySelector('[data-testid="presenter"] canvas') as HTMLCanvasElement;
+    const size = (window as never as { __editor: { getState(): { session: { ed: { doc: { presentation: { slideSize: { cx: number; cy: number } } } } } } } }).__editor.getState().session.ed.doc.presentation.slideSize;
+    const d = c.getContext('2d')!.getImageData(Math.round((2700000 / size.cx) * c.width), Math.round((5300000 / size.cy) * c.height), 1, 1).data;
+    return d[2]! > 150 && d[0]! < 120;
+  });
+
+  test('Trigger > On Click of a shape moves the selected shape\'s effect to that shape\'s clicks; the pane and the menu say so; undo restores', async () => {
+    await fadingBox();
+    expect(await effects()).toEqual([{ shape: 'Rectangle 4', trigger: null, name: 'Fade' }]);
+    expect(await ticked('animation-trigger')).toEqual(['On Click Sequence']);
+    await trigger('Oval 3');
+    expect(await effects()).toEqual([{ shape: 'Rectangle 4', trigger: 'Oval 3', name: 'Fade' }]);
+    expect(await ticked('animation-trigger')).toEqual(['Oval 3']);
+    expect(await state<string>('return s.session.ed.log.undoLabel;')).toBe('Animation Trigger');
+    await page.getByTestId('animation-pane-toggle').click();
+    expect(await page.getByTestId('animation-pane').getByTestId('effect-when').allInnerTexts()).toEqual(['on click of Oval 3']);
+    expect(await page.getByTestId('animation-pane').locator('.num').allInnerTexts()).toEqual(['']);   // no click number: it is not in the slide's sequence
+
+    await trigger('On Click Sequence');
+    expect(await effects()).toEqual([{ shape: 'Rectangle 4', trigger: null, name: 'Fade' }]);
+    await page.getByTestId('canvas').click({ position: { x: 5, y: 5 } });
+    await page.keyboard.press('Control+z');
+    expect((await effects())[0]!.trigger).toBe('Oval 3');
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('every effect on the shape takes the trigger, and it is in the saved file', async () => {
+    await fadingBox();
+    await page.getByRole('button', { name: 'Add Animation' }).click();
+    await page.locator('[data-testid="effect-gallery"] [data-effect="exit:10"]').click();
+    expect((await effects()).map(e => e.trigger)).toEqual([null, null]);
+    await trigger('Oval 3');
+    expect((await effects()).map(e => e.trigger)).toEqual(['Oval 3', 'Oval 3']);
+    const ed = await saved();
+    const xml = new TextDecoder().decode(ed.pkg.getPart(ed.doc.slideParts()[0]!)!.bytes);
+    expect(xml).toMatch(/nodeType="interactiveSeq"><p:stCondLst><p:cond evt="onClick" delay="0"><p:tgtEl><p:spTgt spid="4"\/>/);    // the oval: id 4, named Oval 3
+    expect(xml).not.toContain('nodeType="mainSeq"');
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('in the slide show the effect waits for a click on its trigger shape, and plays when it comes', async () => {
+    await fadingBox();
+    await trigger('Oval 3');
+    await page.getByRole('tab', { name: 'Slide Show' }).click();
+    await page.getByRole('button', { name: 'From Beginning' }).click();
+    await page.getByTestId('presenter').waitFor();
+    await expect.poll(async () => (await page.locator('[data-testid="presenter"] canvas').count()) > 0).toBe(true);
+    await page.waitForTimeout(300);
+    expect(await boxShown()).toBe(false);                                 // an entrance not yet played: hidden
+    const canvas = (await page.locator('[data-testid="presenter"] canvas').boundingBox())!;
+    const size = await state<{ cx: number; cy: number }>('return s.session.ed.doc.presentation.slideSize;');
+    await page.mouse.click(canvas.x + (7700000 / size.cx) * canvas.width, canvas.y + (5300000 / size.cy) * canvas.height);   // on the oval
+    await expect.poll(boxShown, { timeout: 5000 }).toBe(true);
+    expect(await page.getByTestId('presenter').count()).toBe(1);          // the click played the effect; the show did not move on
+    await page.keyboard.press('Escape');
+    expect(errors).toEqual([]);
+  }, 60_000);
+});
+
 describe('equations', () => {
   const dialog = () => page.getByTestId('equation-dialog');
   const selected = () => page.evaluate(`import('/src/ui/actions.ts').then(a => a.selectedEquation() ?? null)`) as Promise<string | null>;

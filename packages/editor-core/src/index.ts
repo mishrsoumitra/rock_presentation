@@ -41,7 +41,7 @@ export {
   attachments, connectionSites, connectorEnds, frameBetween, isConnector, nearestSite, rerouted, setConnectorEnds, type Attachment, type Point, type Site,
 } from './connectors.ts';
 export { colorXml, fillColorOf, setFill, setFillTransparency, setGradientFill, setLine, setShadow, SHADOWS, type GradientSpec, type LineSpec } from './format.ts';
-export { addAnimation, moveAnimation, removeAnimation, setAnimationTiming, setSlideTransition, setTransitionOnAll } from './animation.ts';
+export { addAnimation, moveAnimation, removeAnimation, setAnimationTiming, setAnimationTrigger, setShapeAnimationTrigger, setSlideTransition, setTransitionOnAll } from './animation.ts';
 export { prepareForSave } from './save.ts';
 export { collectOrphans, copyPart, dropUnreferenced, findMedia, freeName, hashMedia, mediaPart, referencedIds, relRefs } from './parts.ts';
 export { convertFlavour, element, fragment, idOf, nextShapeId, shapeIds, shapesOfUnit, twins, unitOf, unitsIn } from './xml.ts';
