@@ -6,6 +6,8 @@ corpus/.cache/
 corpus/local/
 # renders, reports and logs from the tools
 out/
+# the server's decks, their versions and renders when it runs here (npm start; DATA_DIR defaults to ./data)
+data/
 # build output: the editor (apps/web/dist) and the server's render page (apps/server/dist)
 dist/
 *.tsbuildinfo

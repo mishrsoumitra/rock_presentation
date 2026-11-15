@@ -37,7 +37,7 @@ export async function buildServer(input: ConfigInput = {}): Promise<FastifyInsta
   const pool = new WorkerPool(config.workers);
   const renderer = config.render.pages > 0 ? new Renderer(config.render, config.limits) : undefined;
   const renders = new LocalJobQueue(config.render.pages, config.render.queue);
-  const services: Services = { config, store, pool, renderer, renders };
+  const services: Services = { config, store, pool, renderer, renders, web };
 
   const app = Fastify({
     logger: config.logLevel === 'silent' ? false : { level: config.logLevel },

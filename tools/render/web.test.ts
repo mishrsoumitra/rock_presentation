@@ -308,9 +308,10 @@ describe('the editor app', () => {
     await page.getByTestId('canvas').waitFor();
     await page.getByRole('tab', { name: 'File' }).click();
     await page.locator('input[type=file][accept^=".pptx"]').first().setInputFiles(file);
-    rmSync(dir, { recursive: true, force: true });
     await page.waitForFunction(() => (globalThis as unknown as { __editor: { getState(): { session?: { name: string } } } }).__editor.getState().session?.name === 'big.pptx', null, { timeout: ci ? 150_000 : 60_000 })
       .catch(async e => { throw new Error(`${e}; app says: ${await state<string>('return JSON.stringify(s.message);')}`); });
+    // only now: the browser reads the file when the app asks for it, and a file deleted first is a NotFoundError in the page
+    rmSync(dir, { recursive: true, force: true });
     const firstFrame = await page.evaluate(() => new Promise<number>(resolve => requestAnimationFrame(() => requestAnimationFrame(() =>
       resolve(performance.now() - performance.getEntriesByName('open-start').at(-1)!.startTime)))));
     expect(await slideCount()).toBe(300);
@@ -431,8 +432,8 @@ describe('the editor app', () => {
     await page.getByTestId('canvas').waitFor();
     await page.getByRole('tab', { name: 'File' }).click();
     await page.locator('input[type=file][accept^=".pptx"]').first().setInputFiles(file);
-    rmSync(dir, { recursive: true, force: true });
     await page.waitForFunction(() => (globalThis as unknown as { __editor: { getState(): { session?: { name: string } } } }).__editor.getState().session?.name === 'forty.pptx');
+    rmSync(dir, { recursive: true, force: true });    // after the open: the browser reads the file only when the app asks for it
     expect(await slideCount()).toBe(40);
     /** Whether the current slide's tile lies wholly inside the panel's box (what scrolls out of it is clipped). */
     const currentInView = () => page.evaluate(() => {

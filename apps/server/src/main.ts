@@ -3,17 +3,22 @@
 //   DATA_DIR=/var/lib/pptx PORT=3000 node apps/server/src/main.ts
 //
 // See configFromEnv in src/config.ts for every variable. Shutting down stops taking requests, lets those in flight
-// finish, then closes the worker threads and Chromium; a second signal, or 20 s, forces the exit.
+// finish, then closes the worker threads and Chromium; a second signal a second or more later, or 20 s, forces the
+// exit. (Within a second it is the same Ctrl-C: the terminal sends it to every process in the group, and npm start
+// then forwards the one it got to the server as well.)
 import { buildServer } from './app.ts';
 import { configFromEnv } from './config.ts';
 
 const config = configFromEnv(process.env);
 const app = await buildServer(config);
 
-let stopping = false;
+let stopping: number | undefined;   // when the first signal came
 async function stop(signal: string): Promise<void> {
-  if (stopping) process.exit(1);
-  stopping = true;
+  if (stopping !== undefined) {
+    if (Date.now() - stopping >= 1000) process.exit(1);
+    return;
+  }
+  stopping = Date.now();
   app.log.info({ signal }, 'shutting down');
   setTimeout(() => {
     app.log.error('shutdown took too long; exiting');
