@@ -17,6 +17,7 @@ export {
 } from './text.ts';
 export { cropPicture, insertPicture, naturalSize, prepareImage, prepareSvg, replacePicture, retarget, type ImageData, type SvgImage } from './pictures.ts';
 export { addSlide, applyLayout, deleteSlide, duplicateSlide, moveSlide, setBackground, setSlideHidden } from './slides.ts';
+export { notesText, setNotes } from './notes.ts';
 export { importMasters, partText, prepareTemplate } from './templates.ts';
 export { lightnessClass, STANDARD_COLORS, themePalette, type PaletteColumn, type Swatch } from './palette.ts';
 export { setSlideSize, type ScaleMode } from './slide-size.ts';

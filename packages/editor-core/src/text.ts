@@ -340,9 +340,9 @@ export function deleteText(ed: Editor, part: string, txBody: XmlElement, at: Tex
 }
 
 /** Replace all text with plain text, keeping the first paragraph's and first run's formatting. */
-export function replaceText(ed: Editor, part: string, txBody: XmlElement, text: string): Command {
+export function replaceText(ed: Editor, part: string, txBody: XmlElement, text: string, options: TextOptions = {}): Command {
   return ed.edit({
-    label: 'Replace Text', parts: [part], scope: () => [txBody],
+    label: options.label ?? 'Replace Text', parts: [part], scope: () => [options.scope ?? txBody], ...(options.coalesceKey ? { coalesceKey: options.coalesceKey } : {}),
     apply: () => {
       ensureParagraph(ed, txBody);
       const ps = paragraphs(txBody);
@@ -356,6 +356,7 @@ export function replaceText(ed: Editor, part: string, txBody: XmlElement, text: 
         }
         pos = { p: pos.p, offset: insertInParagraph(ed, paragraphs(txBody)[pos.p]!, pos.offset, line) };
       });
+      options.after?.();
     },
   });
 }
