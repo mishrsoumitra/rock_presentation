@@ -1940,6 +1940,81 @@ describe('theme colours and fonts', () => {
   }, 60_000);
 });
 
+describe('sections', () => {
+  /** The panel's sections as "Name (count): slide numbers shown" lines; a folded section shows no numbers. */
+  const panel = () => page.locator('aside.slides [data-testid="section"]').evaluateAll(els => els.map(e => {
+    const name = e.querySelector('.section-name')?.textContent ?? '(renaming)';
+    const count = e.querySelector('.section-count')!.textContent;
+    const shown = [...e.querySelectorAll('.thumb')].map(t => t.getAttribute('data-testid')!.replace('thumb-', '')).join(' ');
+    return `${name} (${count}): ${shown}`;
+  }));
+  const thumbMenu = async (n: number, item: string) => { await page.getByTestId(`thumb-${n}`).click({ button: 'right' }); await page.getByTestId(item).click(); };
+  async function fiveSlides(): Promise<void> {
+    for (let i = 0; i < 4; i++) await page.getByTestId('new-slide').click();
+  }
+
+  test('Add Section from a slide\'s menu starts a section there; headings show names and counts; a double click renames', async () => {
+    await fiveSlides();
+    expect(await panel()).toEqual([]);                                   // no sections: just slides
+    await thumbMenu(3, 'menu-add-section');
+    expect(await panel()).toEqual(['Default Section (2): 1 2', 'Untitled Section (3): 3 4 5']);
+    expect(await state<string>('return s.session.ed.log.undoLabel;')).toBe('Add Section');
+
+    await page.locator('aside.slides .section-name', { hasText: 'Untitled Section' }).dblclick();
+    await page.getByTestId('section-rename').fill('Results');
+    await page.keyboard.press('Enter');
+    expect(await panel()).toEqual(['Default Section (2): 1 2', 'Results (3): 3 4 5']);
+    // Escape and an empty name keep the old one; typing a name never deletes a slide
+    await page.locator('aside.slides .section-name', { hasText: 'Results' }).dblclick();
+    await page.getByTestId('section-rename').fill('');
+    await page.getByTestId('section-rename').press('Backspace');
+    await page.keyboard.press('Enter');
+    await page.locator('aside.slides .section-name', { hasText: 'Results' }).dblclick();
+    await page.getByTestId('section-rename').fill('Thrown away');
+    await page.keyboard.press('Escape');
+    expect(await panel()).toEqual(['Default Section (2): 1 2', 'Results (3): 3 4 5']);
+
+    await thumbMenu(5, 'menu-add-section');
+    expect(await panel()).toEqual(['Default Section (2): 1 2', 'Results (2): 3 4', 'Untitled Section (1): 5']);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('a section folds shut and opens again; removing it keeps its slides; new slides join the section they are added in', async () => {
+    await fiveSlides();
+    await thumbMenu(1, 'menu-add-section');
+    await thumbMenu(4, 'menu-add-section');
+    expect(await panel()).toEqual(['Untitled Section (3): 1 2 3', 'Untitled Section (2): 4 5']);
+
+    await page.getByTestId('section-fold').first().click();
+    expect(await panel()).toEqual(['Untitled Section (3): ', 'Untitled Section (2): 4 5']);
+    expect(await state<number>('return s.session.ed.doc.slideParts().length;')).toBe(5);       // folded, not deleted
+    await page.getByTestId('section-fold').first().click();
+    expect(await panel()).toEqual(['Untitled Section (3): 1 2 3', 'Untitled Section (2): 4 5']);
+
+    // a new slide after slide 2 is in the first section
+    await page.getByTestId('thumb-2').click();
+    await page.getByTestId('new-slide').click();
+    expect(await panel()).toEqual(['Untitled Section (4): 1 2 3 4', 'Untitled Section (2): 5 6']);
+
+    await page.getByTestId('section-head').nth(1).hover();
+    await page.getByTestId('section-remove').nth(1).click();
+    expect(await panel()).toEqual(['Untitled Section (6): 1 2 3 4 5 6']);
+    expect(await state<string>('return s.session.ed.log.undoLabel;')).toBe('Remove Section');
+    await thumbMenu(1, 'menu-remove-sections');
+    expect(await panel()).toEqual([]);
+    expect(await page.locator('aside.slides .thumb').count()).toBe(6);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('sections are in the saved file with their names and slides', async () => {
+    await fiveSlides();
+    await thumbMenu(3, 'menu-add-section');
+    const ed = await saved();
+    expect(ed.doc.presentation.sections.map(sec => [sec.name, sec.slideIds.length])).toEqual([['Default Section', 2], ['Untitled Section', 3]]);
+    expect(errors).toEqual([]);
+  }, 60_000);
+});
+
 describe('slide master view', () => {
   const openMaster = async () => { await page.getByRole('tab', { name: 'View' }).click(); await page.getByTestId('view-master').click(); await page.getByTestId('master-panel').waitFor(); await page.getByRole('tab', { name: 'Home' }).click(); };
   const pixel = async (x: number, y: number) => {
@@ -2503,8 +2578,8 @@ describe('the right-click menu', () => {
 
     await thumbMenu(1);
     expect(await menu().getAttribute('data-kind')).toBe('thumb');
-    expect(await labels()).toEqual(['Cut Slide', 'Copy Slide', 'Paste Slide', 'New Slide', 'Duplicate Slide', 'Delete Slide', 'Hide Slide', 'Move Slide Up', 'Move Slide Down']);
-    expect(await disabled()).toEqual(['Cut Slide', 'Paste Slide', 'Delete Slide', 'Move Slide Up', 'Move Slide Down']);
+    expect(await labels()).toEqual(['Cut Slide', 'Copy Slide', 'Paste Slide', 'New Slide', 'Duplicate Slide', 'Delete Slide', 'Hide Slide', 'Add Section', 'Remove All Sections', 'Move Slide Up', 'Move Slide Down']);
+    expect(await disabled()).toEqual(['Cut Slide', 'Paste Slide', 'Delete Slide', 'Remove All Sections', 'Move Slide Up', 'Move Slide Down']);
     await page.getByTestId('menu-new-slide').click();
     await thumbMenu(2);
     await page.getByTestId('menu-duplicate-slide').click();
@@ -2514,7 +2589,7 @@ describe('the right-click menu', () => {
     expect(await current()).toBe(3);
     await thumbMenu(1);
     expect(await current()).toBe(1);
-    expect(await disabled()).toEqual(['Paste Slide', 'Move Slide Up']);
+    expect(await disabled()).toEqual(['Paste Slide', 'Remove All Sections', 'Move Slide Up']);
     await page.getByTestId('menu-slide-down').click();
     expect(await order()).toEqual(['2', '1', '3']);
     expect(await current()).toBe(2);

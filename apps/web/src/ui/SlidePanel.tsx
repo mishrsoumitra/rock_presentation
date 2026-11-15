@@ -1,7 +1,7 @@
 // apps/web/src/ui/SlidePanel.tsx  -- slide thumbnails, in the side panel and in grid view: pick, reorder, delete, duplicate
 import { memo, useEffect, useRef, useState, type ClipboardEvent } from 'react';
 import { ANIM_UNDERSTOOD } from '@pptx/anim';
-import { commentCount } from '@pptx/editor-core';
+import { commentCount, removeAllSections, removeSection, renameSection, sections, type Section } from '@pptx/editor-core';
 import { useEditor } from '../state/store.ts';
 import { deleteCurrentSlide, duplicateCurrentSlide, masterPages, moveCurrentSlide, copyCurrentSlide, cutCurrentSlide, pasteSlideClip } from './actions.ts';
 
@@ -206,11 +206,13 @@ export function SlideGrid() {
 
 export function SlidePanel() {
   const session = useEditor(s => s.session);
+  const folded = useEditor(s => s.folded);
   // the list of slides changes with the presentation part (slides added, removed, moved), not with their content
   useEditor(s => (s.session ? s.session.ed.versionOf(s.session.ed.doc.mainPart) : -1));
   if (!session) return <aside className="slides" />;
   const doc = session.ed.doc;
   const parts = doc.slideParts();
+  const secs = sections(session.ed);
   return (
     <aside
       className="slides" tabIndex={0} aria-label="Slides" {...slideClipboard(parts)}
@@ -227,7 +229,48 @@ export function SlidePanel() {
         }
       }}
     >
-      {parts.map((p, i) => <Thumb key={p} part={p} index={i} />)}
+      {secs.length === 0
+        ? parts.map((p, i) => <Thumb key={p} part={p} index={i} />)
+        : secs.map(sec => (
+          <div key={sec.id || sec.index} className="section" data-testid="section" data-name={sec.name}>
+            <SectionHead section={sec} folded={folded.includes(sec.id)} />
+            {!folded.includes(sec.id) && sec.slides.map(p => <Thumb key={p} part={p} index={parts.indexOf(p)} />)}
+          </div>
+        ))}
     </aside>
   );
+}
+
+/**
+ * A section's heading in the slide panel: its name and how many slides it has. The arrow folds the section shut
+ * (its slides are only hidden from the panel); a double click on the name renames it; the cross removes the
+ * section and keeps its slides.
+ */
+function SectionHead({ section, folded }: { section: Section; folded: boolean }) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const st = useEditor.getState;
+  const ed = st().session!.ed;
+  const commit = () => {
+    const name = (draft ?? '').trim();
+    if (name && name !== section.name) st().run(renameSection(ed, section.index, name));
+    setDraft(null);
+  };
+  const fold = () => useEditor.setState(s => ({ folded: folded ? s.folded.filter(id => id !== section.id) : [...s.folded, section.id] }));
+  return (
+    <div className="section-head" data-testid="section-head">
+      <button type="button" className="section-fold" aria-expanded={!folded} aria-label={`${folded ? 'Expand' : 'Collapse'} ${section.name}`} onClick={fold} data-testid="section-fold">{folded ? '▸' : '▾'}</button>
+      {draft === null
+        ? <span className="section-name" title="Double-click to rename" onDoubleClick={() => setDraft(section.name)}>{section.name || 'Untitled Section'}</span>
+        : <input className="section-rename" autoFocus aria-label="Section name" value={draft} data-testid="section-rename" onChange={e => setDraft(e.target.value)} onBlur={commit}
+            onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter') commit(); else if (e.key === 'Escape') setDraft(null); }} />}
+      <span className="section-count">{section.slides.length}</span>
+      <button type="button" className="section-remove" aria-label={`Remove section ${section.name}`} title="Remove section (its slides stay)" onClick={() => st().run(removeSection(ed, section.index))} data-testid="section-remove">×</button>
+    </div>
+  );
+}
+
+/** Remove every section of the deck (the menu's Remove All Sections). */
+export function removeSections(): void {
+  const s = useEditor.getState();
+  if (s.session) s.run(removeAllSections(s.session.ed));
 }

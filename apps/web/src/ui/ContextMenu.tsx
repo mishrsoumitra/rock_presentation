@@ -3,6 +3,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ShapeView } from '@pptx/model';
 import { useEditor, type EditorState } from '../state/store.ts';
 import * as act from './actions.ts';
+import { sections } from '@pptx/editor-core';
+import { removeSections } from './SlidePanel.tsx';
 import * as tables from './tables.ts';
 import { refocusText } from './widgets.tsx';
 
@@ -33,6 +35,9 @@ export function menuEntries(s: EditorState): MenuEntry[] {
       { label: 'Paste Slide', run: act.pasteSlideClip, disabled: !s.slideClip, keys: 'Ctrl+V', testid: 'menu-paste-slide' },
       'separator',
       ...slideEntries, 'separator',
+      { label: 'Add Section', run: act.addSectionHere, testid: 'menu-add-section' },
+      { label: 'Remove All Sections', run: removeSections, disabled: sections(ed).length === 0, testid: 'menu-remove-sections' },
+      'separator',
       { label: 'Move Slide Up', run: () => act.moveCurrentSlide(index - 1), disabled: index <= 0, testid: 'menu-slide-up' },
       { label: 'Move Slide Down', run: () => act.moveCurrentSlide(index + 1), disabled: index >= slides.length - 1, testid: 'menu-slide-down' },
     ];

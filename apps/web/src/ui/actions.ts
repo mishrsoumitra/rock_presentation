@@ -2,7 +2,7 @@
 import {
   addSlide, align, applyLayout, compound, copyShapes, copySlide, pasteSlide, cropPicture, deleteShapes, deleteSlide, distribute, duplicateShapes, duplicateSlide, flip, group, importMasters, replacePicture,
   insertPicture, insertShape, insertTable, insertTextBox, moveBy, ROW_HEIGHT, moveSlide, pasteShapes, prepareImage, prepareSvg, prepareTemplate, rotateQuarter,
-  applyBackgroundToAll, fillColorOf, setFill, setSlideBackground, setThemeColors, setThemeFonts, themeOfSlide, themeSchemes, setFillTransparency, setGradientFill, setLine, setPictureFill, setShadow, setSlideHidden, setSlideSize, setTransforms, ungroup, zOrder,
+  addSection, applyBackgroundToAll, fillColorOf, setFill, setSlideBackground, setThemeColors, setThemeFonts, themeOfSlide, themeSchemes, setFillTransparency, setGradientFill, setLine, setPictureFill, setShadow, setSlideHidden, setSlideSize, setTransforms, ungroup, zOrder,
   type Alignment, type BackgroundSpec, type ColorScheme, type ColorSpec, type FontScheme, type LineSpec,
   type ScaleMode, type ZOrder,
 } from '@pptx/editor-core';
@@ -532,6 +532,13 @@ export async function pictureFillSelection(file: File): Promise<void> {
 export function outlineSelection(line: LineSpec): void {
   const c = ctx();
   if (c?.views.length) c.s.run(setLine(c.ed, c.part, c.views, line));
+}
+
+/** Start a section at the current slide. */
+export function addSectionHere(): void {
+  const s = st();
+  if (!s.session || !s.slide || s.view === 'master') return;
+  s.run(addSection(s.session.ed, s.slide));
 }
 
 /**

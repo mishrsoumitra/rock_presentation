@@ -111,6 +111,15 @@ select { height: 28px; border: 1px solid var(--line); border-radius: var(--radiu
 .ruler-v { border-right: 1px solid var(--line); }
 .ruler-corner { position: absolute; top: 0; left: 0; width: 18px; height: 18px; background: var(--panel); border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
 
+/* sections in the slide panel */
+.section-head { display: flex; align-items: center; gap: 4px; padding: 6px 2px 2px 4px; font-size: 12px; font-weight: 600; }
+.section-fold, .section-remove { border: 0; background: none; cursor: pointer; padding: 0 2px; color: var(--muted); }
+.section-remove { visibility: hidden; }
+.section-head:hover .section-remove, .section-remove:focus-visible { visibility: visible; }
+.section-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: default; }
+.section-rename { flex: 1; min-width: 0; height: 20px; border: 1px solid var(--focus); border-radius: var(--radius); padding: 0 4px; background: var(--panel); font-weight: 400; }
+.section-count { color: var(--muted); font-weight: 400; }
+
 /* master view's list of masters and layouts */
 .master-thumb { flex-direction: column; align-items: flex-start; gap: 2px; }
 .master-thumb.layout { margin-left: 24px; }
