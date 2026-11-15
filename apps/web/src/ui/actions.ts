@@ -1,7 +1,7 @@
 // apps/web/src/ui/actions.ts  -- what the ribbon and the keyboard do: commands on the current selection
 import {
   addSlide, align, applyLayout, compound, copyShapes, cropPicture, deleteShapes, deleteSlide, distribute, duplicateShapes, duplicateSlide, flip, group, importMasters, replacePicture,
-  insertPicture, insertShape, insertTextBox, moveBy, moveSlide, pasteShapes, prepareImage, prepareSvg, prepareTemplate, rotateQuarter,
+  insertPicture, insertShape, insertTable, insertTextBox, moveBy, ROW_HEIGHT, moveSlide, pasteShapes, prepareImage, prepareSvg, prepareTemplate, rotateQuarter,
   setBackground, setFill, setLine, setSlideHidden, setSlideSize, setTransforms, ungroup, zOrder, type Alignment, type ColorSpec, type LineSpec,
   type ScaleMode, type ZOrder,
 } from '@pptx/editor-core';
@@ -76,6 +76,21 @@ export function insertTextBoxHere(): void {
   c.s.run(r.command);
   const els = inserted(r.id);
   if (els[0]) useEditor.setState({ selection: els, text: { part: c.part, el: els[0], caret: { p: 0, offset: 0 }, anchor: { p: 0, offset: 0 } } });
+}
+
+/**
+ * Insert a table in the middle of the slide, two thirds of its width, as PowerPoint places one on a slide with no
+ * content placeholder to take it.
+ */
+export function insertTableHere(rows: number, cols: number): void {
+  const c = ctx();
+  if (!c) return;
+  const size = c.ed.doc.presentation.slideSize;
+  const w = Math.round((size.cx * 2) / 3);
+  const r = insertTable(c.ed, c.part, rows, cols, { x: (size.cx - w) / 2, y: Math.max(0, (size.cy - rows * ROW_HEIGHT) / 2), w, h: rows * ROW_HEIGHT });
+  useEditor.setState({ text: null });
+  c.s.run(r.command);
+  c.s.select(inserted(r.id));
 }
 
 const EXT: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpeg', 'image/gif': 'gif', 'image/bmp': 'bmp', 'image/webp': 'webp', 'image/svg+xml': 'svg', 'image/tiff': 'tiff', 'image/x-emf': 'emf', 'image/x-wmf': 'wmf' };

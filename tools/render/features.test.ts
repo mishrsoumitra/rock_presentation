@@ -7,7 +7,7 @@ import { chromium, type Browser, type Page } from 'playwright';
 import { createServer, type ViteDevServer } from 'vite';
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest';
 import { OpcPackage } from '@pptx/opc';
-import { Editor, notesText } from '../../packages/editor-core/src/index.ts';
+import { cellText, Editor, notesText, tableOf, tableSize } from '../../packages/editor-core/src/index.ts';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 let server: ViteDevServer;
@@ -754,6 +754,90 @@ describe('the selection pane', () => {
 
     const ed = await saved();
     expect(ed.doc.slide(ed.doc.slideParts()[0]!).shapes.find(sh => sh.name === 'Rectangle 3')!.descr).toBe('A blue rectangle');
+    expect(errors).toEqual([]);
+  }, 60_000);
+});
+
+describe('tables', () => {
+  /** Insert a table of a size from the Insert tab's grid; it ends up selected, with the Home tab showing. */
+  async function insertTable(cols: number, rows: number): Promise<void> {
+    await page.getByRole('tab', { name: 'Insert' }).click();
+    await page.getByTestId('insert-table').click();
+    await page.locator(`[data-testid="table-grid"] [data-size="${cols}x${rows}"]`).click();
+    await page.getByRole('tab', { name: 'Home' }).click();
+    await frames();
+  }
+  /** Rows, columns and frame of the selected table. */
+  const table = () => state<{ rows: number; cols: number; x: number; y: number; cx: number; cy: number; name: string }>(`
+    const el = s.selection[0];
+    const find = (e, n) => e.children.find(c => c.kind === 'element' && c.local === n);
+    const tbl = find(find(find(el, 'graphic'), 'graphicData'), 'tbl');
+    const x = find(el, 'xfrm'), off = find(x, 'off'), ext = find(x, 'ext');
+    const num = (e, n) => Number(e.attrs.find(a => a.local === n).value);
+    return { rows: tbl.children.filter(c => c.local === 'tr').length, cols: find(tbl, 'tblGrid').children.filter(c => c.local === 'gridCol').length,
+      x: num(off, 'x'), y: num(off, 'y'), cx: num(ext, 'cx'), cy: num(ext, 'cy'), name: find(find(el, 'nvGraphicFramePr'), 'cNvPr').attrs.find(a => a.local === 'name').value };`);
+
+  test('Insert > Table: the grid says the size under the pointer, a click inserts that table in the middle of the slide', async () => {
+    await page.getByRole('tab', { name: 'Insert' }).click();
+    await page.getByTestId('insert-table').click();
+    expect(await page.getByTestId('table-grid-size').innerText()).toBe('Insert Table');
+    await page.locator('[data-testid="table-grid"] [data-size="4x3"]').hover();
+    expect(await page.getByTestId('table-grid-size').innerText()).toBe('4 x 3 Table');
+    expect(await page.locator('[data-testid="table-grid"] .on').count()).toBe(12);
+    await page.locator('[data-testid="table-grid"] [data-size="4x3"]').click();
+    expect(await page.getByTestId('table-grid').count()).toBe(0);         // picking closes the menu
+
+    const t = await table();
+    expect(t).toMatchObject({ rows: 3, cols: 4, name: 'Table 3', cx: 8128000, cy: 3 * 370840 });
+    expect(t.x).toBe((12192000 - 8128000) / 2);                          // centred on a 16:9 slide
+    expect(Math.abs(t.y + t.cy / 2 - 6858000 / 2)).toBeLessThan(2);
+    expect(await state<string>('return s.session.ed.log.undoLabel;')).toBe('Insert Table');
+
+    // the table is drawn: its header row is filled with the theme's accent colour
+    await frames();
+    const p = await slidePoint(t.x + 200000, t.y + 100000);
+    const px = await page.evaluate(([x, y]) => {
+      const c = document.querySelector('[data-testid="canvas"] canvas') as HTMLCanvasElement;
+      const r = c.getBoundingClientRect();
+      const d = c.getContext('2d')!.getImageData(Math.round((x - r.left) * (c.width / r.width)), Math.round((y - r.top) * (c.height / r.height)), 1, 1).data;
+      return [d[0], d[1], d[2]];
+    }, [p.x, p.y] as const);
+    expect(px).toEqual([0x44, 0x72, 0xc4]);                              // Office accent 1
+
+    await page.keyboard.press('Control+z');
+    expect(await state<number>('return s.session.ed.doc.slide(s.slide).shapes.length;')).toBe(2);
+    await page.keyboard.press('Control+y');
+    expect(await state<number>('return s.session.ed.doc.slide(s.slide).shapes.length;')).toBe(3);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('a table moves and resizes like any shape, its columns scaling with it, and is in the saved file', async () => {
+    await insertTable(2, 2);
+    const t = await table();
+    await page.keyboard.press('ArrowRight');
+    expect((await table()).x).toBe(t.x + 76200);
+    // resize through the store's own command path: the frame doubles in width
+    await state(`
+      const ed = s.session.ed; const v = ed.view(s.slide, s.selection[0]); const x = v.xfrm;
+      const find = (e, n) => e.children.find(c => c.kind === 'element' && c.local === n);
+      globalThis.__before = find(find(find(find(v.el, 'graphic'), 'graphicData'), 'tbl'), 'tblGrid').children.filter(c => c.local === 'gridCol').map(c => Number(c.attrs[0].value));`);
+    const br = await slidePoint(t.x + 76200 + t.cx, t.y + t.cy / 2);
+    await page.mouse.move(br.x, br.y);
+    await page.mouse.down();
+    await page.mouse.move(br.x + 100, br.y, { steps: 5 });
+    await page.mouse.up();
+    const after = await table();
+    expect(after.cx).toBeGreaterThan(t.cx);
+    const cols = await state<number[]>(`
+      const find = (e, n) => e.children.find(c => c.kind === 'element' && c.local === n);
+      return find(find(find(find(s.selection[0], 'graphic'), 'graphicData'), 'tbl'), 'tblGrid').children.filter(c => c.local === 'gridCol').map(c => Number(c.attrs[0].value));`);
+    expect(cols.reduce((a, b) => a + b, 0)).toBe(after.cx);              // the columns are what was resized
+
+    const ed = await saved();
+    const frame = ed.doc.slide(ed.doc.slideParts()[0]!).shapes.find(sh => sh.kind === 'graphicFrame')!;
+    expect(tableSize(tableOf(frame)!)).toEqual({ rows: 2, cols: 2 });
+    expect(cellText(tableOf(frame)!, 0, 0)).toBe('');
+    expect(ed.doc.tableStylesPart()).toBeDefined();
     expect(errors).toEqual([]);
   }, 60_000);
 });

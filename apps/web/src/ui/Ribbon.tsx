@@ -4,7 +4,7 @@ import { useEditor, type EditorState } from '../state/store.ts';
 import * as act from './actions.ts';
 import { BULLET_STYLES, bulletPatch, NUMBER_STYLES, numberSample } from './bullets.ts';
 import { clearFormatting, formatPara, formatText, formatTextBox, formattingHere } from './textActions.ts';
-import { Btn, ColorGrid, keepFocus, Menu, MenuItem, refocusText, ShapeGallery } from './widgets.tsx';
+import { Btn, ColorGrid, keepFocus, Menu, MenuItem, refocusText, ShapeGallery, TableGrid } from './widgets.tsx';
 
 const FONTS = ['Calibri', 'Calibri Light', 'Cambria', 'Arial', 'Times New Roman', 'Courier New', 'Aptos', 'Georgia', 'Verdana', 'Segoe UI'];
 const SIZES = [8, 9, 10, 10.5, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 40, 44, 48, 54, 60, 66, 72, 80, 88, 96];
@@ -207,6 +207,9 @@ export function Ribbon({ extraTabs }: { extraTabs?: Partial<Record<Tab, React.Re
         {tab === 'Insert' && (
           <>
             <section className="group"><LayoutMenu icon="plus" label="New Slide" onPick={p => act.newSlide(p)} /></section>
+            <section className="group">
+              <Menu icon="table" label="Table" testid="insert-table">{close => <TableGrid onPick={(r, c) => { close(); act.insertTableHere(r, c); }} />}</Menu>
+            </section>
             <section className="group">
               <FilePicker accept="image/png,image/jpeg,image/gif,image/bmp,image/webp,image/svg+xml,.emf,.wmf" onFile={f => void act.insertPictureFile(f)}>
                 {open => <Btn icon="image" label="Pictures" wide disabled={!session} onClick={open} testid="insert-picture" />}

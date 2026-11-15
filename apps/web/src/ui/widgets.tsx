@@ -22,6 +22,7 @@ const PATHS: Record<string, string> = {
   spacing: 'M4 8l4 8 4-8M14 8l3 8 3-8M3 21h18M3 19v4M21 19v4', lines: 'M10 5h11M10 12h11M10 19h11M5 4v16M3 6l2-2 2 2M3 18l2 2 2-2',
   anchor: 'M3 3h18M3 21h18M7 10h10M7 14h10', columns: 'M3 5h7M3 10h7M3 15h7M3 20h7M14 5h7M14 10h7M14 15h7M14 20h7',
   search: 'M10.5 17a6.5 6.5 0 1 1 0-13 6.5 6.5 0 0 1 0 13zM15.5 15.5L21 21',
+  table: 'M3 5h18v14H3zM3 10h18M3 14.5h18M9 5v14M15 5v14',
   lock: 'M6 11h12v10H6zM8 11V7a4 4 0 0 1 8 0v4', anim: 'M4 12h4l3-7 3 14 3-7h3', layout: 'M3 4h18v16H3zM3 9h18M9 9v11',
 };
 
@@ -136,6 +137,28 @@ export function PresetIcon({ prst, size = 22 }: { prst: string; size?: number })
     <svg width={size} height={size} viewBox={`-6 -6 ${w + 12} ${h + 12}`} aria-hidden="true">
       <path d={d} fill="none" stroke="currentColor" strokeWidth="5" strokeLinejoin="round" />
     </svg>
+  );
+}
+
+/**
+ * The table size picker: a grid of squares; the one under the pointer (or the keyboard focus) says how many columns
+ * and rows, and a click picks that size. Sizes are "columns x rows", as PowerPoint words them.
+ */
+export function TableGrid({ onPick, cols = 10, rows = 8 }: { onPick: (rows: number, cols: number) => void; cols?: number; rows?: number }) {
+  const [at, setAt] = useState<{ r: number; c: number } | null>(null);
+  return (
+    <div className="table-grid" data-testid="table-grid" onMouseLeave={() => setAt(null)}>
+      <div className="colors-title" data-testid="table-grid-size">{at ? `${at.c + 1} x ${at.r + 1} Table` : 'Insert Table'}</div>
+      <div className="table-grid-cells" style={{ gridTemplateColumns: `repeat(${cols}, 18px)` }}>
+        {Array.from({ length: rows * cols }, (_, i) => {
+          const r = Math.floor(i / cols), c = i % cols;
+          return (
+            <button key={i} type="button" className={`table-grid-cell${at && r <= at.r && c <= at.c ? ' on' : ''}`} aria-label={`${c + 1} columns by ${r + 1} rows`}
+              data-size={`${c + 1}x${r + 1}`} onMouseEnter={() => setAt({ r, c })} onFocus={() => setAt({ r, c })} onClick={() => onPick(r + 1, c + 1)} onMouseDown={keepFocus} />
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
