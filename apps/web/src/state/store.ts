@@ -7,6 +7,7 @@ import { OpcError, OpcPackage } from '@pptx/opc';
 import type { FontRegistry } from '@pptx/text';
 import type { XmlElement } from '@pptx/xml';
 import { autosave } from '../engine/autosave.ts';
+import { dueForAuto, versions } from '../engine/versions.ts';
 import { loadFonts, registerCssFonts } from '../engine/fonts.ts';
 import { ImageCache } from '../engine/images.ts';
 import { SceneCache } from '../engine/scene.ts';
@@ -22,7 +23,7 @@ export interface TextEditing { part: string; el: XmlElement; caret: TextPos; anc
  */
 export interface Cells { el: XmlElement; anchor: CellRef; focus: CellRef; editing: boolean; seed?: string; }
 
-export type Pane = 'none' | 'animation' | 'selection' | 'comments' | 'spelling';
+export type Pane = 'none' | 'animation' | 'selection' | 'comments' | 'spelling' | 'versions';
 
 export interface Session {
   ed: Editor;
@@ -79,6 +80,8 @@ export interface EditorState {
   pane: Pane;
   /** The right-click menu, where it was opened (window coordinates) and on what. */
   menu: { x: number; y: number; kind: 'shape' | 'slide' | 'thumb' } | null;
+  /** Counts changes to the kept versions, so the Version History pane reads them again. */
+  versionsTick: number;
   /** The Equation dialog is open: for the selected equation, or a new one. */
   equationEditing: boolean;
   /** The Header & Footer dialog is open. */
@@ -143,7 +146,7 @@ function fitted(s: Session, t: TextEditing | null): TextEditing | null {
 
 export const useEditor = create<EditorState>((set, get) => ({
   session: null, version: 0, edits: 0, savedEdits: 0, slide: null, selection: [], entered: null, text: null, cells: null, pending: null,
-  zoom: 'fit', drawing: null, mode: 'edit', presenterView: false, view: 'normal', folded: [], masterReturn: null, showRuler: false, showGuides: true, guides: { x: [], y: [] }, pane: 'none', finding: false, linking: false, chartEditing: false, footerEditing: false, equationEditing: false, menu: null, clipboard: null, clipId: null, slideClip: null, formatClip: null, painting: false, cropping: null, playing: null, pathDrawing: null, message: null, askPassword: null,
+  zoom: 'fit', drawing: null, mode: 'edit', presenterView: false, view: 'normal', folded: [], masterReturn: null, showRuler: false, showGuides: true, guides: { x: [], y: [] }, pane: 'none', finding: false, linking: false, chartEditing: false, footerEditing: false, equationEditing: false, versionsTick: 0, menu: null, clipboard: null, clipId: null, slideClip: null, formatClip: null, painting: false, cropping: null, playing: null, pathDrawing: null, message: null, askPassword: null,
 
   async open(bytes, name, password) {
     performance.mark('open-start');
@@ -274,6 +277,9 @@ export function markSaved(): void {
  * wait grows with the time a save takes, so a very large deck is not being written all the time.
  */
 let timer: ReturnType<typeof setTimeout> | undefined;
+/** The deck the automatic versions are being timed for, and when one was last kept (or the timing began). */
+let versionFor: Session | undefined;
+let versionAt = 0;
 let writing = false;
 let wait = 2500;
 /** Decks larger than this are not autosaved: writing one would stall the editor again and again. */
@@ -296,7 +302,16 @@ async function keep(): Promise<void> {
   try {
     const bytes = await s.save();
     // only when this is still the deck, and nothing saved it meanwhile
-    if (bytes && useEditor.getState().session === session && unsaved()) await autosave.put({ name: session.name, bytes, at: Date.now(), encrypted: !!session.password });
+    if (bytes && useEditor.getState().session === session && unsaved()) {
+      await autosave.put({ name: session.name, bytes, at: Date.now(), encrypted: !!session.password });
+      // and, every ten minutes of a deck being changed, a version to go back to
+      if (versionFor !== session) { versionFor = session; versionAt = Date.now(); }
+      else if (dueForAuto(versionAt, Date.now())) {
+        versionAt = Date.now();
+        const id = await versions.add({ deck: session.name, label: 'Autosaved', at: versionAt, bytes, encrypted: !!session.password, slides: session.ed.doc.slideParts().length, auto: true });
+        if (id !== undefined) useEditor.setState(x => ({ versionsTick: x.versionsTick + 1 }));
+      }
+    }
   } catch {
     // a deck that cannot be written now is tried again after the next change
   } finally {

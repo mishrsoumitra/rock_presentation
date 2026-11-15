@@ -4,6 +4,7 @@ import { useEditor } from './state/store.ts';
 import type { Autosaved } from './engine/autosave.ts';
 import { closeMasterView, discardAutosaved, newPresentation, openFile, recoverable, restoreAutosaved } from './ui/actions.ts';
 import { ChartDialog } from './ui/ChartDialog.tsx';
+import { VersionsPane } from './ui/VersionsPane.tsx';
 import { CommentsPane } from './ui/CommentsPane.tsx';
 import { ContextMenu } from './ui/ContextMenu.tsx';
 import { EquationDialog, FooterDialog, LinkDialog, NewPasswordDialog, OpenPasswordDialog, SlideSizeDialog } from './ui/Dialogs.tsx';
@@ -104,7 +105,7 @@ export function App() {
       <Ribbon extraTabs={{ Transitions: <TransitionsTab />, Animations: <AnimationsTab /> }} />
       <main className={`workspace${session && view === 'grid' ? ' grid-view' : session && pane !== 'none' ? ' with-pane' : ''}`}>
         {!session ? <Welcome /> : view === 'grid' ? <SlideGrid />
-          : <>{view === 'master' ? <MasterPanel /> : <SlidePanel />}<div className="editing"><SlideCanvas />{view !== 'master' && <NotesPane />}<FindBar /></div>{pane === 'animation' && <AnimationPane />}{pane === 'selection' && <SelectionPane />}{pane === 'comments' && <CommentsPane />}{pane === 'spelling' && <SpellingPane />}</>}
+          : <>{view === 'master' ? <MasterPanel /> : <SlidePanel />}<div className="editing"><SlideCanvas />{view !== 'master' && <NotesPane />}<FindBar /></div>{pane === 'animation' && <AnimationPane />}{pane === 'selection' && <SelectionPane />}{pane === 'comments' && <CommentsPane />}{pane === 'spelling' && <SpellingPane />}{pane === 'versions' && <VersionsPane />}</>}
       </main>
       <StatusBar />
       <ContextMenu />

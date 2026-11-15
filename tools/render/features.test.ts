@@ -1497,16 +1497,7 @@ describe('saving, autosave and recovery', () => {
   /** Write the recovery copy now instead of after the usual wait. */
   const autosaveNow = () => page.evaluate(`import('/src/state/store.ts').then(m => m.autosaveNow())`);
   /** What autosave has kept: the deck's name and whether it holds bytes, or null. */
-  const kept = () => page.evaluate(() => new Promise<{ name: string; bytes: number } | null>(done => {
-    const open = indexedDB.open('presentations', 1);
-    open.onupgradeneeded = () => open.result.createObjectStore('autosave');
-    open.onsuccess = () => {
-      const get = open.result.transaction('autosave').objectStore('autosave').get('current');
-      get.onsuccess = () => { open.result.close(); done(get.result ? { name: get.result.name, bytes: get.result.bytes.length } : null); };
-      get.onerror = () => { open.result.close(); done(null); };
-    };
-    open.onerror = () => done(null);
-  }));
+  const kept = () => page.evaluate(`import('/src/engine/autosave.ts').then(m => m.autosave.get()).then(k => (k ? { name: k.name, bytes: k.bytes.length } : null))`) as Promise<{ name: string; bytes: number } | null>;
   const boxTexts = () => state<string[]>(`
     const textOf = el => { const out = []; const walk = e => { if (e.local === 't') out.push(e.children.map(c => c.value ?? '').join('')); for (const c of e.children) if (c.kind === 'element') walk(c); }; walk(el); return out.join(''); };
     return s.session.ed.doc.slide(s.slide).shapes.filter(sh => sh.name.startsWith('TextBox')).map(sh => textOf(sh.el));`);
@@ -1936,6 +1927,123 @@ describe('theme colours and fonts', () => {
     expect(xml).toContain('<a:clrScheme name="Violet">');
     expect(xml).toContain('<a:accent1><a:srgbClr val="AD84C6"/></a:accent1>');
     expect(xml).toMatch(/<a:fontScheme name="Georgia and Verdana"><a:majorFont><a:latin typeface="Georgia"/);
+    expect(errors).toEqual([]);
+  }, 60_000);
+});
+
+describe('version history', () => {
+  const pane = () => page.getByTestId('versions-pane');
+  const slides = () => state<number>('return s.session.ed.doc.slideParts().length;');
+  /** The versions listed, newest first: label and what is said of each. */
+  const listed = async () => {
+    const rows = pane().getByTestId('version');
+    const out: { label: string; meta: string }[] = [];
+    for (let i = 0; i < await rows.count(); i++) out.push({ label: await rows.nth(i).getByTestId('version-label').innerText(), meta: (await rows.nth(i).locator('.version-meta').innerText()).replace(/ · [\d.]+ (B|KB|MB)/, '') });
+    return out;
+  };
+  async function openPane(): Promise<void> {
+    await page.getByRole('tab', { name: 'File' }).click();
+    if (await pane().count() === 0) await page.getByTestId('version-history').click();
+    await pane().waitFor();
+  }
+  async function saveVersion(name = ''): Promise<void> {
+    const before = await pane().getByTestId('version').count();
+    await page.getByTestId('version-name').fill(name);
+    await page.getByTestId('version-save').click();
+    await expect.poll(() => pane().getByTestId('version').count()).toBe(before + 1);
+  }
+  async function newSlide(): Promise<void> {
+    await page.getByRole('tab', { name: 'Home' }).click();
+    await page.getByTestId('new-slide').click();
+  }
+  const row = (label: string) => pane().getByTestId('version').filter({ has: page.getByTestId('version-label').getByText(label, { exact: true }) }).first();
+
+  test('File > Version History lists nothing at first; Save Version keeps the deck as it is, named or not, newest first', async () => {
+    await openPane();
+    expect(await page.getByTestId('versions-empty').innerText()).toContain('No versions of Presentation1.pptx yet');
+    expect(await pressed('version-history')).toBe('true');
+    await saveVersion('First draft');
+    expect(await listed()).toEqual([{ label: 'First draft', meta: '1 slide' }]);
+    expect(await row('First draft').getByTestId('version-when').innerText()).toMatch(/^Today, \d{1,2}:\d{2}/);
+    await newSlide();
+    await openPane();
+    await saveVersion();
+    expect(await listed()).toEqual([{ label: 'Version', meta: '2 slides' }, { label: 'First draft', meta: '1 slide' }]);
+    expect(await page.getByTestId('version-name').inputValue()).toBe('');
+    expect(await state<boolean>('return s.edits !== s.savedEdits;')).toBe(true);     // keeping a version is not saving the file
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('Restore puts a version back in the editor as unsaved changes, keeping what was there as a version to return to', async () => {
+    await openPane();
+    await saveVersion('One slide');
+    await newSlide();
+    await newSlide();
+    expect(await slides()).toBe(3);
+    await openPane();
+    await row('One slide').getByTestId('version-restore').click();
+    await expect.poll(slides).toBe(1);
+    await expect.poll(async () => (await listed()).map(v => `${v.label}: ${v.meta}`)).toEqual(['Before restoring: 3 slides', 'One slide: 1 slide']);
+    expect(await state<boolean>('return s.edits !== s.savedEdits;')).toBe(true);
+    expect(await state<string>('return s.session.name;')).toBe('Presentation1.pptx');
+    expect(await page.locator('.status .message').innerText()).toContain('Restored "One slide"');
+    // and back again
+    await row('Before restoring').getByTestId('version-restore').click();
+    await expect.poll(slides).toBe(3);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('a save keeps a version called Saved; Delete removes one; versions are still there after the page is loaded again', async () => {
+    await newSlide();
+    await saved();                                                        // File > Save a copy
+    await openPane();
+    await expect.poll(async () => (await listed()).map(v => `${v.label}: ${v.meta}`)).toEqual(['Saved: 2 slides']);
+    await saveVersion('Keep me');
+    await saveVersion('Drop me');
+    await row('Drop me').getByTestId('version-delete').click();
+    await expect.poll(async () => (await listed()).map(v => v.label)).toEqual(['Keep me', 'Saved']);
+
+    await page.reload();
+    await page.getByTestId('welcome-new').click();
+    await page.getByTestId('canvas').waitFor();
+    expect(await slides()).toBe(1);
+    await openPane();
+    await expect.poll(async () => (await listed()).map(v => v.label)).toEqual(['Keep me', 'Saved']);
+    await row('Keep me').getByTestId('version-restore').click();
+    await expect.poll(slides).toBe(2);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('Download gives the version as a file named for it, which opens as the deck it was', async () => {
+    await openPane();
+    await saveVersion('Q3: draft/2');
+    await newSlide();
+    await openPane();
+    const [download] = await Promise.all([page.waitForEvent('download'), row('Q3: draft/2').getByTestId('version-download').click()]);
+    expect(download.suggestedFilename()).toBe('Presentation1 (Q3 draft 2).pptx');
+    const ed = new Editor(OpcPackage.open(new Uint8Array(readFileSync((await download.path())!))));
+    expect(ed.doc.slideParts().length).toBe(1);
+    expect(await slides()).toBe(2);                                       // the editor's deck is untouched
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('twenty versions are kept for a deck: the oldest the editor made by itself make room, named ones stay', async () => {
+    const labels = await page.evaluate(`import('/src/engine/versions.ts').then(async m => {
+      const add = (label, at, auto) => m.versions.add({ deck: 'Presentation1.pptx', label, at, bytes: new Uint8Array(64), encrypted: false, slides: 1, auto });
+      await add('Named early', 1000, false);
+      for (let i = 0; i < 24; i++) await add('Autosaved ' + i, 2000 + i, true);
+      await add('Other deck', 1, true).then(() => 0);
+      await m.versions.add({ deck: 'Other.pptx', label: 'Elsewhere', at: 5, bytes: new Uint8Array(8), encrypted: false, slides: 1, auto: true });
+      return { mine: (await m.versions.list('Presentation1.pptx')).map(v => v.label), other: (await m.versions.list('Other.pptx')).map(v => v.label) };
+    })`) as { mine: string[]; other: string[] };
+    expect(labels.mine.length).toBe(20);
+    expect(labels.mine[0]).toBe('Autosaved 23');
+    expect(labels.mine.at(-1)).toBe('Named early');                       // the oldest of all, kept because it was named
+    expect(labels.mine).not.toContain('Autosaved 0');
+    expect(labels.mine).not.toContain('Other deck');
+    expect(labels.other).toEqual(['Elsewhere']);                          // another deck's versions are its own
+    await openPane();
+    await expect.poll(() => pane().getByTestId('version').count()).toBe(20);
     expect(errors).toEqual([]);
   }, 60_000);
 });

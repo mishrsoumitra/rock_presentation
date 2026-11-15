@@ -89,7 +89,8 @@ export function Ribbon({ extraTabs }: { extraTabs?: Partial<Record<Tab, React.Re
               <FilePicker accept=".pptx,.pptm,.potx,.ppsx,.ppt" onFile={f => void act.openFile(f)}>{open => <Btn icon="open" label="Open…" wide onClick={() => void act.openWithPicker().then(done => { if (!done) open(); })} testid="open" />}</FilePicker>
               <Btn icon="save" label="Save" wide disabled={!session} onClick={() => void act.saveFile()} testid="save-file" />
               <Btn icon="save" label="Save As…" wide disabled={!session} onClick={() => void act.saveFile(true)} testid="save-as" />
-              <Btn icon="save" label="Save a copy" wide disabled={!session} onClick={() => void act.saveAndDownload()} testid="save" /></section>
+              <Btn icon="save" label="Save a copy" wide disabled={!session} onClick={() => void act.saveAndDownload()} testid="save" />
+              <Btn icon="history" label="Version History" wide disabled={!session} active={useEditor.getState().pane === 'versions'} onClick={() => useEditor.setState(x => ({ pane: x.pane === 'versions' ? 'none' : 'versions' }))} testid="version-history" /></section>
             <section className="group" aria-label="Export">
               <Btn icon="file" label="Export PDF" wide disabled={!session} onClick={() => void act.exportAs('pdf')} testid="export-pdf" />
               <Btn icon="image" label="Slide as PNG" wide disabled={!session} onClick={() => void act.exportAs('png')} testid="export-png" />

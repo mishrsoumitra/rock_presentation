@@ -30,6 +30,7 @@ const PATHS: Record<string, string> = {
   footer: 'M4 4h16v16H4zM4 15h16M7 17.5h4M15 17.5h2',
   wordart: 'M5 19L11 5h2l6 14M8 14h8M3 21h18',
   equation: 'M4 12h3l2 6 4-13h7M15 12l5 6M20 12l-5 6',
+  history: 'M4 12a8 8 0 1 0 2.5-5.8M4 5v4h4M12 8v4l3 2',
   brush: 'M14 3l7 7-8 8H8v-5zM8 18l-3 3M4 21h4',
   link: 'M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1',
   lock: 'M6 11h12v10H6zM8 11V7a4 4 0 0 1 8 0v4', anim: 'M4 12h4l3-7 3 14 3-7h3', layout: 'M3 4h18v16H3zM3 9h18M9 9v11',

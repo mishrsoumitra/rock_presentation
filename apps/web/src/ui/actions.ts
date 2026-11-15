@@ -16,6 +16,7 @@ import type { XmlElement } from '@pptx/xml';
 import { blankPresentation } from '../engine/blank.ts';
 import { decodeImage } from '../engine/images.ts';
 import { autosave, type Autosaved } from '../engine/autosave.ts';
+import { versions, type VersionInfo } from '../engine/versions.ts';
 import { deckPdf, slidePng, slidesZip } from '../engine/export.ts';
 import { audioIcon, mediaTypeOf, videoPoster } from '../engine/media.ts';
 import { markSaved, useEditor, type FileHandle } from '../state/store.ts';
@@ -76,6 +77,7 @@ export async function saveAndDownload(): Promise<void> {
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 10_000);
   markSaved();
+  await keepVersion(bytes, 'Saved', true);
   s.notify('info', `Saved ${a.download}${s.session.password ? ' (encrypted)' : ''}.`);
 }
 
@@ -111,6 +113,7 @@ export async function saveFile(as = false): Promise<void> {
   session.handle = handle;
   session.name = handle.name;
   markSaved();
+  await keepVersion(bytes, 'Saved', true);
   useEditor.setState(x => ({ version: x.version + 1 }));
   s.notify('info', `Saved ${handle.name}${session.password ? ' (encrypted)' : ''}.`);
 }
@@ -174,6 +177,65 @@ export async function exportAs(what: 'pdf' | 'png' | 'pngs'): Promise<void> {
 
 /** The deck kept by autosave, if there is one to offer on the welcome screen. */
 export const recoverable = (): Promise<Autosaved | undefined> => autosave.get();
+
+// ---------------------------------------------------------------------------------------- version history
+
+/** Keep these bytes as a version of the deck being edited, and tell the Version History pane. */
+async function keepVersion(bytes: Uint8Array, label: string, auto: boolean): Promise<number | undefined> {
+  const session = st().session;
+  if (!session) return undefined;
+  const id = await versions.add({ deck: session.name, label, at: Date.now(), bytes, encrypted: !!session.password, slides: session.ed.doc.slideParts().length, auto });
+  if (id !== undefined) useEditor.setState(x => ({ versionsTick: x.versionsTick + 1 }));
+  return id;
+}
+
+/** The versions kept of the deck being edited, newest first. */
+export const listVersions = (): Promise<VersionInfo[]> => { const s = st().session; return s ? versions.list(s.name) : Promise.resolve([]); };
+
+/** Save Version: the deck as it is now, under a name (or "Version" with nothing given). It is not a save to the file. */
+export async function saveVersion(name?: string): Promise<void> {
+  const s = st();
+  if (!s.session) return;
+  const bytes = await deckBytes();
+  if (!bytes) return;
+  const id = await keepVersion(bytes, name?.trim() || 'Version', false);
+  s.notify(id === undefined ? 'error' : 'info', id === undefined ? 'This version could not be kept: the presentation is too large, or the browser has no room.' : `Kept version "${name?.trim() || 'Version'}".`);
+}
+
+/**
+ * Restore a version: it becomes the deck in the editor, as unsaved changes (the file is not touched until Save).
+ * What was in the editor is kept as a version first, so restoring can itself be gone back on.
+ */
+export async function restoreVersion(id: number): Promise<void> {
+  const s = st();
+  const v = await versions.get(id);
+  if (!v || !s.session) return;
+  const name = s.session.name;
+  const before = await deckBytes();
+  if (before) await keepVersion(before, 'Before restoring', true);
+  await st().open(v.bytes, name);
+  if (st().session) {
+    useEditor.setState(x => ({ edits: x.edits + 1, pane: 'versions', versionsTick: x.versionsTick + 1 }));
+    st().notify('info', `Restored "${v.label}". Save to keep it.`);
+  }
+}
+
+export async function downloadVersion(id: number): Promise<void> {
+  const v = await versions.get(id);
+  if (!v) return;
+  const url = URL.createObjectURL(new Blob([v.bytes as BlobPart], { type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' }));
+  const a = document.createElement('a');
+  a.href = url;
+  // the version's own name beside the deck's, in characters a file name can have
+  a.download = saveName(v.deck).replace(/\.pptx$/i, '') + ` (${v.label.replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim() || 'version'}).pptx`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
+export async function deleteVersion(id: number): Promise<void> {
+  await versions.remove(id);
+  useEditor.setState(x => ({ versionsTick: x.versionsTick + 1 }));
+}
 
 /** Open the deck autosave kept. It opens with unsaved changes (it was never saved), and stays kept until it is. */
 export async function restoreAutosaved(): Promise<void> {
