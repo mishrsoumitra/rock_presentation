@@ -4,7 +4,8 @@ import { children, runsOf } from '@pptx/model';
 import { describe, expect, test } from 'vitest';
 import { deckBytes } from '../../resolve/test/deck.ts';
 import {
-  addSlide, bodyPlainText, compareMatches, findInText, findText, formatRuns, group, insertTextBox, replaceAll, replaceMatch, type Editor,
+  addSlide, bodyPlainText, cellText, compareMatches, findInText, findText, formatRuns, group, insertTable, insertTextBox, mergeCells, replaceAll, replaceMatch,
+  setCellText, tableOf, type Editor,
 } from '../src/index.ts';
 import { cycle, openEditor } from './helpers.ts';
 
@@ -142,5 +143,50 @@ describe('replacing', () => {
     const id = box(ed, SLIDE, 'Art art party');
     ed.run(replaceAll(ed, 'art', 'ART', { matchCase: true, wholeWords: true }).command);
     expect(textOf(ed, SLIDE, id)).toBe('Art ART party');
+  });
+});
+
+describe('finding in tables', () => {
+  /** A 2 by 2 table after a text box: "emu a1", "b1" / "a2", "emu b2 emu". */
+  function withTable(): { ed: Editor; boxId: number; tableId: number } {
+    const ed = openEditor(deckBytes());
+    const boxId = box(ed, SLIDE, 'emu before the table');
+    const t = insertTable(ed, SLIDE, 2, 2, BOX);
+    ed.run(t.command);
+    const texts = [['emu a1', 'b1'], ['a2', 'emu b2 emu']];
+    texts.forEach((row, r) => row.forEach((text, c) => ed.run(setCellText(ed, SLIDE, ed.shape(SLIDE, t.id)!, { r, c }, text))));
+    ed.log.clear();
+    return { ed, boxId, tableId: t.id };
+  }
+
+  test('cells are searched row by row, each match saying which cell it is in', () => {
+    const { ed, boxId, tableId } = withTable();
+    const found = findText(ed, 'emu');
+    expect(found.map(m => [ed.view(m.part, m.shape).id, m.cell ? `${m.cell.r},${m.cell.c}` : '-', m.start])).toEqual([
+      [boxId, '-', 0], [tableId, '0,0', 0], [tableId, '1,1', 0], [tableId, '1,1', 7],
+    ]);
+    expect([...found].sort(compareMatches)).toEqual(found);
+  });
+
+  test('replace one match in a cell, and replace all through text boxes and cells in one step', () => {
+    const { ed, boxId, tableId } = withTable();
+    const tbl = () => tableOf(ed.shape(SLIDE, tableId)!)!;
+    expect(cycle(ed, () => replaceMatch(ed, findText(ed, 'emu')[2]!, 'kiwi'))).toEqual([]);
+    ed.run(replaceMatch(ed, findText(ed, 'emu')[2]!, 'kiwi'));
+    expect(cellText(tbl(), 1, 1)).toBe('kiwi b2 emu');
+    ed.log.seal();
+    const r = replaceAll(ed, 'emu', 'ostrich');
+    expect(r.count).toBe(3);
+    ed.run(r.command);
+    expect([cellText(tbl(), 0, 0), cellText(tbl(), 1, 1), bodyPlainText(ed.shape(SLIDE, boxId)!.txBody!)]).toEqual(['ostrich a1', 'kiwi b2 ostrich', 'ostrich before the table']);
+    ed.undo();
+    expect(cellText(tbl(), 0, 0)).toBe('emu a1');
+  });
+
+  test('a merged cell is searched once, where its text is', () => {
+    const { ed, tableId } = withTable();
+    ed.run(mergeCells(ed, SLIDE, ed.shape(SLIDE, tableId)!, { r0: 0, c0: 0, r1: 1, c1: 1 }));
+    const found = findText(ed, 'emu');
+    expect(found.filter(m => m.cell).map(m => [`${m.cell!.r},${m.cell!.c}`, m.p, m.start])).toEqual([['0,0', 0, 0], ['0,0', 3, 0], ['0,0', 3, 7]]);
   });
 });

@@ -1,8 +1,9 @@
 // packages/editor-core/src/find.ts  -- find and replace across the slides of a deck
-import { runsOf, type ShapeView } from '@pptx/model';
+import { attr, child, children, runsOf, type ShapeView } from '@pptx/model';
 import type { XmlElement } from '@pptx/xml';
 import type { Editor } from './editor.ts';
 import { compound, type Command } from './history.ts';
+import { tableOf, type CellRef } from './tables.ts';
 import { paragraphs, typeText, type TextOptions, type TextRange } from './text.ts';
 
 /** One place the text was found: a stretch of one paragraph of one shape, in file offsets (as carets are). */
@@ -13,6 +14,8 @@ export interface TextMatch {
   shapeIndex: number;
   shape: XmlElement;
   txBody: XmlElement;
+  /** The table cell the text is in, when the shape is a table. */
+  cell?: CellRef;
   p: number;
   start: number;
   end: number;
@@ -49,8 +52,8 @@ const paragraphText = (p: XmlElement) => runsOf(p).map(r => (r.kind === 'br' ? '
 
 /**
  * Every match in the deck, in reading order: slide by slide, each slide's shapes in drawing order (the shapes of a
- * group where the group is), paragraph by paragraph. A match never spans two paragraphs. Layouts and masters are
- * not searched: their text is not the deck's content.
+ * group where the group is, a table's cells row by row), paragraph by paragraph. A match never spans two paragraphs
+ * or two cells. Layouts and masters are not searched: their text is not the deck's content.
  */
 export function findText(ed: Editor, query: string, options: FindOptions = {}): TextMatch[] {
   const out: TextMatch[] = [];
@@ -60,6 +63,19 @@ export function findText(ed: Editor, query: string, options: FindOptions = {}): 
     const visit = (shapes: ShapeView[]) => {
       for (const s of shapes) {
         if (s.kind === 'grpSp') { visit(s.children); continue; }
+        const tbl = tableOf(s);
+        if (tbl) {
+          // each cell is a place of its own in reading order; cells covered by a merge hold no text of their own
+          children(tbl, 'a:tr').forEach((tr, r) => children(tr, 'a:tc').forEach((tc, c) => {
+            const at = shapeIndex++;
+            const txBody = child(tc, 'a:txBody');
+            if (!txBody || attr(tc, 'hMerge') === '1' || attr(tc, 'vMerge') === '1') return;
+            paragraphs(txBody).forEach((p, pi) => {
+              for (const m of findInText(paragraphText(p), query, options)) out.push({ part, slideIndex, shapeIndex: at, shape: s.el, txBody, cell: { r, c }, p: pi, ...m });
+            });
+          }));
+          continue;
+        }
         const at = shapeIndex++;
         const txBody = s.txBody;
         if (!txBody) continue;

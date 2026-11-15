@@ -7,11 +7,18 @@ import { keepFocus } from './widgets.tsx';
 
 type Place = Pick<TextMatch, 'slideIndex' | 'shapeIndex' | 'p' | 'start'>;
 
-/** Go to a match: its slide, its shape selected, and the found text selected in it, as a text selection. */
+/**
+ * Go to a match: its slide, its shape selected, and the found text selected in it, as a text selection. In a table
+ * the cell that holds it is picked.
+ */
 function show(m: TextMatch): void {
   const st = useEditor.getState();
   if (st.slide !== m.part) st.setSlide(m.part);
   st.session?.ed.log.seal();
+  if (m.cell) {
+    useEditor.setState({ selection: [m.shape], entered: null, text: null, pending: null, cells: { el: m.shape, anchor: m.cell, focus: m.cell, editing: false } });
+    return;
+  }
   const parent = m.shape.parent;
   useEditor.setState({
     selection: [m.shape], entered: parent && parent.local === 'grpSp' ? parent : null, pending: null,

@@ -1043,6 +1043,29 @@ describe('tables', () => {
     expect(errors).toEqual([]);
   }, 60_000);
 
+  test('find and replace reach into cells: Find picks the cell that holds the match, Replace All changes cells too', async () => {
+    await insertTable(2, 2);
+    for (const [r, c, t] of [[0, 0, 'red'], [0, 1, 'blue'], [1, 0, 'green'], [1, 1, 'dark red']] as const) {
+      await clickCell(r, c);
+      await page.keyboard.type(t);
+      await page.keyboard.press('Escape');
+    }
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Control+f');
+    await page.keyboard.type('red');
+    expect(await page.getByTestId('find-count').innerText()).toBe('2 found');
+    await page.keyboard.press('Enter');
+    expect([await page.getByTestId('find-count').innerText(), await picked()]).toEqual(['1 of 2', '0,0']);
+    await page.keyboard.press('Enter');
+    expect([await page.getByTestId('find-count').innerText(), await picked()]).toEqual(['2 of 2', '1,1']);
+    await page.getByTestId('replace-input').fill('pink');
+    await page.getByTestId('replace-one').click();
+    expect(await cellTexts()).toEqual([['red', 'blue'], ['green', 'dark pink']]);
+    await page.getByTestId('replace-all').click();
+    expect(await cellTexts()).toEqual([['pink', 'blue'], ['green', 'dark pink']]);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
   test('Insert > Table: the grid says the size under the pointer, a click inserts that table in the middle of the slide', async () => {
     await page.getByRole('tab', { name: 'Insert' }).click();
     await page.getByTestId('insert-table').click();
