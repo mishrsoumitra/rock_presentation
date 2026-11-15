@@ -15,6 +15,7 @@ import { selectAll } from './textActions.ts';
 import { TextInput } from './TextInput.tsx';
 import { CellEditor } from './CellEditor.tsx';
 import { MediaPlayer } from './MediaPlayer.tsx';
+import { MotionPathOverlay, PathDrawer } from './MotionPaths.tsx';
 import { Rulers } from './Rulers.tsx';
 import { connectionSites, connectorEnds, cropAndPlace, isConnector, nearestSite, pictureCrop, setConnectorEnds, type Point } from '@pptx/editor-core';
 import { attachable, paintFormat } from './actions.ts';
@@ -166,6 +167,7 @@ export function SlideCanvas() {
   const painting = useEditor(s => s.painting);
   const cropEl = useEditor(s => s.cropping);
   const playingEl = useEditor(s => s.playing);
+  const pathDrawing = useEditor(s => s.pathDrawing);
   const showRuler = useEditor(s => s.showRuler);
   const showGuides = useEditor(s => s.showGuides);
   const userGuides = useEditor(s => s.guides);
@@ -757,6 +759,10 @@ export function SlideCanvas() {
   };
 
   const tv = text ? textViewOf(findRendered(slide, text.el)) : undefined;
+  // the motion paths of the one selected shape (or of the shape a path is being drawn for) start from its middle
+  const pathEl = pathDrawing?.el ?? (selection.length === 1 ? selection[0] : undefined);
+  const pathRs = pathEl ? findRendered(slide, pathEl) : undefined;
+  const pathShape = pathRs ? (() => { const b = boundsOf(pathRs); return { id: pathRs.source.id, center: { x: b.x + b.w / 2, y: b.y + b.h / 2 } }; })() : undefined;
   // the video or sound playing: the browser's player over its picture
   const playingRs = playingEl && selection.length === 1 && selection[0] === playingEl ? findRendered(slide, playingEl) : undefined;
   const playBox = playingRs ? pageBox(boundsOf(playingRs)) : undefined;
@@ -934,6 +940,8 @@ export function SlideCanvas() {
         </Layer>
       </Stage>
       {tv && text && <TextInput view={tv} stage={stageRef} zoom={zoom} />}
+      {pathShape && <MotionPathOverlay place={{ ox, oy, zoom }} center={pathShape.center} spid={pathShape.id} />}
+      {pathDrawing && <PathDrawer place={{ ox, oy, zoom }} />}
       {playBox && playingRs?.source.media?.part && <MediaPlayer session={sess} part={playingRs.source.media.part} kind={playingRs.source.media.kind} box={playBox} />}
       {cells?.editing && cellRs && <CellEditor key={`${keyOf(cells.el)}:${cells.anchor.r},${cells.anchor.c}`} rs={cellRs} stage={stageRef} zoom={zoom} fonts={sess.fonts} />}
       {scene?.error && <div className="slide-error" role="alert">This slide cannot be shown: {scene.error}</div>}

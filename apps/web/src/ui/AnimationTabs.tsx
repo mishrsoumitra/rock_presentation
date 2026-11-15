@@ -115,6 +115,12 @@ function animate(preset: Preset, replace: boolean): void {
   const st = useEditor.getState();
   const sel = selectedShape();
   if (!st.session || !sel) { st.notify('info', 'Select one shape to animate.'); return; }
+  // Custom Path is drawn: the slide takes the mouse next, and the drawing becomes the path
+  if (preset.presetClass === 'path' && preset.presetID === 0) {
+    useEditor.setState({ pathDrawing: { el: sel.view.el, replace }, text: null });
+    st.notify('info', 'Drag on the slide to draw the path. Press Esc to stop.');
+    return;
+  }
   const ed = st.session.ed;
   const old = replace ? effectsOf(sel.part, sel.view.id).map(e => e.index).sort((a, b) => b - a) : [];
   const steps: Command[] = old.map(i => removeAnimation(ed, sel.part, i));

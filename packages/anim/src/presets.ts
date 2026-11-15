@@ -149,6 +149,8 @@ function handWritten(): Draft[] {
     `<p:set><p:cBhvr><p:cTn dur="indefinite"/>${TGT}<p:attrNameLst><p:attrName>style.opacity</p:attrName></p:attrNameLst></p:cBhvr>` +
     '<p:to><p:strVal val="0.5"/></p:to></p:set>' +
     `<p:animEffect filter="image" prLst="opacity: 0.5"><p:cBhvr rctx="IE"><p:cTn dur="indefinite"/>${TGT}</p:cBhvr></p:animEffect>`);
+  // Custom Path: the path is drawn by hand and given when the effect is added; this one is only its shape
+  add('path', 0, 0, motion('M 0 0 L 0.25 0 E'));
   add('path', 35, 0, motion('M 0 0 L -0.25 0 E'));
   add('path', 42, 0, motion('M 0 0 L 0 0.25 E'));
   add('path', 63, 0, motion('M 0 0 L 0.25 0 E'));

@@ -1940,6 +1940,141 @@ describe('theme colours and fonts', () => {
   }, 60_000);
 });
 
+describe('drawn motion paths', () => {
+  const animModule = `/@fs${join(process.cwd(), 'packages/anim/src/index.ts')}`;
+  /** The slide's effects, and for motion paths where each ends, as a fraction of the slide. */
+  const effects = () => page.evaluate(`import(${JSON.stringify(animModule)}).then(anim => {
+    const s = window.__editor.getState();
+    const ed = s.session.ed;
+    const find = e => (e.local === 'animMotion' ? e : e.children.map(c => (c.kind === 'element' ? find(c) : undefined)).find(Boolean));
+    return anim.listEffects(ed.slide(s.slide)).map(e => {
+      const path = find(e.el)?.attrs.find(a => a.local === 'path')?.value;
+      const end = path ? anim.pointAt(anim.parseMotionPath(path), 1) : undefined;
+      return { name: e.name, shape: ed.shape(s.slide, e.spid)?.name, ...(path ? { path, end: [Math.round(end.x * 100) / 100, Math.round(end.y * 100) / 100] } : {}) };
+    });
+  })`) as Promise<{ name: string; shape: string; path?: string; end?: [number, number] }[]>;
+  const SIZE = { cx: 12192000, cy: 6858000 };
+  /** A rectangle low on the slide, selected, with the Animations tab showing. */
+  async function box(): Promise<void> {
+    await drawShape('rect', 1500000, 4800000, 1200000, 1200000);
+    await page.getByRole('tab', { name: 'Animations' }).click();
+  }
+  async function customPath(menu = 'animation-gallery'): Promise<void> {
+    if (menu === 'animation-gallery') await page.getByTestId(menu).click();
+    else await page.getByRole('button', { name: 'Add Animation' }).click();
+    await page.locator('[data-testid="effect-gallery"] [data-effect="path:0"]').click();
+    await page.getByTestId('path-drawer').waitFor();
+  }
+  /** Drag through slide points (EMU), as a hand does: many small moves. */
+  async function drag(points: [number, number][]): Promise<void> {
+    const pts = await Promise.all(points.map(([x, y]) => slidePoint(x, y)));
+    await page.mouse.move(pts[0]!.x, pts[0]!.y);
+    await page.mouse.down();
+    for (const p of pts.slice(1)) await page.mouse.move(p.x, p.y, { steps: 12 });
+    await page.mouse.up();
+  }
+
+  test('Custom Path lets a path be drawn anywhere on the slide; the shape gets it as an effect that ends where the drawing did', async () => {
+    await box();
+    await customPath();
+    expect(await page.locator('.status .message').innerText()).toContain('Drag on the slide to draw the path');
+    // an L drawn in the empty middle of the slide: a quarter of the slide right, then a fifth of it up
+    await drag([[5000000, 5200000], [5000000 + SIZE.cx / 4, 5200000], [5000000 + SIZE.cx / 4, 5200000 - SIZE.cy / 5]]);
+    expect(await page.getByTestId('path-drawer').count()).toBe(0);
+    const list = await effects();
+    expect(list.map(e => [e.name, e.shape])).toEqual([['Custom Path', 'Rectangle 3']]);
+    expect(list[0]!.end![0]).toBeCloseTo(0.25, 1);
+    expect(list[0]!.end![1]).toBeCloseTo(-0.2, 1);
+    expect(list[0]!.path!.split('L').length - 1).toBeLessThan(6);         // the corners, not every mouse move
+    expect(await state<string>('return s.session.ed.log.undoLabel;')).toBe('Draw Motion Path');
+    expect(await state<number>('return s.selection.length;')).toBe(1);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('the shape\'s path is shown from its middle, green where it starts and red where it ends, while the shape is selected', async () => {
+    await box();
+    await customPath();
+    await drag([[6000000, 3000000], [6000000 + 3000000, 3000000]]);
+    const overlay = page.getByTestId('motion-paths');
+    await overlay.waitFor();
+    const mid = await slidePoint(1500000 + 600000, 4800000 + 600000);
+    const end = await slidePoint(1500000 + 600000 + 3000000, 4800000 + 600000);
+    const centre = async (sel: string) => { const b = (await overlay.locator(sel).boundingBox())!; return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; };
+    const start = await centre('.motion-start'), stop = await centre('.motion-end');
+    expect(Math.abs(start.x - mid.x)).toBeLessThan(2);
+    expect(Math.abs(start.y - mid.y)).toBeLessThan(2);
+    expect(Math.abs(stop.x - end.x)).toBeLessThan(4);
+    expect(Math.abs(stop.y - end.y)).toBeLessThan(4);
+    await page.keyboard.press('Escape');                                  // nothing selected: nothing shown
+    expect(await overlay.count()).toBe(0);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('Escape puts the drawing down; a click that goes nowhere keeps it on; undo takes a drawn path away', async () => {
+    await box();
+    await customPath();
+    await page.keyboard.press('Escape');
+    expect(await page.getByTestId('path-drawer').count()).toBe(0);
+    expect(await effects()).toEqual([]);
+
+    await customPath();
+    const p = await slidePoint(6000000, 3000000);
+    await page.mouse.click(p.x, p.y);
+    expect(await page.getByTestId('path-drawer').count()).toBe(1);        // still drawing
+    expect(await effects()).toEqual([]);
+    await drag([[6000000, 3000000], [8000000, 4000000]]);
+    expect((await effects()).length).toBe(1);
+    await page.keyboard.press('Control+z');
+    expect(await effects()).toEqual([]);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('from the gallery a drawn path takes the place of the shape\'s animation; from Add Animation it is one more', async () => {
+    await box();
+    await page.getByTestId('animation-gallery').click();
+    await page.locator('[data-testid="effect-gallery"] [data-effect="entr:10"]').click();
+    await customPath('add');
+    await drag([[6000000, 3000000], [8000000, 3000000]]);
+    expect((await effects()).map(e => e.name)).toEqual(['Fade', 'Custom Path']);
+    await customPath();
+    await drag([[6000000, 3000000], [6000000, 4500000]]);
+    const list = await effects();
+    expect(list.map(e => e.name)).toEqual(['Custom Path']);
+    expect(list[0]!.end![0]).toBeCloseTo(0, 1);
+    expect(list[0]!.end![1]).toBeCloseTo(0.22, 1);
+    await page.getByTestId('canvas').click({ position: { x: 5, y: 5 } });
+    await page.keyboard.press('Control+z');                               // one step back: the two it replaced
+    expect((await effects()).map(e => e.name)).toEqual(['Fade', 'Custom Path']);
+    const ed = await saved();
+    expect(new TextDecoder().decode(ed.pkg.getPart(ed.doc.slideParts()[0]!)!.bytes)).toMatch(/presetID="0" presetClass="path"/);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('in the slide show a click sends the shape along its path to where the path ends', async () => {
+    await box();
+    await customPath();
+    await drag([[5000000, 2500000], [5000000 + 4000000, 2500000]]);       // four million EMU to the right
+    await page.getByRole('tab', { name: 'Slide Show' }).click();
+    await page.getByRole('button', { name: 'From Beginning' }).click();
+    await page.getByTestId('presenter').waitFor();
+    await page.waitForTimeout(300);
+    /** Is a point of the slide painted in the rectangle's blue, in the show? */
+    const blueAt = (x: number, y: number) => page.evaluate(([fx, fy]) => {
+      const c = document.querySelector('[data-testid="presenter"] canvas') as HTMLCanvasElement;
+      const d = c.getContext('2d')!.getImageData(Math.round(fx * c.width), Math.round(fy * c.height), 1, 1).data;
+      return d[2]! > 150 && d[0]! < 120;
+    }, [x / SIZE.cx, y / SIZE.cy] as const);
+    expect(await blueAt(2100000, 5400000)).toBe(true);                    // where it is
+    expect(await blueAt(6100000, 5400000)).toBe(false);                   // where it will be
+    const canvas = (await page.locator('[data-testid="presenter"] canvas').boundingBox())!;
+    await page.mouse.click(canvas.x + 20, canvas.y + 20);
+    await expect.poll(() => blueAt(6100000, 5400000), { timeout: 6000 }).toBe(true);
+    expect(await blueAt(2100000, 5400000)).toBe(false);
+    await page.keyboard.press('Escape');
+    expect(errors).toEqual([]);
+  }, 60_000);
+});
+
 describe('animation triggers', () => {
   /** The slide's effects: the shape each animates and the shape whose click starts it (null: the slide's clicks). */
   const animModule = `/@fs${join(process.cwd(), 'packages/anim/src/index.ts')}`;

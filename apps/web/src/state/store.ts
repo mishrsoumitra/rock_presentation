@@ -90,6 +90,8 @@ export interface EditorState {
   /** The find and replace panel is open. */
   finding: boolean;
   clipboard: ShapeClip | null;
+  /** A motion path is being drawn for this shape: in place of its animations, or as one more. */
+  pathDrawing: { el: XmlElement; replace: boolean } | null;
   /** The video or sound playing in the editor, where its picture is (it is the one selected shape while it plays). */
   playing: XmlElement | null;
   /** The picture being cropped with handles (it is the one selected shape while that lasts). */
@@ -141,7 +143,7 @@ function fitted(s: Session, t: TextEditing | null): TextEditing | null {
 
 export const useEditor = create<EditorState>((set, get) => ({
   session: null, version: 0, edits: 0, savedEdits: 0, slide: null, selection: [], entered: null, text: null, cells: null, pending: null,
-  zoom: 'fit', drawing: null, mode: 'edit', presenterView: false, view: 'normal', folded: [], masterReturn: null, showRuler: false, showGuides: true, guides: { x: [], y: [] }, pane: 'none', finding: false, linking: false, chartEditing: false, footerEditing: false, equationEditing: false, menu: null, clipboard: null, clipId: null, slideClip: null, formatClip: null, painting: false, cropping: null, playing: null, message: null, askPassword: null,
+  zoom: 'fit', drawing: null, mode: 'edit', presenterView: false, view: 'normal', folded: [], masterReturn: null, showRuler: false, showGuides: true, guides: { x: [], y: [] }, pane: 'none', finding: false, linking: false, chartEditing: false, footerEditing: false, equationEditing: false, menu: null, clipboard: null, clipId: null, slideClip: null, formatClip: null, painting: false, cropping: null, playing: null, pathDrawing: null, message: null, askPassword: null,
 
   async open(bytes, name, password) {
     performance.mark('open-start');
@@ -219,7 +221,7 @@ export const useEditor = create<EditorState>((set, get) => ({
     const s = get().session;
     s?.ed.log.seal();
     s?.thumbs.flush();
-    set({ slide: part, selection: [], entered: null, text: null, cells: null, cropping: null, playing: null });
+    set({ slide: part, selection: [], entered: null, text: null, cells: null, cropping: null, playing: null, pathDrawing: null });
   },
 
   select(els) {

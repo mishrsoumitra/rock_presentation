@@ -126,6 +126,15 @@ select { height: 28px; border: 1px solid var(--line); border-radius: var(--radiu
 .master-name { font-size: 11px; color: var(--muted); max-width: 168px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .master-status button { margin-left: 8px; border: 1px solid var(--line); background: var(--panel); border-radius: var(--radius); padding: 1px 8px; cursor: pointer; }
 
+/* motion paths: a shape's own, and the one being drawn */
+.motion-paths, .path-drawer svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+.motion-paths { z-index: 4; }
+.motion-path { fill: none; stroke: #5b6b7a; stroke-width: 1.5; stroke-dasharray: 5 4; }
+.motion-path.drawing { stroke: var(--accent); stroke-dasharray: none; stroke-width: 2; }
+.motion-start { fill: #2e9d48; stroke: #fff; stroke-width: 1; }
+.motion-end { fill: #d13438; stroke: #fff; stroke-width: 1; }
+.path-drawer { position: absolute; inset: 0; z-index: 7; cursor: crosshair; touch-action: none; }
+
 /* the WordArt gallery: a letter painted in each look */
 .wordart-gallery { display: grid; grid-template-columns: repeat(3, 56px); gap: 4px; padding: 8px; }
 .wordart { width: 56px; height: 52px; padding: 0; border: 1px solid var(--line); border-radius: var(--radius); background: #fff; cursor: pointer; font: 700 34px/1 Georgia, 'Times New Roman', serif; }
