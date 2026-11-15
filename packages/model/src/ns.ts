@@ -99,5 +99,6 @@ export const CONTENT_TYPE = {
   slideLayout: 'application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml',
   slideMaster: 'application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml',
   notesSlide: 'application/vnd.openxmlformats-officedocument.presentationml.notesSlide+xml',
+  notesMaster: 'application/vnd.openxmlformats-officedocument.presentationml.notesMaster+xml',
   theme: 'application/vnd.openxmlformats-officedocument.theme+xml',
 } as const;

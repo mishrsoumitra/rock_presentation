@@ -20,6 +20,6 @@ export {
 } from './template.ts';
 export { findPreset, presetName, presets, subtypeName, type Preset } from './presets.ts';
 export {
-  addEffect, clicksOf, listEffects, moveEffect, removeEffect, removeEffectsOf, setEffectTiming,
+  addEffect, clicksOf, listEffects, moveEffect, removeEffect, removeEffectsOf, setEffectTiming, setEffectTriggerShape,
   type AddEffectOptions, type EffectInfo, type EffectTiming, type Trigger,
 } from './authoring.ts';

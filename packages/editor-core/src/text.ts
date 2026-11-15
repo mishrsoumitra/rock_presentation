@@ -30,6 +30,16 @@ export interface RunPatch {
   latin?: string | null;
   ea?: string | null;
   cs?: string | null;
+  /** A WordArt look: the text's fill, outline and shadow together. Null takes all three off again. */
+  effect?: TextEffect | null;
+}
+
+/** How WordArt text is painted: its fill (a colour, a two-colour gradient, or none), an outline, a shadow. */
+export interface TextEffect {
+  fill: ColorSpec | { from: ColorSpec; to: ColorSpec; angle: number } | 'none';
+  /** The outline's colour and width (EMU). */
+  outline?: { color: ColorSpec; width: number };
+  shadow?: boolean;
 }
 
 export type BulletSpec = { kind: 'none' } | { kind: 'char'; char: string; font?: string } | { kind: 'autonum'; scheme: string; startAt?: number };
@@ -142,11 +152,11 @@ function rPrFrom(parent: XmlElement, source: XmlElement | undefined): XmlElement
 const clean = (s: string) => [...s].filter(ch => !FORBIDDEN_CHAR.test(ch) || ch === '\u000b').join('');
 
 /** Insert text without paragraph breaks into one paragraph; "\v" becomes a line break. Returns the new offset. */
-function insertInParagraph(ed: Editor, p: XmlElement, offset: number, text: string, patch?: RunPatch): number {
+function insertInParagraph(ed: Editor, p: XmlElement, offset: number, text: string, patch?: RunPatch, like?: XmlElement): number {
   if (!text) return offset;
   const pieces = text.split('\u000b');
   // the simple, common case: typing into a text run, with no formatting change
-  if (!patch && pieces.length === 1) {
+  if (!patch && !like && pieces.length === 1) {
     let at = 0;
     for (const r of runsOf(p)) {
       const len = runLength(r);
@@ -158,7 +168,7 @@ function insertInParagraph(ed: Editor, p: XmlElement, offset: number, text: stri
       at += len;
     }
   }
-  const props = propsAt(p, offset);
+  const props = like ?? propsAt(p, offset);
   let idx = boundaryAt(p, offset);
   pieces.forEach((piece, i) => {
     if (i > 0) {
@@ -178,6 +188,22 @@ function insertInParagraph(ed: Editor, p: XmlElement, offset: number, text: stri
     insertAt(p, idx++, run);
   });
   return offset + text.length;
+}
+
+/** Put text into the text run that holds the character at `offset`, before that character. False when a field or break is there. */
+function insertInRun(p: XmlElement, offset: number, text: string): boolean {
+  let at = 0;
+  for (const r of runsOf(p)) {
+    const len = runLength(r);
+    if (offset >= at && offset < at + len) {
+      const t = r.kind === 'r' ? child(r.el, 'a:t') : undefined;
+      if (!t) return false;
+      setText(t, r.text.slice(0, offset - at) + text + r.text.slice(offset - at));
+      return true;
+    }
+    at += len;
+  }
+  return false;
 }
 
 /** Split paragraph `p` at an offset: the new paragraph after it gets the runs after the offset and the same pPr. */
@@ -254,11 +280,15 @@ function deleteRange(txBody: XmlElement, range: TextRange): void {
   const moved = runElsBetween(last, 0, endIndex(last));
   first.children.splice(at, 0, ...moved);
   for (const r of moved) r.parent = first;
-  const mark = child(last, 'a:endParaRPr');
-  removeChildren(first, 'a:endParaRPr');
-  if (mark) {
-    const m = clone(mark, first);
-    insertInOrder(first, m);
+  // the merged paragraph takes the last one's mark, unless it is left empty: then it keeps the first one's, which
+  // holds the look of the first character deleted, so what is typed over a selection looks like its start
+  if (runsOf(first).length > 0 || !child(first, 'a:endParaRPr')) {
+    const mark = child(last, 'a:endParaRPr');
+    removeChildren(first, 'a:endParaRPr');
+    if (mark) {
+      const m = clone(mark, first);
+      insertInOrder(first, m);
+    }
   }
   txBody.children.splice(txBody.children.indexOf(last), 1);
 }
@@ -281,14 +311,35 @@ export interface TextOptions { coalesceKey?: string; scope?: XmlElement; after?:
  * Type text at a caret or over a selection. "\n" starts a new paragraph, "\v" is a line break. Consecutive typing
  * in one text body coalesces into one undo step (the UI passes the same `coalesceKey` and seals on caret moves).
  */
-export function typeText(ed: Editor, part: string, txBody: XmlElement, at: TextPos | TextRange, text: string, options: TextOptions & { patch?: RunPatch } = {}): TextEdit {
+export function typeText(
+  ed: Editor, part: string, txBody: XmlElement, at: TextPos | TextRange, text: string,
+  options: TextOptions & { patch?: RunPatch; /** New text looks like the first character it replaces (Replace), not like the text before it (typing). */ likeReplaced?: boolean } = {},
+): TextEdit {
   const range = 'start' in at ? sorted(at) : { start: at, end: at };
   let caret = range.start;
   const command = ed.edit({
     label: options.label ?? 'Typing', parts: [part], scope: () => [options.scope ?? txBody], ...(options.coalesceKey ? { coalesceKey: options.coalesceKey } : {}),
     apply: () => {
       ensureParagraph(ed, txBody);
-      if (order(range.start, range.end) < 0) deleteRange(txBody, range);
+      let like: XmlElement | undefined;
+      if (order(range.start, range.end) < 0) {
+        const first = paragraphs(txBody)[range.start.p];
+        const one = clean(text);
+        // Replace, the usual case: the new text goes into the run of the first character replaced (so it looks
+        // like it and the run is not split), then what it replaces goes
+        if (options.likeReplaced && first && !/[\r\n\u000b]/.test(one) && insertInRun(first, range.start.offset, one)) {
+          const n = one.length;
+          const end = range.end.p === range.start.p ? { p: range.end.p, offset: range.end.offset + n } : range.end;
+          deleteRange(txBody, { start: { p: range.start.p, offset: range.start.offset + n }, end });
+          caret = { p: range.start.p, offset: range.start.offset + n };
+          options.after?.();
+          return;
+        }
+        // the properties of the first character replaced, copied before it goes
+        const src = options.likeReplaced && first && range.start.offset < paragraphLength(first) ? propsAt(first, range.start.offset + 1) : undefined;
+        if (src) like = clone(src, src.parent!);
+        deleteRange(txBody, range);
+      }
       const lines = clean(text).split(/\r\n|\r|\n/);
       let pos = range.start;
       lines.forEach((line, i) => {
@@ -299,7 +350,7 @@ export function typeText(ed: Editor, part: string, txBody: XmlElement, at: TextP
         }
         const p = paragraphs(txBody)[pos.p];
         if (!p) return;
-        pos = { p: pos.p, offset: insertInParagraph(ed, p, pos.offset, line, options.patch) };
+        pos = { p: pos.p, offset: insertInParagraph(ed, p, pos.offset, line, options.patch, like) };
       });
       caret = pos;
       options.after?.();
@@ -340,9 +391,9 @@ export function deleteText(ed: Editor, part: string, txBody: XmlElement, at: Tex
 }
 
 /** Replace all text with plain text, keeping the first paragraph's and first run's formatting. */
-export function replaceText(ed: Editor, part: string, txBody: XmlElement, text: string): Command {
+export function replaceText(ed: Editor, part: string, txBody: XmlElement, text: string, options: TextOptions = {}): Command {
   return ed.edit({
-    label: 'Replace Text', parts: [part], scope: () => [txBody],
+    label: options.label ?? 'Replace Text', parts: [part], scope: () => [options.scope ?? txBody], ...(options.coalesceKey ? { coalesceKey: options.coalesceKey } : {}),
     apply: () => {
       ensureParagraph(ed, txBody);
       const ps = paragraphs(txBody);
@@ -356,6 +407,7 @@ export function replaceText(ed: Editor, part: string, txBody: XmlElement, text: 
         }
         pos = { p: pos.p, offset: insertInParagraph(ed, paragraphs(txBody)[pos.p]!, pos.offset, line) };
       });
+      options.after?.();
     },
   });
 }
@@ -382,6 +434,18 @@ export function patchRunProps(ed: Editor, rPr: XmlElement, patch: RunPatch): voi
   if (patch.fill !== undefined) {
     removeChildren(rPr, ...FILLS);
     if (patch.fill) insertInOrder(rPr, element(rPr, `<a:solidFill>${colorXml(patch.fill)}</a:solidFill>`, ed.strict));
+  }
+  if (patch.effect !== undefined) {
+    removeChildren(rPr, 'a:ln', ...FILLS, 'a:effectLst', 'a:effectDag');
+    const e = patch.effect;
+    if (e) {
+      if (e.outline) insertInOrder(rPr, element(rPr, `<a:ln w="${Math.round(e.outline.width)}"><a:solidFill>${colorXml(e.outline.color)}</a:solidFill><a:prstDash val="solid"/></a:ln>`, ed.strict));
+      const fill = e.fill === 'none' ? '<a:noFill/>'
+        : 'from' in e.fill ? `<a:gradFill><a:gsLst><a:gs pos="0">${colorXml(e.fill.from)}</a:gs><a:gs pos="100000">${colorXml(e.fill.to)}</a:gs></a:gsLst><a:lin ang="${Math.round((((e.fill.angle % 360) + 360) % 360) * 60000)}" scaled="0"/></a:gradFill>`
+          : `<a:solidFill>${colorXml(e.fill)}</a:solidFill>`;
+      insertInOrder(rPr, element(rPr, fill, ed.strict));
+      if (e.shadow) insertInOrder(rPr, element(rPr, '<a:effectLst><a:outerShdw blurRad="38100" dist="38100" dir="2700000" algn="tl"><a:srgbClr val="000000"><a:alpha val="43000"/></a:srgbClr></a:outerShdw></a:effectLst>', ed.strict));
+    }
   }
   if (patch.highlight !== undefined) {
     removeChildren(rPr, 'a:highlight');
@@ -415,6 +479,11 @@ function runsIn(txBody: XmlElement, range: TextRange): { runs: XmlElement[]; mar
   return { runs, marks };
 }
 
+/** The run elements (a:r, a:br, a:fld) a range covers, runs split at its edges. For commands that change those runs. */
+export function runElementsIn(txBody: XmlElement, range: TextRange): XmlElement[] {
+  return runsIn(txBody, range).runs;
+}
+
 /**
  * Character formatting over a range (bold, size, colour, font...). Runs are split at the range's edges; the
  * paragraph mark (a:endParaRPr) of each paragraph the range covers to its end is formatted too, as PowerPoint does,
@@ -441,6 +510,32 @@ export function formatRuns(ed: Editor, part: string, txBody: XmlElement, range: 
           return m;
         })();
         patchRunProps(ed, mark, patch);
+      }
+      options.after?.();
+    },
+  });
+}
+
+/** Run properties that are not formatting: the language, and a link (clearing formatting keeps text a link). */
+const KEPT_ATTRS = new Set(['lang', 'altLang']);
+const KEPT_CHILDREN = ['a:hlinkClick', 'a:hlinkMouseOver', 'a:extLst'];
+
+/**
+ * Clear character formatting over a range, as Clear All Formatting does: every run in it (and the paragraph marks
+ * it covers) drops its own bold, size, colour, font and the rest, so the text looks as its placeholder or the
+ * deck's defaults say again. Paragraph formatting stays.
+ */
+export function clearRunFormatting(ed: Editor, part: string, txBody: XmlElement, range: TextRange, options: TextOptions = {}): Command {
+  return ed.edit({
+    label: options.label ?? 'Clear Formatting', parts: [part], scope: () => [options.scope ?? txBody], ...(options.coalesceKey ? { coalesceKey: options.coalesceKey } : {}),
+    apply: () => {
+      ensureParagraph(ed, txBody);
+      const { runs, marks } = runsIn(txBody, range);
+      const props = [...runs.map(r => child(r, 'a:rPr')), ...marks.map(p => child(p, 'a:endParaRPr'))].filter((x): x is XmlElement => !!x);
+      for (const rPr of props) {
+        rPr.attrs = rPr.attrs.filter(a => a.ns !== '' || KEPT_ATTRS.has(a.local));
+        rPr.children = rPr.children.filter(c => c.kind === 'element' && KEPT_CHILDREN.some(n => is(c, n)));
+        rPr.selfClosing = rPr.children.length === 0;
       }
       options.after?.();
     },
@@ -564,5 +659,42 @@ export function modelToLayout(p: XmlElement, resolved: ResolvedParagraph | undef
 /** The text of a whole body: paragraphs joined by "\n". */
 export function bodyPlainText(txBody: XmlElement): string {
   return paragraphs(txBody).map(p => runsOf(p).map(r => (r.kind === 'br' ? '\u000b' : r.text)).join('')).join('\n');
+}
+
+/** Where a position in a body's plain text (paragraphs joined by "\n") is, as a paragraph and an offset in it. */
+function posOfFlat(txBody: XmlElement, flat: number): TextPos {
+  const ps = paragraphs(txBody);
+  let left = flat;
+  for (let p = 0; p < ps.length; p++) {
+    const len = paragraphLength(ps[p]!);
+    if (left <= len) return { p, offset: left };
+    left -= len + 1;
+  }
+  const last = Math.max(0, ps.length - 1);
+  return { p: last, offset: ps[last] ? paragraphLength(ps[last]!) : 0 };
+}
+
+/**
+ * Make a body's text read as `text`, changing as little as possible: only what lies between the longest start and
+ * the longest end the old and new text share is retyped, so the formatting of everything else stays, and what is
+ * retyped looks like the first character it replaces. This is how a correction made to a plain copy of the text (a
+ * spelling fix, for one) goes back into formatted text. Undefined when the text already reads so.
+ * Paragraphs are "\n" in `text` and line breaks "\v", as in `bodyPlainText`.
+ */
+export function retypeText(ed: Editor, part: string, txBody: XmlElement, text: string, options: TextOptions = {}): Command | undefined {
+  const old = bodyPlainText(txBody);
+  const next = clean(text).replace(/\r\n|\r/g, '\n');
+  if (old === next) return undefined;
+  let start = 0;
+  const max = Math.min(old.length, next.length);
+  while (start < max && old[start] === next[start]) start++;
+  let end = 0;
+  while (end < max - start && old[old.length - 1 - end] === next[next.length - 1 - end]) end++;
+  // never cut a character made of two code units in half
+  const high = (c: string | undefined) => !!c && c >= '\ud800' && c <= '\udbff', low = (c: string | undefined) => !!c && c >= '\udc00' && c <= '\udfff';
+  if (start > 0 && high(old[start - 1])) start--;
+  if (end > 0 && low(old[old.length - end])) end--;
+  const range = { start: posOfFlat(txBody, start), end: posOfFlat(txBody, old.length - end) };
+  return typeText(ed, part, txBody, range, next.slice(start, next.length - end), { label: 'Correct Text', likeReplaced: true, ...options }).command;
 }
 

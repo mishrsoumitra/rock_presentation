@@ -1,11 +1,13 @@
 // apps/web/src/state/store.ts  -- the editor's state: the open deck, the slide on screen, selection, text editing
 import { create } from 'zustand';
 import { isEncryptedPackage, OfficeCryptoError } from '@pptx/crypto';
-import { Editor, paragraphLength, paragraphs, prepareForSave, type Command, type ShapeClip, type RunPatch, type TextPos } from '@pptx/editor-core';
+import { Editor, paragraphLength, paragraphs, prepareForSave, type CellRef, type Command, type FormatClip, type ShapeClip, type SlideClip, type RunPatch, type TextPos } from '@pptx/editor-core';
 import { ShapeView } from '@pptx/model';
 import { OpcError, OpcPackage } from '@pptx/opc';
 import type { FontRegistry } from '@pptx/text';
 import type { XmlElement } from '@pptx/xml';
+import { autosave } from '../engine/autosave.ts';
+import { dueForAuto, versions } from '../engine/versions.ts';
 import { loadFonts, registerCssFonts } from '../engine/fonts.ts';
 import { ImageCache } from '../engine/images.ts';
 import { SceneCache } from '../engine/scene.ts';
@@ -15,7 +17,13 @@ import { decryptInWorker } from '../engine/workers.ts';
 /** What text editing knows: the shape, the caret and the other end of the selection, in file offsets. */
 export interface TextEditing { part: string; el: XmlElement; caret: TextPos; anchor: TextPos; }
 
-export type Pane = 'none' | 'animation' | 'selection';
+/**
+ * The cells picked in the selected table: a block from `anchor` to `focus`. `editing` is typing in the anchor cell
+ * (in the box laid over it); `seed` is a character typed to start that, added after the cell's text.
+ */
+export interface Cells { el: XmlElement; anchor: CellRef; focus: CellRef; editing: boolean; seed?: string; }
+
+export type Pane = 'none' | 'animation' | 'selection' | 'comments' | 'spelling' | 'versions';
 
 export interface Session {
   ed: Editor;
@@ -26,25 +34,79 @@ export interface Session {
   name: string;
   /** The password the deck was opened with: saving encrypts again with it. It stays in this tab. */
   password: string | null;
+  /** The file on this computer the deck was opened from or last saved to, where the browser lets a page write files. */
+  handle?: FileHandle;
+}
+
+/** The part of the File System Access API's file handle this editor uses. */
+export interface FileHandle {
+  name: string;
+  getFile(): Promise<File>;
+  createWritable(): Promise<{ write(data: Uint8Array): Promise<void>; close(): Promise<void> }>;
 }
 
 export interface EditorState {
   session: Session | null;
   /** Bumped on every change, so components re-render; per-part versions decide what actually redraws. */
   version: number;
+  /** How many edits (commands, undos, redos) the deck has had, and how many it had when it was last saved. */
+  edits: number;
+  savedEdits: number;
   slide: string | null;
   selection: XmlElement[];
   /** The group being edited inside (double-click on a group), or null at the top of the slide. */
   entered: XmlElement | null;
   text: TextEditing | null;
+  /** Table cells picked in the selected table (see `activeCells`, which checks they still hold). */
+  cells: Cells | null;
   /** Formatting to apply to the next typed text (Ctrl+B with a caret but no selection). */
   pending: RunPatch | null;
   zoom: number | 'fit';
   /** A preset picked from the shape gallery, waiting to be drawn by dragging on the slide. */
   drawing: string | null;
   mode: 'edit' | 'present';
+  /** The slide show is shown with the speaker's view around it: next slide, notes, timer. */
+  presenterView: boolean;
+  /** Rulers along the slide area, and the guides laid on the slide (EMU from its left and top; this session only). */
+  showRuler: boolean;
+  showGuides: boolean;
+  guides: { x: number[]; y: number[] };
+  /** What fills the window while editing: one slide with the panel beside it, or every slide in a grid. */
+  view: 'normal' | 'grid' | 'master';
+  /** Sections folded shut in the slide panel, by section id. */
+  folded: string[];
+  /** In master view: the slide that was showing, to go back to. (`slide` then names a layout or a master.) */
+  masterReturn: string | null;
   pane: Pane;
+  /** The right-click menu, where it was opened (window coordinates) and on what. */
+  menu: { x: number; y: number; kind: 'shape' | 'slide' | 'thumb' } | null;
+  /** Counts changes to the kept versions, so the Version History pane reads them again. */
+  versionsTick: number;
+  /** The Equation dialog is open: for the selected equation, or a new one. */
+  equationEditing: boolean;
+  /** The Header & Footer dialog is open. */
+  footerEditing: boolean;
+  /** The chart data dialog is open, for the selected chart. */
+  chartEditing: boolean;
+  /** The hyperlink dialog is open. */
+  linking: boolean;
+  /** The find and replace panel is open. */
+  finding: boolean;
   clipboard: ShapeClip | null;
+  /** A motion path is being drawn for this shape: in place of its animations, or as one more. */
+  pathDrawing: { el: XmlElement; replace: boolean } | null;
+  /** The video or sound playing in the editor, where its picture is (it is the one selected shape while it plays). */
+  playing: XmlElement | null;
+  /** The picture being cropped with handles (it is the one selected shape while that lasts). */
+  cropping: XmlElement | null;
+  /** The look the format painter picked up last (kept for Ctrl+Alt+V after the painter has been used). */
+  formatClip: FormatClip | null;
+  /** The format painter is on: the next shape clicked takes the look; 'sticky' keeps it on until Escape. */
+  painting: false | 'once' | 'sticky';
+  /** A copied or cut slide, held apart from the deck, and the mark it carries on the system clipboard. */
+  slideClip: { clip: SlideClip; id: string } | null;
+  /** The mark the copied shapes carry on the system clipboard, so a paste of that clipboard brings them back whole. */
+  clipId: string | null;
   message: { kind: 'info' | 'error'; text: string } | null;
   askPassword: { name: string; bytes: Uint8Array; retry: boolean } | null;
 
@@ -83,8 +145,8 @@ function fitted(s: Session, t: TextEditing | null): TextEditing | null {
 }
 
 export const useEditor = create<EditorState>((set, get) => ({
-  session: null, version: 0, slide: null, selection: [], entered: null, text: null, pending: null,
-  zoom: 'fit', drawing: null, mode: 'edit', pane: 'none', clipboard: null, message: null, askPassword: null,
+  session: null, version: 0, edits: 0, savedEdits: 0, slide: null, selection: [], entered: null, text: null, cells: null, pending: null,
+  zoom: 'fit', drawing: null, mode: 'edit', presenterView: false, view: 'normal', folded: [], masterReturn: null, showRuler: false, showGuides: true, guides: { x: [], y: [] }, pane: 'none', finding: false, linking: false, chartEditing: false, footerEditing: false, equationEditing: false, versionsTick: 0, menu: null, clipboard: null, clipId: null, slideClip: null, formatClip: null, painting: false, cropping: null, playing: null, pathDrawing: null, message: null, askPassword: null,
 
   async open(bytes, name, password) {
     performance.mark('open-start');
@@ -111,7 +173,8 @@ export const useEditor = create<EditorState>((set, get) => ({
         set(s => ({ version: s.version + 1 }));
       });
       set({
-        session, slide: ed.doc.slideParts()[0] ?? null, selection: [], entered: null, text: null, pending: null, askPassword: null,
+        session, slide: ed.doc.slideParts()[0] ?? null, selection: [], entered: null, text: null, cells: null, pending: null, askPassword: null, guides: { x: [], y: [] },
+        edits: 0, savedEdits: 0, view: 'normal', masterReturn: null, folded: [],
         version: get().version + 1,
         message: ed.mainKind === 'template' ? { kind: 'info', text: 'Opened a template: saving writes a presentation (.pptx).' }
           : ed.mainKind === 'macro' || pkg.partNames().some(n => /vbaProject\.bin$/i.test(n))
@@ -133,7 +196,7 @@ export const useEditor = create<EditorState>((set, get) => ({
     if (!s) return;
     try {
       s.ed.run(cmd);
-      if (after) set(after);
+      set(st => ({ ...(after ?? {}), edits: st.edits + 1 }));
     } catch (e) {
       get().notify('error', `${cmd.label} failed: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -143,7 +206,7 @@ export const useEditor = create<EditorState>((set, get) => ({
     const s = get().session;
     if (!s?.ed.undo()) return;
     s.thumbs.flush();
-    set(st => ({ selection: attached(st.selection), text: fitted(s, st.text), pending: null }));
+    set(st => ({ selection: attached(st.selection), text: fitted(s, st.text), pending: null, edits: st.edits + 1 }));
     const slides = s.ed.doc.slideParts();
     if (!slides.includes(get().slide ?? '')) set({ slide: slides[0] ?? null });
   },
@@ -152,7 +215,7 @@ export const useEditor = create<EditorState>((set, get) => ({
     const s = get().session;
     if (!s?.ed.redo()) return;
     s.thumbs.flush();
-    set(st => ({ selection: attached(st.selection), text: fitted(s, st.text), pending: null }));
+    set(st => ({ selection: attached(st.selection), text: fitted(s, st.text), pending: null, edits: st.edits + 1 }));
     const slides = s.ed.doc.slideParts();
     if (!slides.includes(get().slide ?? '')) set({ slide: slides[0] ?? null });
   },
@@ -161,12 +224,12 @@ export const useEditor = create<EditorState>((set, get) => ({
     const s = get().session;
     s?.ed.log.seal();
     s?.thumbs.flush();
-    set({ slide: part, selection: [], entered: null, text: null });
+    set({ slide: part, selection: [], entered: null, text: null, cells: null, cropping: null, playing: null, pathDrawing: null });
   },
 
   select(els) {
     get().session?.ed.log.seal();
-    set({ selection: els, text: null });
+    set({ selection: els, text: null, cells: null, ...(get().cropping && !els.includes(get().cropping!) ? { cropping: null } : {}), ...(get().playing && !els.includes(get().playing!) ? { playing: null } : {}) });
   },
 
   setState(patch) { set(patch); },
@@ -198,3 +261,79 @@ useEditor.subscribe((st, prev) => { if (prev.text && !st.text) st.session?.thumb
 
 /** The session, for code outside React (event handlers). */
 export const session = () => useEditor.getState().session;
+
+/** Whether the deck has changes that have not been saved. */
+export const unsaved = (s: Pick<EditorState, 'session' | 'edits' | 'savedEdits'> = useEditor.getState()) => !!s.session && s.edits !== s.savedEdits;
+
+/** The deck has just been written somewhere: nothing is unsaved, and the copy kept for recovery is no longer needed. */
+export function markSaved(): void {
+  useEditor.setState(s => ({ savedEdits: s.edits }));
+  void autosave.clear();
+}
+
+/**
+ * Autosave: a few seconds after the last change the deck is written (as a save would write it, password and all)
+ * to this browser's own database, where the welcome screen finds it if the tab is closed before a real save. The
+ * wait grows with the time a save takes, so a very large deck is not being written all the time.
+ */
+let timer: ReturnType<typeof setTimeout> | undefined;
+/** The deck the automatic versions are being timed for, and when one was last kept (or the timing began). */
+let versionFor: Session | undefined;
+let versionAt = 0;
+let writing = false;
+let wait = 2500;
+/** Decks larger than this are not autosaved: writing one would stall the editor again and again. */
+export const AUTOSAVE_LIMIT = 48 << 20;
+function tooLarge(s: Session): boolean {
+  let total = 0;
+  for (const n of s.ed.pkg.partNames()) {
+    total += s.ed.pkg.getPart(n)?.bytes.length ?? 0;
+    if (total > AUTOSAVE_LIMIT) return true;
+  }
+  return false;
+}
+async function keep(): Promise<void> {
+  const s = useEditor.getState();
+  if (!s.session || writing || !autosave.available()) return;
+  if (!unsaved(s)) { void autosave.clear(); return; }
+  if (tooLarge(s.session)) return;
+  writing = true;
+  const edits = s.edits, session = s.session, started = performance.now();
+  try {
+    const bytes = await s.save();
+    // only when this is still the deck, and nothing saved it meanwhile
+    if (bytes && useEditor.getState().session === session && unsaved()) {
+      await autosave.put({ name: session.name, bytes, at: Date.now(), encrypted: !!session.password });
+      // and, every ten minutes of a deck being changed, a version to go back to
+      if (versionFor !== session) { versionFor = session; versionAt = Date.now(); }
+      else if (dueForAuto(versionAt, Date.now())) {
+        versionAt = Date.now();
+        const id = await versions.add({ deck: session.name, label: 'Autosaved', at: versionAt, bytes, encrypted: !!session.password, slides: session.ed.doc.slideParts().length, auto: true });
+        if (id !== undefined) useEditor.setState(x => ({ versionsTick: x.versionsTick + 1 }));
+      }
+    }
+  } catch {
+    // a deck that cannot be written now is tried again after the next change
+  } finally {
+    writing = false;
+    wait = Math.max(2500, Math.min(60_000, (performance.now() - started) * 10));
+    if (useEditor.getState().edits !== edits) schedule();
+  }
+}
+function schedule(): void {
+  if (timer) clearTimeout(timer);
+  timer = setTimeout(() => void keep(), wait);
+}
+useEditor.subscribe((st, prev) => { if (st.edits !== prev.edits || st.session !== prev.session) schedule(); });
+/** Write the recovery copy now (tests, and before the page goes away where there is time). */
+export const autosaveNow = () => { if (timer) clearTimeout(timer); return keep(); };
+
+// leaving with unsaved changes asks first, as browsers let a page ask
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeunload', e => {
+    if (!unsaved()) return;
+    e.preventDefault();
+    e.returnValue = '';
+  });
+}
+

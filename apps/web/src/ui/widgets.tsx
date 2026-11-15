@@ -17,6 +17,22 @@ const PATHS: Record<string, string> = {
   front: 'M8 8h12v12H8zM4 4h12v12', back: 'M4 4h12v12H4zM8 8h12v12', group: 'M3 3h7v7H3zM14 14h7v7h-7zM10 6h4M18 10v4', rotate: 'M20 12a8 8 0 1 1-2.3-5.6M20 4v5h-5',
   flipH: 'M12 3v18M8 7l-5 5 5 5zM16 7l5 5-5 5z', flipV: 'M3 12h18M7 8l5-5 5 5zM7 16l5 5 5-5z', open: 'M3 6h6l2 2h10v11H3z', save: 'M5 3h11l3 3v15H5zM8 3v5h7V3M8 21v-7h8v7',
   file: 'M6 2h9l5 5v15H6zM14 2v6h6', size: 'M3 6h18v12H3zM8 10v4M16 10v4', hide: 'M3 3l18 18M10.6 10.6a2 2 0 0 0 2.8 2.8M9.9 5.1A10 10 0 0 1 22 12c-.6 1.3-1.4 2.4-2.4 3.4M6.1 6.1A10 10 0 0 0 2 12c1.8 4 5.6 7 10 7 1.6 0 3.2-.4 4.6-1.1',
+  sup: 'M4 20l8-12M4 8l8 12M16 4.5a2 2 0 0 1 4 0c0 1.5-4 2.5-4 4.5h4', sub: 'M4 16L12 4M4 4l8 12M16 15.5a2 2 0 0 1 4 0c0 1.5-4 2.5-4 4.5h4',
+  highlight: 'M14 4l6 6-9 9H5v-6zM3 22h18', clear: 'M6 5h12M12 5l-3 14M4 21h8M15 14l6 6M21 14l-6 6',
+  spacing: 'M4 8l4 8 4-8M14 8l3 8 3-8M3 21h18M3 19v4M21 19v4', lines: 'M10 5h11M10 12h11M10 19h11M5 4v16M3 6l2-2 2 2M3 18l2 2 2-2',
+  anchor: 'M3 3h18M3 21h18M7 10h10M7 14h10', columns: 'M3 5h7M3 10h7M3 15h7M3 20h7M14 5h7M14 10h7M14 15h7M14 20h7',
+  search: 'M10.5 17a6.5 6.5 0 1 1 0-13 6.5 6.5 0 0 1 0 13zM15.5 15.5L21 21',
+  table: 'M3 5h18v14H3zM3 10h18M3 14.5h18M9 5v14M15 5v14',
+  shadow: 'M4 4h12v12H4zM8 20h12V8',
+  comment: 'M4 5h16v11H10l-4 4v-4H4z',
+  chart: 'M4 20V4M4 20h16M8 20v-7M12 20V8M16 20v-10',
+  symbol: 'M6 19h4v-2a6 6 0 1 1 4 0v2h4M6 19v-1M18 19v-1',
+  footer: 'M4 4h16v16H4zM4 15h16M7 17.5h4M15 17.5h2',
+  wordart: 'M5 19L11 5h2l6 14M8 14h8M3 21h18',
+  equation: 'M4 12h3l2 6 4-13h7M15 12l5 6M20 12l-5 6',
+  history: 'M4 12a8 8 0 1 0 2.5-5.8M4 5v4h4M12 8v4l3 2',
+  brush: 'M14 3l7 7-8 8H8v-5zM8 18l-3 3M4 21h4',
+  link: 'M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1',
   lock: 'M6 11h12v10H6zM8 11V7a4 4 0 0 1 8 0v4', anim: 'M4 12h4l3-7 3 14 3-7h3', layout: 'M3 4h18v16H3zM3 9h18M9 9v11',
 };
 
@@ -69,8 +85,14 @@ export function Menu({ icon, label, children, wide = true, testid }: { icon?: st
   );
 }
 
-export function MenuItem({ label, onClick, disabled }: { label: string; onClick: () => void; disabled?: boolean }) {
-  return <button type="button" role="menuitem" className="menu-item" disabled={disabled} onClick={onClick} onMouseDown={keepFocus}>{label}</button>;
+/** A menu command. `checked` marks the choice in force (a tick, and aria-checked), for menus that pick one of several. */
+export function MenuItem({ label, onClick, disabled, checked }: { label: string; onClick: () => void; disabled?: boolean; checked?: boolean }) {
+  if (checked === undefined) return <button type="button" role="menuitem" className="menu-item" disabled={disabled} onClick={onClick} onMouseDown={keepFocus}>{label}</button>;
+  return (
+    <button type="button" role="menuitemradio" aria-checked={checked} className={`menu-item${checked ? ' checked' : ''}`} disabled={disabled} onClick={onClick} onMouseDown={keepFocus}>
+      <span className="tick" aria-hidden="true">{checked ? '✓' : ''}</span>{label}
+    </button>
+  );
 }
 
 /** The theme colour picker: the slide's theme colours with PowerPoint's tints and shades, then standard colours. */
@@ -102,6 +124,21 @@ export function ColorGrid({ onPick, extra }: { onPick: (c: ColorSpec | 'none' | 
   );
 }
 
+/**
+ * Ask for a file with the browser's own picker, from anywhere (a menu item that has already closed its menu, for
+ * one). Resolves to undefined when the picker is dismissed.
+ */
+export function pickFile(accept: string): Promise<File | undefined> {
+  return new Promise(resolve => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = accept;
+    input.onchange = () => resolve(input.files?.[0]);
+    input.oncancel = () => resolve(undefined);
+    input.click();
+  });
+}
+
 /** A small drawing of a preset shape, from its own geometry. */
 export function PresetIcon({ prst, size = 22 }: { prst: string; size?: number }) {
   const g = presetGeometry(prst);
@@ -125,6 +162,28 @@ export function PresetIcon({ prst, size = 22 }: { prst: string; size?: number })
     <svg width={size} height={size} viewBox={`-6 -6 ${w + 12} ${h + 12}`} aria-hidden="true">
       <path d={d} fill="none" stroke="currentColor" strokeWidth="5" strokeLinejoin="round" />
     </svg>
+  );
+}
+
+/**
+ * The table size picker: a grid of squares; the one under the pointer (or the keyboard focus) says how many columns
+ * and rows, and a click picks that size. Sizes are "columns x rows", as PowerPoint words them.
+ */
+export function TableGrid({ onPick, cols = 10, rows = 8 }: { onPick: (rows: number, cols: number) => void; cols?: number; rows?: number }) {
+  const [at, setAt] = useState<{ r: number; c: number } | null>(null);
+  return (
+    <div className="table-grid" data-testid="table-grid" onMouseLeave={() => setAt(null)}>
+      <div className="colors-title" data-testid="table-grid-size">{at ? `${at.c + 1} x ${at.r + 1} Table` : 'Insert Table'}</div>
+      <div className="table-grid-cells" style={{ gridTemplateColumns: `repeat(${cols}, 18px)` }}>
+        {Array.from({ length: rows * cols }, (_, i) => {
+          const r = Math.floor(i / cols), c = i % cols;
+          return (
+            <button key={i} type="button" className={`table-grid-cell${at && r <= at.r && c <= at.c ? ' on' : ''}`} aria-label={`${c + 1} columns by ${r + 1} rows`}
+              data-size={`${c + 1}x${r + 1}`} onMouseEnter={() => setAt({ r, c })} onFocus={() => setAt({ r, c })} onClick={() => onPick(r + 1, c + 1)} onMouseDown={keepFocus} />
+          );
+        })}
+      </div>
+    </div>
   );
 }
 

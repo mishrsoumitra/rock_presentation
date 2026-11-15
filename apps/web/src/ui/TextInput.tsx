@@ -4,7 +4,8 @@ import { useLayoutEffect, useRef, type RefObject } from 'react';
 import { useEditor } from '../state/store.ts';
 import { caretRect, move, type Move, type TextView } from './caret.ts';
 import { keystrokeStart } from './perf.ts';
-import { deleteChars, formatPara, formatText, formattingHere, selectAll, typeChars } from './textActions.ts';
+import { hasLook, htmlToParagraphs, paragraphsToHtml, plainOf } from './richText.ts';
+import { deleteChars, formatPara, formatText, formattingHere, selectAll, selectedText, typeChars, typeRich } from './textActions.ts';
 
 /**
  * Text input goes to a textarea kept under the caret (how browser editors take IME composition and mobile
@@ -17,7 +18,8 @@ export function TextInput({ view, stage, zoom }: { view: TextView & { transform:
   const composing = useRef(false);
 
   // focused as soon as it is in the page, before the browser paints: keys typed right after the click land here
-  useLayoutEffect(() => { ref.current?.focus({ preventScroll: true }); }, [text.el]);
+  // (not while the find panel has the focus: it selects what it finds, and Enter there finds the next)
+  useLayoutEffect(() => { if (!document.activeElement?.closest('.find-bar')) ref.current?.focus({ preventScroll: true }); }, [text.el]);
 
   // keep the textarea under the caret, so the IME's candidate window opens there
   const r = caretRect(view, text.caret);
@@ -126,10 +128,36 @@ export function TextInput({ view, stage, zoom }: { view: TextView & { transform:
       onCompositionStart={() => { composing.current = true; }}
       onCompositionEnd={e => { composing.current = false; flush(e.currentTarget); }}
       onInput={e => { if (!composing.current) flush(e.currentTarget); }}
+      // copy and cut put the selected text on the clipboard, as plain text and as HTML that keeps bold, italic and
+      // underline for other apps (the hidden box itself holds nothing to copy)
+      onCopy={e => {
+        const sel = selectedText();
+        if (!sel) return;
+        e.preventDefault();
+        e.clipboardData.setData('text/plain', plainOf(sel));
+        e.clipboardData.setData('text/html', paragraphsToHtml(sel));
+      }}
+      onCut={e => {
+        const sel = selectedText();
+        if (!sel) return;
+        e.preventDefault();
+        e.clipboardData.setData('text/plain', plainOf(sel));
+        e.clipboardData.setData('text/html', paragraphsToHtml(sel));
+        deleteChars('back');
+      }}
+      // paste: HTML that carries bold, italic or underline is typed with them; anything else as plain text
+      // (a paste is an undo step of its own, not part of the typing before or after it)
       onPaste={e => {
         e.preventDefault();
+        const log = useEditor.getState().session?.ed.log;
+        const html = e.clipboardData.getData('text/html');
+        const rich = html ? htmlToParagraphs(html) : undefined;
         const s = e.clipboardData.getData('text/plain');
-        if (s) typeChars(s.replace(/\r\n|\r/g, '\n'));
+        log?.seal();
+        if (rich && hasLook(rich)) typeRich(rich);
+        else if (s) typeChars(s.replace(/\r\n|\r/g, '\n'));
+        else if (rich) typeRich(rich);
+        log?.seal();
       }}
       onBlur={() => useEditor.getState().session?.ed.log.seal()}
     />

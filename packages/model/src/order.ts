@@ -45,7 +45,10 @@ export function schemaType(el: XmlElement): string | null {
   if (!parent) type = GLOBALS[lname(el)] ?? null;
   else {
     const pt = schemaType(parent);
-    type = pt ? slotsOf(pt)?.get(lname(el))?.type ?? null : null;
+    const slot = pt ? slotsOf(pt)?.get(lname(el)) : undefined;
+    // an element its parent's type does not list is content of an open container (a:graphicData holds any
+    // element): when it is one of the schemas' own root elements, such as a:tbl, it has that element's type
+    type = slot ? slot.type : GLOBALS[lname(el)] ?? null;
   }
   typeCache.set(el, type);
   return type;

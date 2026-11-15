@@ -6,7 +6,7 @@ import type { XmlElement } from '@pptx/xml';
 import type { Editor } from './editor.ts';
 import type { Command } from './history.ts';
 import { effectiveXfrm, unionBounds, visualBounds } from './transform.ts';
-import { element, insertAt, nextShapeId, shapesOfUnit, unitOf, unitsIn } from './xml.ts';
+import { element, insertAt, nextShapeId, shapesOfUnit, twins, unitOf, unitsIn } from './xml.ts';
 
 export type ZOrder = 'front' | 'back' | 'forward' | 'backward';
 
@@ -152,6 +152,27 @@ export function rename(ed: Editor, part: string, shape: ShapeView, name: string)
       const a = cNvPr.attrs.find(x => x.local === 'name' && x.ns === '');
       if (a) a.value = name;
       else cNvPr.attrs.push({ prefix: null, local: 'name', value: name, ns: '' });
+    },
+  });
+}
+
+/**
+ * Hide shapes or show them again (cNvPr hidden="1", the selection pane's eye). A hidden shape stays in the file and
+ * keeps its place in the order; it is not drawn, in the editor or in the slide show.
+ */
+export function setShapesHidden(ed: Editor, part: string, shapes: ShapeView[], hidden: boolean): Command {
+  return ed.edit({
+    label: hidden ? 'Hide' : 'Show', parts: [part], scope: () => shapes.map(s => unitOf(s.el)),
+    apply: () => {
+      for (const s of shapes) {
+        // every branch of an alternate content block: whichever a reader takes, the shape is hidden
+        for (const el of twins(s.el)) {
+          const cNvPr = new ShapeView(el, s.owner).cNvPr;
+          if (!cNvPr) continue;
+          cNvPr.attrs = cNvPr.attrs.filter(x => !(x.local === 'hidden' && x.ns === ''));
+          if (hidden) cNvPr.attrs.push({ prefix: null, local: 'hidden', value: '1', ns: '' });
+        }
+      }
     },
   });
 }

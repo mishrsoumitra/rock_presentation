@@ -40,3 +40,18 @@ export function linkAt(slide: RenderSlide, x: number, y: number): Link | undefin
 
 /** Only web and mail links leave the presentation; anything else (file paths, javascript:) is not followed. */
 export const isSafeUrl = (url: string) => /^(https?:|mailto:)/i.test(url.trim());
+
+/**
+ * The address a person typed, as a link: "example.com/page" gets https://, "someone@example.com" gets mailto:,
+ * and an address with a scheme is kept only when it is a web or mail address. Undefined for anything else (a file
+ * path, javascript:, text with spaces), which is never made into a link.
+ */
+export function normalizeUrl(input: string): string | undefined {
+  const text = input.trim();
+  if (!text || /\s/.test(text)) return undefined;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(text) && !/^[^/:@]+:\d+(\/|$)/.test(text)) return isSafeUrl(text) && text.length > text.indexOf(':') + 1 ? text : undefined;
+  if (/^[^@/\\]+@[^@/\\]+\.[^@/\\]+$/.test(text)) return `mailto:${text}`;
+  if (/^(localhost|[^/\\.]+(\.[^/\\.]+)+)(:\d+)?([/?#].*)?$/i.test(text)) return `https://${text}`;
+  return undefined;
+}
+

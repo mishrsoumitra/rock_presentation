@@ -1,13 +1,20 @@
 // apps/web/src/ui/Ribbon.tsx  -- the commands, in tabs as PowerPoint arranges them
 import { useRef, useState } from 'react';
-import { useEditor, type EditorState } from '../state/store.ts';
+import { COLOR_SCHEMES, FONT_SCHEMES } from '@pptx/editor-core';
+import { unsaved, useEditor, type EditorState } from '../state/store.ts';
 import * as act from './actions.ts';
-import { formatPara, formatText, formattingHere } from './textActions.ts';
-import { Btn, ColorGrid, keepFocus, Menu, MenuItem, refocusText, ShapeGallery } from './widgets.tsx';
+import { SYMBOL_GROUPS } from './symbols.ts';
+import { WordArtGallery } from './WordArtGallery.tsx';
+import { BULLET_STYLES, bulletPatch, NUMBER_STYLES, numberSample } from './bullets.ts';
+import { linkContext } from './linkActions.ts';
+import { newGuideAt } from './rulers.ts';
+import * as tables from './tables.ts';
+import { clearFormatting, formatPara, formatText, formatTextBox, formattingHere } from './textActions.ts';
+import { Btn, ColorGrid, Icon, keepFocus, Menu, MenuItem, pickFile, refocusText, ShapeGallery, TableGrid } from './widgets.tsx';
 
 const FONTS = ['Calibri', 'Calibri Light', 'Cambria', 'Arial', 'Times New Roman', 'Courier New', 'Aptos', 'Georgia', 'Verdana', 'Segoe UI'];
 const SIZES = [8, 9, 10, 10.5, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 40, 44, 48, 54, 60, 66, 72, 80, 88, 96];
-type Tab = 'File' | 'Home' | 'Insert' | 'Design' | 'Transitions' | 'Animations' | 'Slide Show';
+type Tab = 'File' | 'Home' | 'Insert' | 'Design' | 'Transitions' | 'Animations' | 'Slide Show' | 'View';
 
 function FilePicker({ accept, onFile, children }: { accept: string; onFile: (f: File) => void; children: (open: () => void) => React.ReactNode }) {
   const ref = useRef<HTMLInputElement>(null);
@@ -38,35 +45,57 @@ function shown(s: EditorState): string {
   return [
     s.session?.name, s.session?.password ? 'pw' : '', log?.canUndo, log?.undoLabel, log?.canRedo, log?.redoLabel, !!s.clipboard,
     s.selection.length, s.selection[0]?.local, !!s.text,
-    run?.latin, run?.size, run?.bold, run?.italic, run?.underline, run?.strike, para?.bullet?.kind, para?.level, para?.align,
+    run?.latin, run?.size, run?.bold, run?.italic, run?.underline, run?.strike, para?.bullet?.kind, para?.bullet?.char, para?.bullet?.scheme, para?.marL, para?.indent, para?.level, para?.align,
+    run?.baseline, run?.spacing, para?.lineSpacing.kind, para?.lineSpacing.val, para?.spaceBefore.val, para?.spaceAfter.val,
+    here.body?.anchor, here.body?.numCol, here.body && Object.values(here.body.insets).join(','),
+    s.painting, !!s.cropping, act.chartSelected(), !!act.selectedMedia(), !!s.playing, act.selectedEquation(), s.pane, s.view, s.showRuler, s.showGuides, s.guides.x.length + s.guides.y.length, s.cells && [s.cells.anchor.r, s.cells.anchor.c, s.cells.focus.r, s.cells.focus.c].join(','), !!linkContext(), s.text && [s.text.anchor.p, s.text.anchor.offset, s.text.caret.p, s.text.caret.offset].join(','), Object.values(tables.tableAbilities()).join(','),
   ].join('|');
 }
 
 export function Ribbon({ extraTabs }: { extraTabs?: Partial<Record<Tab, React.ReactNode>> }) {
   const [tab, setTab] = useState<Tab>('Home');
   const session = useEditor(s => s.session);
+  const dirty = useEditor(s => unsaved(s));
   useEditor(shown);
   const selection = useEditor.getState().selection;
   const log = session?.ed.log;
   const here = formattingHere();
   const run = here.run;
   const para = here.para?.props;
+  const body = here.body;
+  const lineIs = (m: number) => para?.lineSpacing.kind === 'pct' && Math.abs(para.lineSpacing.val - m) < 0.001;
+  const marginsAre = (l: number, t: number) => !!body && body.insets.l === l && body.insets.r === l && body.insets.t === t && body.insets.b === t;
   const hasSel = selection.length > 0;
+  const table = tables.tableAbilities();
+  const painting = useEditor.getState().painting;
+  const chart = act.chartSelected();
+  const media = !!act.selectedMedia();
+  const equation = act.selectedEquation() !== undefined;
+  const playing = !!useEditor.getState().playing;
+  const cropping = !!useEditor.getState().cropping;
   const isPicture = selection.length === 1 && selection[0]!.local === 'pic';
-  const tabs: Tab[] = ['File', 'Home', 'Insert', 'Design', 'Transitions', 'Animations', 'Slide Show'];
+  const tabs: Tab[] = ['File', 'Home', 'Insert', 'Design', 'Transitions', 'Animations', 'Slide Show', 'View'];
 
   return (
     <header className="ribbon">
       <nav className="tabs" role="tablist">
         {tabs.map(t => <button key={t} type="button" role="tab" aria-selected={tab === t} className={tab === t ? 'tab active' : 'tab'} onClick={() => setTab(t)} onMouseDown={keepFocus}>{t}</button>)}
-        <span className="doc-name">{session?.name ?? ''}</span>
+        <span className="doc-name" data-testid="doc-name">{session ? `${session.name}${dirty ? ' (unsaved changes)' : ''}` : ''}</span>
       </nav>
       <div className="groups" role="toolbar">
         {tab === 'File' && (
           <>
             <section className="group"><Btn icon="file" label="New" wide onClick={() => void act.newPresentation()} testid="new" />
-              <FilePicker accept=".pptx,.pptm,.potx,.ppsx,.ppt" onFile={f => void act.openFile(f)}>{open => <Btn icon="open" label="Open…" wide onClick={open} testid="open" />}</FilePicker>
-              <Btn icon="save" label="Save a copy" wide disabled={!session} onClick={() => void act.saveAndDownload()} testid="save" /></section>
+              <FilePicker accept=".pptx,.pptm,.potx,.ppsx,.ppt" onFile={f => void act.openFile(f)}>{open => <Btn icon="open" label="Open…" wide onClick={() => void act.openWithPicker().then(done => { if (!done) open(); })} testid="open" />}</FilePicker>
+              <Btn icon="save" label="Save" wide disabled={!session} onClick={() => void act.saveFile()} testid="save-file" />
+              <Btn icon="save" label="Save As…" wide disabled={!session} onClick={() => void act.saveFile(true)} testid="save-as" />
+              <Btn icon="save" label="Save a copy" wide disabled={!session} onClick={() => void act.saveAndDownload()} testid="save" />
+              <Btn icon="history" label="Version History" wide disabled={!session} active={useEditor.getState().pane === 'versions'} onClick={() => useEditor.setState(x => ({ pane: x.pane === 'versions' ? 'none' : 'versions' }))} testid="version-history" /></section>
+            <section className="group" aria-label="Export">
+              <Btn icon="file" label="Export PDF" wide disabled={!session} onClick={() => void act.exportAs('pdf')} testid="export-pdf" />
+              <Btn icon="image" label="Slide as PNG" wide disabled={!session} onClick={() => void act.exportAs('png')} testid="export-png" />
+              <Btn icon="image" label="All Slides as PNG" wide disabled={!session} onClick={() => void act.exportAs('pngs')} testid="export-pngs" />
+            </section>
             <section className="group"><Btn icon="lock" label={session?.password ? 'Change password…' : 'Encrypt with password…'} wide disabled={!session}
               onClick={() => window.dispatchEvent(new CustomEvent('ask-new-password'))} />
               {session?.password && <Btn label="Remove password" wide onClick={() => { session.password = null; useEditor.getState().notify('info', 'The next save is not encrypted.'); }} />}</section>
@@ -82,6 +111,12 @@ export function Ribbon({ extraTabs }: { extraTabs?: Partial<Record<Tab, React.Re
               <Btn icon="paste" label="Paste" disabled={!useEditor.getState().clipboard} onClick={() => void act.paste()} />
               <Btn icon="cut" label="Cut" disabled={!hasSel} onClick={() => act.copySelection(true)} />
               <Btn icon="copy" label="Copy" disabled={!hasSel} onClick={() => act.copySelection()} />
+              <button type="button" className={`btn${painting ? ' active' : ''}`} title="Format Painter (double-click to keep it on)" aria-label="Format Painter" aria-pressed={!!painting}
+                disabled={!hasSel && !useEditor.getState().text && !painting} onMouseDown={keepFocus} data-testid="format-painter"
+                onClick={e => act.togglePainter(e.detail >= 2)}><Icon name="brush" /></button>
+            </section>
+            <section className="group" aria-label="Editing">
+              <Btn icon="search" label="Find and Replace" disabled={!session} onClick={() => useEditor.setState({ finding: !useEditor.getState().finding })} testid="find" />
             </section>
             <section className="group" aria-label="Slides">
               <Btn icon="plus" label="New Slide" wide disabled={!session} onClick={() => act.newSlide()} testid="new-slide" />
@@ -100,21 +135,68 @@ export function Ribbon({ extraTabs }: { extraTabs?: Partial<Record<Tab, React.Re
               <Btn icon="italic" label="Italic" active={run?.italic} onClick={() => formatText({ i: !run?.italic }, 'Italic')} />
               <Btn icon="underline" label="Underline" active={!!run?.underline && run.underline !== 'none'} onClick={() => formatText({ u: run?.underline && run.underline !== 'none' ? 'none' : 'sng' }, 'Underline')} />
               <Btn icon="strike" label="Strikethrough" active={run?.strike === 'sngStrike'} onClick={() => formatText({ strike: run?.strike === 'sngStrike' ? 'noStrike' : 'sngStrike' }, 'Strikethrough')} />
+              <Btn icon="sup" label="Superscript" active={(run?.baseline ?? 0) > 0} onClick={() => formatText({ baseline: (run?.baseline ?? 0) > 0 ? 0 : 30000 }, 'Superscript')} testid="superscript" />
+              <Btn icon="sub" label="Subscript" active={(run?.baseline ?? 0) < 0} onClick={() => formatText({ baseline: (run?.baseline ?? 0) < 0 ? 0 : -25000 }, 'Subscript')} testid="subscript" />
               <Menu icon="text" label="Font Color" wide={false}>{close => <ColorGrid onPick={c => { close(); formatText({ fill: c === 'none' ? null : c }, 'Font Color'); }} />}</Menu>
+              <Menu icon="highlight" label="Text Highlight Color" wide={false} testid="highlight">{close => <ColorGrid onPick={c => { close(); formatText({ highlight: c === 'none' ? null : c }, 'Highlight'); }}
+                extra={<MenuItem label="No Color" onClick={() => { close(); formatText({ highlight: null }, 'Highlight'); }} />} />}</Menu>
+              <Menu icon="spacing" label="Character Spacing" wide={false} testid="char-spacing">{close => (
+                ([['Very Tight', -3], ['Tight', -1.5], ['Normal', 0], ['Loose', 3], ['Very Loose', 6]] as const).map(([l, pt]) =>
+                  <MenuItem key={l} label={l} checked={!!run && run.spacing === pt} onClick={() => { close(); formatText({ spc: pt * 100 }, 'Character Spacing'); }} />)
+              )}</Menu>
+              <Menu icon="wordart" label="WordArt Styles" wide={false} testid="wordart-styles">{close => (
+                <>
+                  <WordArtGallery testid="wordart-styles-gallery" onPick={w => { close(); formatText({ effect: w.effect }, 'WordArt Style'); refocusText(); }} />
+                  <MenuItem label="Clear WordArt" onClick={() => { close(); formatText({ effect: null }, 'Clear WordArt'); refocusText(); }} />
+                </>
+              )}</Menu>
+              <Btn icon="clear" label="Clear All Formatting" onClick={clearFormatting} testid="clear-formatting" />
             </section>
             <section className="group" aria-label="Paragraph">
-              <Btn icon="bullets" label="Bullets" active={para?.bullet?.kind === 'char'} onClick={() => formatPara({ bullet: para?.bullet?.kind === 'char' ? { kind: 'none' } : { kind: 'char', char: '•', font: 'Arial' } }, 'Bullets')} />
-              <Btn icon="numbers" label="Numbering" active={para?.bullet?.kind === 'autonum'} onClick={() => formatPara({ bullet: para?.bullet?.kind === 'autonum' ? { kind: 'none' } : { kind: 'autonum', scheme: 'arabicPeriod' } }, 'Numbering')} />
+              <Btn icon="bullets" label="Bullets" active={para?.bullet?.kind === 'char'} onClick={() => formatPara(bulletPatch(para?.bullet?.kind === 'char' ? { kind: 'none' } : { kind: 'char', char: '•', font: 'Arial' }, para), 'Bullets')} testid="bullets" />
+              <Menu label="Bullet Styles" wide={false} testid="bullet-styles">{close => (<>
+                <MenuItem label="None" checked={!para?.bullet} onClick={() => { close(); formatPara(bulletPatch({ kind: 'none' }, para), 'Bullets'); }} />
+                {BULLET_STYLES.map(b => <MenuItem key={b.char} label={`${b.char} ${b.name}`} checked={para?.bullet?.kind === 'char' && para.bullet.char === b.char}
+                  onClick={() => { close(); formatPara(bulletPatch({ kind: 'char', char: b.char, font: 'Arial' }, para), 'Bullets'); }} />)}
+              </>)}</Menu>
+              <Btn icon="numbers" label="Numbering" active={para?.bullet?.kind === 'autonum'} onClick={() => formatPara(bulletPatch(para?.bullet?.kind === 'autonum' ? { kind: 'none' } : { kind: 'autonum', scheme: 'arabicPeriod' }, para), 'Numbering')} testid="numbering" />
+              <Menu label="Numbering Styles" wide={false} testid="number-styles">{close => (<>
+                <MenuItem label="None" checked={!para?.bullet} onClick={() => { close(); formatPara(bulletPatch({ kind: 'none' }, para), 'Numbering'); }} />
+                {NUMBER_STYLES.map(sc => <MenuItem key={sc} label={numberSample(sc)} checked={para?.bullet?.kind === 'autonum' && para.bullet.scheme === sc}
+                  onClick={() => { close(); formatPara(bulletPatch({ kind: 'autonum', scheme: sc }, para), 'Numbering'); }} />)}
+              </>)}</Menu>
               <Btn icon="outdent" label="Decrease List Level" onClick={() => formatPara({ lvl: Math.max(0, (para?.level ?? 0) - 1) }, 'Decrease Indent')} />
               <Btn icon="indent" label="Increase List Level" onClick={() => formatPara({ lvl: Math.min(8, (para?.level ?? 0) + 1) }, 'Increase Indent')} />
               <Btn icon="left" label="Align Left" active={para?.align === 'l'} onClick={() => formatPara({ algn: 'l' }, 'Align Left')} />
               <Btn icon="center" label="Center" active={para?.align === 'ctr'} onClick={() => formatPara({ algn: 'ctr' }, 'Center')} testid="center" />
               <Btn icon="right" label="Align Right" active={para?.align === 'r'} onClick={() => formatPara({ algn: 'r' }, 'Align Right')} />
               <Btn icon="justify" label="Justify" active={para?.align === 'just'} onClick={() => formatPara({ algn: 'just' }, 'Justify')} />
+              <Menu icon="lines" label="Line Spacing" wide={false} testid="line-spacing">{close => (<>
+                {[1, 1.15, 1.5, 2, 2.5, 3].map(m => <MenuItem key={m} label={m.toFixed(m === 1.15 ? 2 : 1)} checked={lineIs(m)} onClick={() => { close(); formatPara({ lnSpc: { pct: m * 100000 } }, 'Line Spacing'); }} />)}
+                <hr />
+                <div className="menu-title">Space before paragraph</div>
+                {[0, 6, 12, 18].map(pt => <MenuItem key={pt} label={`Before: ${pt} pt`} checked={para?.spaceBefore.kind === 'pts' && para.spaceBefore.val === pt * 100} onClick={() => { close(); formatPara({ spcBef: { pts: pt * 100 } }, 'Paragraph Spacing'); }} />)}
+                <div className="menu-title">Space after paragraph</div>
+                {[0, 6, 12, 18].map(pt => <MenuItem key={pt} label={`After: ${pt} pt`} checked={para?.spaceAfter.kind === 'pts' && para.spaceAfter.val === pt * 100} onClick={() => { close(); formatPara({ spcAft: { pts: pt * 100 } }, 'Paragraph Spacing'); }} />)}
+              </>)}</Menu>
+              <Menu icon="anchor" label="Align Text" wide={false} testid="align-text">{close => (<>
+                {([['Top', 't'], ['Middle', 'ctr'], ['Bottom', 'b']] as const).map(([l, a]) =>
+                  <MenuItem key={a} label={l} checked={body?.anchor === a} onClick={() => { close(); formatTextBox({ anchor: a }, 'Align Text'); }} />)}
+                <hr />
+                <div className="menu-title">Text box margins</div>
+                {([['None', 0, 0], ['Narrow', 45720, 45720], ['Normal', 91440, 45720], ['Wide', 182880, 91440]] as const).map(([l, x, y]) =>
+                  <MenuItem key={l} label={`Margins: ${l}`} checked={marginsAre(x, y)} onClick={() => { close(); formatTextBox({ lIns: x, rIns: x, tIns: y, bIns: y }, 'Text Margins'); }} />)}
+              </>)}</Menu>
+              <Menu icon="columns" label="Columns" wide={false} testid="columns">{close => (
+                ([['One Column', 1], ['Two Columns', 2], ['Three Columns', 3]] as const).map(([l, n]) =>
+                  <MenuItem key={n} label={l} checked={(body?.numCol ?? 1) === n} onClick={() => { close(); formatTextBox({ numCol: n === 1 ? null : n }, 'Columns'); }} />)
+              )}</Menu>
             </section>
             {isPicture && (
               <section className="group" aria-label="Picture">
-                <Menu icon="image" label="Crop">{close => (<>
+                <Menu icon="image" label="Crop" testid="crop-menu">{close => (<>
+                  <MenuItem label={cropping ? 'Done Cropping' : 'Crop'} onClick={() => { close(); act.toggleCrop(); }} />
+                  <hr />
                   {([['Square 1:1', 1], ['4:3', 4 / 3], ['3:4', 3 / 4], ['16:9', 16 / 9], ['9:16', 9 / 16], ['3:2', 3 / 2]] as const).map(([l, r]) =>
                     <MenuItem key={l} label={`Aspect Ratio ${l}`} onClick={() => { close(); act.cropToAspect(r); }} />)}
                   <MenuItem label="Reset Crop" onClick={() => { close(); act.cropToAspect(null); }} />
@@ -124,15 +206,62 @@ export function Ribbon({ extraTabs }: { extraTabs?: Partial<Record<Tab, React.Re
                 </FilePicker>
               </section>
             )}
+            {equation && (
+              <section className="group" aria-label="Equation">
+                <Btn icon="equation" label="Edit Equation" wide onClick={() => useEditor.setState({ equationEditing: true })} testid="equation-edit" />
+              </section>
+            )}
+            {media && (
+              <section className="group" aria-label="Media">
+                <Btn icon="play" label={playing ? 'Stop' : 'Play'} wide active={playing} onClick={act.togglePlaying} testid="media-play" />
+              </section>
+            )}
+            {chart && (
+              <section className="group" aria-label="Chart">
+                <Btn icon="chart" label="Edit Data" wide onClick={() => useEditor.setState({ chartEditing: true })} testid="chart-edit-data" />
+              </section>
+            )}
+            {table.table && (
+              <section className="group" aria-label="Table">
+                <Menu icon="table" label="Rows & Columns" testid="table-menu">{close => (<>
+                  <MenuItem label="Insert Row Above" disabled={!table.cells} onClick={() => { close(); tables.insertRowBeside('above'); }} />
+                  <MenuItem label="Insert Row Below" disabled={!table.cells} onClick={() => { close(); tables.insertRowBeside('below'); }} />
+                  <MenuItem label="Insert Column Left" disabled={!table.cells} onClick={() => { close(); tables.insertColumnBeside('left'); }} />
+                  <MenuItem label="Insert Column Right" disabled={!table.cells} onClick={() => { close(); tables.insertColumnBeside('right'); }} />
+                  <hr />
+                  <MenuItem label="Delete Row" disabled={!table.deleteRow} onClick={() => { close(); tables.deleteSelectedRows(); }} />
+                  <MenuItem label="Delete Column" disabled={!table.deleteColumn} onClick={() => { close(); tables.deleteSelectedColumns(); }} />
+                  <hr />
+                  <MenuItem label="Merge Cells" disabled={!table.merge} onClick={() => { close(); tables.mergeSelectedCells(); }} />
+                  <MenuItem label="Split Cell" disabled={!table.split} onClick={() => { close(); tables.splitSelectedCell(); }} />
+                </>)}</Menu>
+              </section>
+            )}
             <section className="group" aria-label="Drawing">
               <Menu icon="outline" label="Shapes" testid="shapes">{close => <ShapeGallery onPick={p => { close(); act.startDrawing(p); }} />}</Menu>
-              <Menu icon="fill" label="Shape Fill" wide={false}>{close => <ColorGrid onPick={c => { close(); act.fillSelection(c); }} extra={<>
+              <Menu icon="fill" label="Shape Fill" wide={false} testid="shape-fill">{close => <ColorGrid onPick={c => { close(); act.fillSelection(c); }} extra={<>
                 <MenuItem label="No Fill" onClick={() => { close(); act.fillSelection('none'); }} />
-                <MenuItem label="Theme default" onClick={() => { close(); act.fillSelection(null); }} /></>} />}</Menu>
-              <Menu icon="outline" label="Shape Outline" wide={false}>{close => <ColorGrid onPick={c => { close(); act.outlineSelection({ color: c }); }} extra={<>
+                <MenuItem label="Theme default" onClick={() => { close(); act.fillSelection(null); }} />
+                <hr />
+                {([['Down', 90], ['Right', 0], ['Diagonal', 45]] as const).map(([l, a]) => <MenuItem key={l} label={`Gradient: ${l}`} disabled={!hasSel} onClick={() => { close(); act.gradientSelection(a); }} />)}
+                <MenuItem label="Picture…" disabled={!hasSel} onClick={() => { close(); void pickFile('image/png,image/jpeg,image/gif,image/bmp,image/webp').then(f => (f ? act.pictureFillSelection(f) : undefined)); }} />
+                <hr />
+                {[0, 25, 50, 75].map(t => <MenuItem key={t} label={`Transparency: ${t}%`} disabled={!hasSel} onClick={() => { close(); act.transparencySelection(t); }} />)}</>} />}</Menu>
+              <Menu icon="outline" label="Shape Outline" wide={false} testid="shape-outline">{close => <ColorGrid onPick={c => { close(); act.outlineSelection({ color: c }); }} extra={<>
                 <MenuItem label="No Outline" onClick={() => { close(); act.outlineSelection({ color: 'none' }); }} />
                 {[0.75, 1.5, 3, 6].map(w => <MenuItem key={w} label={`Weight ${w} pt`} onClick={() => { close(); act.outlineSelection({ width: w * 12700 }); }} />)}
-                {['solid', 'sysDash', 'dash', 'lgDash', 'sysDot'].map(d => <MenuItem key={d} label={`Dashes: ${d}`} onClick={() => { close(); act.outlineSelection({ dash: d }); }} />)}</>} />}</Menu>
+                {['solid', 'sysDash', 'dash', 'lgDash', 'sysDot'].map(d => <MenuItem key={d} label={`Dashes: ${d}`} onClick={() => { close(); act.outlineSelection({ dash: d }); }} />)}
+                <hr />
+                <MenuItem label="Arrows: None" disabled={!hasSel} onClick={() => { close(); act.outlineSelection({ headEnd: null, tailEnd: null }); }} />
+                <MenuItem label="Arrow at End" disabled={!hasSel} onClick={() => { close(); act.outlineSelection({ headEnd: null, tailEnd: 'triangle' }); }} />
+                <MenuItem label="Arrow at Start" disabled={!hasSel} onClick={() => { close(); act.outlineSelection({ headEnd: 'triangle', tailEnd: null }); }} />
+                <MenuItem label="Arrows at Both Ends" disabled={!hasSel} onClick={() => { close(); act.outlineSelection({ headEnd: 'triangle', tailEnd: 'triangle' }); }} /></>} />}</Menu>
+              <Menu icon="shadow" label="Shadow" wide={false} testid="shape-shadow">{close => (<>
+                <MenuItem label="No Shadow" disabled={!hasSel} onClick={() => { close(); act.shadowSelection(null); }} />
+                <MenuItem label="Shadow: Bottom Right" disabled={!hasSel} onClick={() => { close(); act.shadowSelection('bottom-right'); }} />
+                <MenuItem label="Shadow: Bottom" disabled={!hasSel} onClick={() => { close(); act.shadowSelection('bottom'); }} />
+                <MenuItem label="Shadow: All Around" disabled={!hasSel} onClick={() => { close(); act.shadowSelection('center'); }} />
+              </>)}</Menu>
               <Menu icon="front" label="Arrange" testid="arrange">{close => (<>
                 <MenuItem label="Bring to Front" disabled={!hasSel} onClick={() => { close(); act.order('front'); }} />
                 <MenuItem label="Bring Forward" disabled={!hasSel} onClick={() => { close(); act.order('forward'); }} />
@@ -150,6 +279,8 @@ export function Ribbon({ extraTabs }: { extraTabs?: Partial<Record<Tab, React.Re
                 <MenuItem label="Rotate Left 90°" disabled={!hasSel} onClick={() => { close(); act.rotateSelection(-1); }} />
                 <MenuItem label="Flip Vertical" disabled={!hasSel} onClick={() => { close(); act.flipSelection('v'); }} />
                 <MenuItem label="Flip Horizontal" disabled={!hasSel} onClick={() => { close(); act.flipSelection('h'); }} />
+                <hr />
+                <MenuItem label="Selection Pane…" onClick={() => { close(); useEditor.setState({ pane: useEditor.getState().pane === 'selection' ? 'none' : 'selection' }); }} />
               </>)}</Menu>
             </section>
           </>
@@ -158,38 +289,112 @@ export function Ribbon({ extraTabs }: { extraTabs?: Partial<Record<Tab, React.Re
           <>
             <section className="group"><LayoutMenu icon="plus" label="New Slide" onPick={p => act.newSlide(p)} /></section>
             <section className="group">
+              <Menu icon="table" label="Table" testid="insert-table">{close => <TableGrid onPick={(r, c) => { close(); act.insertTableHere(r, c); }} />}</Menu>
+              <Menu icon="chart" label="Chart" testid="insert-chart">{close => (
+                ([['Column', 'column'], ['Bar', 'bar'], ['Line', 'line'], ['Pie', 'pie']] as const).map(([l, k]) => <MenuItem key={k} label={l} onClick={() => { close(); act.insertChartHere(k); }} />)
+              )}</Menu>
+            </section>
+            <section className="group">
               <FilePicker accept="image/png,image/jpeg,image/gif,image/bmp,image/webp,image/svg+xml,.emf,.wmf" onFile={f => void act.insertPictureFile(f)}>
                 {open => <Btn icon="image" label="Pictures" wide disabled={!session} onClick={open} testid="insert-picture" />}
               </FilePicker>
               <Menu icon="outline" label="Shapes">{close => <ShapeGallery onPick={p => { close(); act.startDrawing(p); }} />}</Menu>
               <Btn icon="text" label="Text Box" wide disabled={!session} onClick={act.insertTextBoxHere} testid="text-box" />
+              <Menu icon="wordart" label="WordArt" testid="insert-wordart">{close => <WordArtGallery onPick={w => { close(); act.insertWordArtHere(w); }} />}</Menu>
+              <Btn icon="footer" label="Header & Footer" wide disabled={!session} onClick={() => useEditor.setState({ footerEditing: true })} testid="header-footer" />
+              <Btn icon="equation" label="Equation" wide disabled={!session} onClick={() => useEditor.setState({ equationEditing: true })} testid="insert-equation" />
+              <Menu icon="symbol" label="Symbol" testid="insert-symbol">{() => (
+                <div className="symbols" data-testid="symbols">
+                  {SYMBOL_GROUPS.map(([title, chars]) => (
+                    <div key={title}>
+                      <div className="colors-title">{title}</div>
+                      <div className="symbol-cells">
+                        {chars.map(c => <button key={c.char} type="button" className="symbol" title={c.name} aria-label={c.name} disabled={!session} onClick={() => act.insertSymbol(c.char)} onMouseDown={e => e.preventDefault()}>{c.char}</button>)}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}</Menu>
+            </section>
+            <section className="group" aria-label="Media">
+              <Btn icon="play" label="Video" wide disabled={!session} onClick={() => void pickFile('video/mp4,video/webm,video/quicktime,.mp4,.m4v,.mov,.webm,.wmv,.avi').then(f => (f ? act.insertMediaFile(f) : undefined))} testid="insert-video" />
+              <Btn icon="play" label="Audio" wide disabled={!session} onClick={() => void pickFile('audio/*,.mp3,.m4a,.wav,.ogg,.wma,.aac').then(f => (f ? act.insertMediaFile(f) : undefined))} testid="insert-audio" />
+            </section>
+            <section className="group">
+              <Btn icon="link" label="Link" wide disabled={!linkContext()} onClick={() => useEditor.setState({ linking: true })} testid="insert-link" />
+              <Btn icon="comment" label="Comment" wide disabled={!session} onClick={act.newComment} testid="insert-comment" />
             </section>
           </>
         )}
         {tab === 'Design' && (
           <>
+            <section className="group" aria-label="Theme">
+              <Menu icon="fill" label="Colors" testid="theme-colors">{close => COLOR_SCHEMES.map(sc => (
+                <button key={sc.name} type="button" role="menuitemradio" aria-checked={act.currentSchemes()?.colors === sc.name} className="menu-item scheme" onMouseDown={keepFocus}
+                  onClick={() => { close(); act.chooseThemeColors(sc); }}>
+                  <span className="tick" aria-hidden="true">{act.currentSchemes()?.colors === sc.name ? '✓' : ''}</span>
+                  <span className="scheme-swatches" aria-hidden="true">{(['dk2', 'lt2', 'accent1', 'accent2', 'accent3', 'accent4', 'accent5', 'accent6'] as const).map(k => <i key={k} style={{ background: `#${sc.colors[k]}` }} />)}</span>
+                  {sc.name}
+                </button>
+              ))}</Menu>
+              <Menu icon="text" label="Fonts" testid="theme-fonts">{close => FONT_SCHEMES.map(f => (
+                <MenuItem key={f.name} label={f.major === f.minor ? f.name : `${f.name} (${f.major} / ${f.minor})`} checked={act.currentSchemes()?.fonts === f.name} onClick={() => { close(); act.chooseThemeFonts(f); }} />
+              ))}</Menu>
+            </section>
             <section className="group">
               <Menu icon="size" label="Slide Size">{close => (<>
                 <MenuItem label="Standard (4:3)" onClick={() => { close(); window.dispatchEvent(new CustomEvent('slide-size', { detail: { cx: 9144000, cy: 6858000 } })); }} />
                 <MenuItem label="Widescreen (16:9)" onClick={() => { close(); window.dispatchEvent(new CustomEvent('slide-size', { detail: { cx: 12192000, cy: 6858000 } })); }} />
                 <MenuItem label="Custom Slide Size…" onClick={() => { close(); window.dispatchEvent(new CustomEvent('slide-size', { detail: null })); }} />
               </>)}</Menu>
-              <Menu icon="fill" label="Format Background">{close => <ColorGrid onPick={c => {
-                close();
-                const hex = c && c !== 'none' && c.kind === 'srgb' ? c.hex : null;
-                if (c && c !== 'none' && c.kind === 'scheme') useEditor.getState().notify('info', 'Background: pick a standard colour (theme backgrounds keep following the master).');
-                act.backgroundCurrentSlide(hex);
-              }} extra={<MenuItem label="Reset Background" onClick={() => { close(); act.backgroundCurrentSlide(null); }} />} />}</Menu>
+              <Menu icon="fill" label="Format Background" testid="format-background">{close => <ColorGrid onPick={c => { close(); act.backgroundCurrentSlide(c && c !== 'none' ? { color: c } : null); }} extra={<>
+                <hr />
+                {([['Down', 90], ['Right', 0], ['Diagonal', 45]] as const).map(([l, a]) => <MenuItem key={l} label={`Gradient: ${l}`} onClick={() => { close(); act.gradientBackground(a); }} />)}
+                <MenuItem label="Picture…" onClick={() => { close(); void pickFile('image/png,image/jpeg,image/gif,image/bmp,image/webp').then(f => (f ? act.pictureBackground(f) : undefined)); }} />
+                <hr />
+                <MenuItem label="Apply to All Slides" onClick={() => { close(); act.backgroundToAll(); }} />
+                <MenuItem label="Reset Background" onClick={() => { close(); act.backgroundCurrentSlide(null); }} /></>} />}</Menu>
               <FilePicker accept=".pptx,.potx,.pptm,.potm" onFile={f => void act.importTemplate(f)}>{open => <Btn icon="layout" label="Import Slide Masters…" wide disabled={!session} onClick={open} />}</FilePicker>
             </section>
           </>
         )}
         {(tab === 'Transitions' || tab === 'Animations') && (extraTabs?.[tab] ?? <section className="group"><span className="hint">Select a slide or shape.</span></section>)}
+        {tab === 'View' && (() => {
+          const st = useEditor.getState();
+          const size = session?.ed.doc.presentation.slideSize;
+          const addGuide = (axis: 'x' | 'y') => {
+            if (!size) return;
+            const g = useEditor.getState().guides;
+            useEditor.setState({ showGuides: true, guides: { ...g, [axis]: [...g[axis], newGuideAt(g[axis], axis === 'x' ? size.cx : size.cy)] } });
+          };
+          return (
+            <>
+              <section className="group" aria-label="Views">
+                <Btn icon="layout" label="Grid View" wide disabled={!session || st.view === 'master'} active={st.view === 'grid'} testid="view-tab-grid"
+                  onClick={() => useEditor.setState({ view: st.view === 'grid' ? 'normal' : 'grid', text: null, selection: [], cells: null, cropping: null })} />
+                <Btn icon="layout" label="Slide Master" wide disabled={!session || st.view === 'grid'} active={st.view === 'master'} testid="view-master"
+                  onClick={() => (st.view === 'master' ? act.closeMasterView() : act.openMasterView())} />
+              </section>
+              <section className="group" aria-label="Show">
+                <Btn icon="size" label="Ruler" wide disabled={!session} active={st.showRuler} onClick={() => useEditor.setState({ showRuler: !st.showRuler })} testid="view-ruler" />
+                <Btn icon="plus" label="Guides" wide disabled={!session} active={st.showGuides} onClick={() => useEditor.setState({ showGuides: !st.showGuides })} testid="view-guides" />
+                <Btn icon="comment" label="Comments" wide disabled={!session} active={st.pane === 'comments'} onClick={() => useEditor.setState({ pane: st.pane === 'comments' ? 'none' : 'comments' })} testid="view-comments" />
+                <Btn icon="text" label="Spelling" wide disabled={!session} active={st.pane === 'spelling'} onClick={() => useEditor.setState({ pane: st.pane === 'spelling' ? 'none' : 'spelling', text: null })} testid="view-spelling" />
+              </section>
+              <section className="group" aria-label="Guides">
+                <Btn label="Add Vertical Guide" wide disabled={!session} onClick={() => addGuide('x')} testid="add-guide-v" />
+                <Btn label="Add Horizontal Guide" wide disabled={!session} onClick={() => addGuide('y')} testid="add-guide-h" />
+                <Btn label="Clear Guides" wide disabled={!session || (!st.guides.x.length && !st.guides.y.length)} onClick={() => useEditor.setState({ guides: { x: [], y: [] } })} testid="clear-guides" />
+              </section>
+            </>
+          );
+        })()}
         {tab === 'Slide Show' && (
           <>
             <section className="group">
-              <Btn icon="play" label="From Beginning" wide disabled={!session} onClick={() => useEditor.setState({ mode: 'present', slide: session?.ed.doc.slideParts()[0] ?? null })} testid="present" />
-              <Btn icon="play" label="From Current Slide" wide disabled={!session} onClick={() => useEditor.setState({ mode: 'present' })} />
+              <Btn icon="play" label="From Beginning" wide disabled={!session} onClick={() => useEditor.setState({ mode: 'present', presenterView: false, slide: session?.ed.doc.slideParts()[0] ?? null })} testid="present" />
+              <Btn icon="play" label="From Current Slide" wide disabled={!session} onClick={() => useEditor.setState({ mode: 'present', presenterView: false })} />
+              <Btn icon="layout" label="Presenter View" wide disabled={!session} onClick={() => useEditor.setState({ mode: 'present', presenterView: true })} testid="presenter-view" />
               <Btn icon="hide" label="Hide Slide" wide disabled={!session} onClick={act.toggleHidden} />
             </section>
           </>

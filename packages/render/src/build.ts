@@ -89,8 +89,14 @@ const linePath = (x1: number, y1: number, x2: number, y2: number): PathSpec => (
   commands: [{ op: 'M', x: x1, y: y1 }, { op: 'L', x: x2, y: y2 }], fill: 'none', stroke: true,
 });
 
-/** A table: cells with their fills, borders and text; rows grow to fit their text, as PowerPoint does. */
-function tablePrims(table: ResolvedTable, base: Matrix, fonts: FontRegistry, frameW: number): Primitive[] {
+/** The edges of a table's columns and rows, from the frame's corner (EMU), and each cell's laid-out text. */
+export interface TableGrid { colX: number[]; rowY: number[]; layouts: Map<ResolvedCell, TextLayout<ResolvedRunProps>>; }
+
+/**
+ * Where a table's columns and rows are as drawn: rows grow to fit their text, as PowerPoint does, so the file's row
+ * heights are only minimums. The editor uses this too, to know which cell a click is in.
+ */
+export function tableGrid(table: ResolvedTable, fonts: FontRegistry): TableGrid {
   const cols = table.columns;
   const rows = [...table.rows];
   const colX = [0];
@@ -108,6 +114,15 @@ function tablePrims(table: ResolvedTable, base: Matrix, fonts: FontRegistry, fra
   }
   const rowY = [0];
   for (const h of rows) rowY.push(rowY.at(-1)! + h);
+  return { colX, rowY, layouts };
+}
+
+/** A table: cells with their fills, borders and text. */
+function tablePrims(table: ResolvedTable, base: Matrix, fonts: FontRegistry, frameW: number): Primitive[] {
+  const cols = table.columns;
+  const { colX, rowY, layouts } = tableGrid(table, fonts);
+  const rows = rowY.slice(1);
+  const spanW = (c: ResolvedCell) => colX[Math.min(cols.length, c.col + c.colSpan)]! - colX[c.col]!;
   const prims: Primitive[] = [];
   const totalH = rowY.at(-1)!;
   if (table.background.kind !== 'none') {
@@ -223,5 +238,5 @@ export function buildSlide(slide: ResolvedSlide, opts: BuildOptions): RenderSlid
   const images = new Set<string>();
   collectImages(slide.background, images);
   const shapes = slide.shapes.map(s => buildShape(slide, s, opts, images));
-  return { part: slide.part, size: slide.size, background: slide.background, shapes, images };
+  return { part: slide.part, ...(slide.kind === 'layout' ? { own: 'layout' as const } : {}), size: slide.size, background: slide.background, shapes, images };
 }

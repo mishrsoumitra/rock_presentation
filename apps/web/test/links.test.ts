@@ -8,7 +8,7 @@ import { buildSlide } from '@pptx/render';
 import { resolveSlide } from '@pptx/resolve';
 import { FontRegistry } from '@pptx/text';
 import { deckBytes } from '../../../packages/resolve/test/deck.ts';
-import { isSafeUrl, linkAt } from '../src/ui/links.ts';
+import { isSafeUrl, linkAt, normalizeUrl } from '../src/ui/links.ts';
 
 const fonts = new FontRegistry();
 const FONTS = join(import.meta.dirname, '../../../assets/fonts');
@@ -38,3 +38,18 @@ test('only web and mail links are followed', () => {
   expect(isSafeUrl('file:///etc/passwd')).toBe(false);
   expect(isSafeUrl('C:\\\\Windows\\\\calc.exe')).toBe(false);
 });
+
+test('an address as typed becomes a link only when it is a web or mail address', () => {
+  expect(normalizeUrl('example.com')).toBe('https://example.com');
+  expect(normalizeUrl('  www.example.com/docs?a=1#top  ')).toBe('https://www.example.com/docs?a=1#top');
+  expect(normalizeUrl('localhost:5173/x')).toBe('https://localhost:5173/x');
+  expect(normalizeUrl('example.com:8080')).toBe('https://example.com:8080');
+  expect(normalizeUrl('http://example.com')).toBe('http://example.com');
+  expect(normalizeUrl('HTTPS://Example.com/A')).toBe('HTTPS://Example.com/A');
+  expect(normalizeUrl('someone@example.com')).toBe('mailto:someone@example.com');
+  expect(normalizeUrl('mailto:someone@example.com')).toBe('mailto:someone@example.com');
+  for (const bad of ['', '   ', 'javascript:alert(1)', 'JavaScript:alert(1)', 'data:text/html,x', 'file:///etc/passwd', 'C:\\Users\\me', '/etc/passwd', 'two words.com', 'word', 'https:', 'vbscript:x']) {
+    expect(normalizeUrl(bad), bad).toBeUndefined();
+  }
+});
+

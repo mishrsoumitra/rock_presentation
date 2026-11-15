@@ -1,8 +1,8 @@
 // apps/web/src/ui/SlideCanvas.tsx  -- the slide being edited: drawing, selection, moving, resizing, rotating
 import Konva from 'konva';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Layer, Line, Rect, Shape, Stage, Transformer } from 'react-konva';
-import { moveBy, setTransforms, type TransformChange } from '@pptx/editor-core';
+import { Circle, Layer, Line, Rect, Shape, Stage, Transformer } from 'react-konva';
+import { equationOf, moveBy, setTransforms, type TransformChange } from '@pptx/editor-core';
 import { ShapeView } from '@pptx/model';
 import { drawPrimitive, drawShape, drawSlide, shapeTextLayout, type RenderShape, type RenderSlide } from '@pptx/render';
 import type { XmlElement } from '@pptx/xml';
@@ -13,6 +13,14 @@ import { boundsOf, drawBase, parentOf, placementOf, restMatrix, xfrmFor, type Pl
 import { promptOf } from './prompts.ts';
 import { selectAll } from './textActions.ts';
 import { TextInput } from './TextInput.tsx';
+import { CellEditor } from './CellEditor.tsx';
+import { MediaPlayer } from './MediaPlayer.tsx';
+import { MotionPathOverlay, PathDrawer } from './MotionPaths.tsx';
+import { Rulers } from './Rulers.tsx';
+import { connectionSites, connectorEnds, cropAndPlace, isConnector, nearestSite, pictureCrop, setConnectorEnds, type Point } from '@pptx/editor-core';
+import { attachable, paintFormat } from './actions.ts';
+import { CROP_HANDLES, dragCrop, fullCorners, handlePoint, type CropHandle, type Cropped } from './crop.ts';
+import { activeCells, cellAtPoint, cellCorners, editCell, rangeOf } from './tables.ts';
 import * as act from './actions.ts';
 
 const ids = new WeakMap<XmlElement, string>();
@@ -32,7 +40,7 @@ const BAND_PX = 8;
 
 /** Shapes the user can pick: the slide's own, or the members of the group entered. */
 function pickable(slide: RenderSlide, entered: XmlElement | null): RenderShape[] {
-  const own = slide.shapes.filter(s => s.layer === 'slide' && s.source);
+  const own = slide.shapes.filter(s => s.layer === (slide.own ?? 'slide') && s.source);
   if (!entered) return own;
   const find = (list: RenderShape[]): RenderShape | undefined => {
     for (const s of list) {
@@ -109,7 +117,7 @@ function textHitAreas(rs: RenderShape, p: Placement, pad: number): number[][] | 
 function findRendered(slide: RenderSlide, el: XmlElement): RenderShape | undefined {
   const walk = (list: RenderShape[]): RenderShape | undefined => {
     for (const s of list) {
-      if (s.source?.view.el === el && s.layer === 'slide') return s;
+      if (s.source?.view.el === el && s.layer === (slide.own ?? 'slide')) return s;
       const inner = walk(s.children);
       if (inner) return inner;
     }
@@ -119,6 +127,16 @@ function findRendered(slide: RenderSlide, el: XmlElement): RenderShape | undefin
 }
 
 interface Guide { x?: number; y?: number; }
+
+/**
+ * The connector that gets end handles: the one selected shape, when it is an unrotated connector at the top of the
+ * slide (not inside a group, whose space its ends would be in) and no text or crop is being edited.
+ */
+function lineOf(s: { selection: XmlElement[]; text: unknown; cropping: XmlElement | null }): XmlElement | undefined {
+  const el = s.selection.length === 1 && !s.text && !s.cropping ? s.selection[0] : undefined;
+  if (!el || el.local !== 'cxnSp' || el.parent?.local !== 'spTree') return undefined;
+  return isConnector(new ShapeView(el)) ? el : undefined;
+}
 
 /**
  * What a mouse-down on a shape started, until the mouse comes up. 'text': the mouse selects text in the box being
@@ -138,6 +156,7 @@ interface Press {
 
 export function SlideCanvas() {
   const sess = useEditor(s => s.session);
+  const cellState = useEditor(s => s.cells);
   const part = useEditor(s => s.slide);
   useEditor(s => s.version);
   const selection = useEditor(s => s.selection);
@@ -145,6 +164,13 @@ export function SlideCanvas() {
   const text = useEditor(s => s.text);
   const zoomSetting = useEditor(s => s.zoom);
   const drawing = useEditor(s => s.drawing);
+  const painting = useEditor(s => s.painting);
+  const cropEl = useEditor(s => s.cropping);
+  const playingEl = useEditor(s => s.playing);
+  const pathDrawing = useEditor(s => s.pathDrawing);
+  const showRuler = useEditor(s => s.showRuler);
+  const showGuides = useEditor(s => s.showGuides);
+  const userGuides = useEditor(s => s.guides);
   const set = useEditor(s => s.setState);
   const host = useRef<HTMLDivElement>(null);
   const stageRef = useRef<Konva.Stage>(null);
@@ -152,6 +178,8 @@ export function SlideCanvas() {
   const [size, setSize] = useState({ w: 800, h: 600 });
   const [marquee, setMarquee] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   const [guides, setGuides] = useState<Guide[]>([]);
+  /** Connection points shown while an end of a connector is being dragged near a shape. */
+  const [hints, setHints] = useState<Point[]>([]);
   const drag = useRef<{ starts: Map<string, { x: number; y: number }>; key: string } | null>(null);
   const press = useRef<Press | null>(null);
   const endPress = useRef<() => void>(() => undefined);
@@ -202,7 +230,9 @@ export function SlideCanvas() {
   useEffect(() => {
     const stage = stageRef.current, tr = trRef.current;
     if (!stage || !tr) return;
-    const nodes = text ? [] : selection.map(el => stage.findOne(`#${keyOf(el)}`)).filter((n): n is Konva.Node => !!n);
+    // (a picture being cropped has crop handles instead of the resize handles)
+    // (and a connector selected alone has a handle on each end)
+    const nodes = text || (cropEl && selection[0] === cropEl) || lineOf(useEditor.getState()) ? [] : selection.map(el => stage.findOne(`#${keyOf(el)}`)).filter((n): n is Konva.Node => !!n);
     tr.nodes(nodes);
     tr.getLayer()?.batchDraw();
   });
@@ -386,6 +416,188 @@ export function SlideCanvas() {
     beginPress({ kind: 'click', el, rs, node, down: evt, at, edit: text });
   };
 
+  /**
+   * A guide follows the mouse until it comes up: an existing one (by its place in the list), or a new one pulled out
+   * of a ruler. Let go off the slide, it is removed. Guides are not part of the deck: nothing here is undone or saved.
+   */
+  const startGuide = (axis: 'x' | 'y', which: number | 'new', down: MouseEvent) => {
+    const stage = stageRef.current;
+    if (!stage || down.button !== 0) return;
+    const limit = axis === 'x' ? cx : cy;
+    const at = (ev: MouseEvent) => { stage.setPointersPositions(ev); const p = stage.getRelativePointerPosition(); return Math.round(p ? p[axis] : 0); };
+    let index: number;
+    const st = useEditor.getState();
+    if (which === 'new') {
+      index = st.guides[axis].length;
+      set({ showGuides: true, guides: { ...st.guides, [axis]: [...st.guides[axis], at(down)] } });
+    } else index = which;
+    const put = (v: number) => { const g = useEditor.getState().guides; set({ guides: { ...g, [axis]: g[axis].map((old, i) => (i === index ? v : old)) } }); };
+    const move = (ev: MouseEvent) => put(at(ev));
+    const up = (ev: MouseEvent) => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+      const v = at(ev);
+      const g = useEditor.getState().guides;
+      if (v < 0 || v > limit) set({ guides: { ...g, [axis]: g[axis].filter((_, i) => i !== index) } });
+      else put(v);
+      setCursor('');
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  };
+
+  /** A box of the slide (EMU) on the page, in the scrolling slide area's own coordinates: where an overlay goes. */
+  const pageBox = (b: { x: number; y: number; w: number; h: number }) => ({ left: ox + b.x * zoom, top: oy + b.y * zoom, width: b.w * zoom, height: b.h * zoom });
+
+  /** How near (in slide units) an end must be let go to a connection point to attach to it: fourteen screen pixels. */
+  const reach = () => 14 / zoom;
+  /** The connection points worth showing for an end at a point: those of every shape that has one within a few reaches. */
+  const hintsNear = (at: Point): Point[] => attachable().filter(v => connectionSites(v).some(s => Math.hypot(s.x - at.x, s.y - at.y) < reach() * 6)).flatMap(v => connectionSites(v));
+
+  /**
+   * The mouse goes down on an end handle of the selected connector: until it comes up the end follows it, snapping
+   * to a connection point within reach (and attaching to it), free otherwise (and detached). One undo step.
+   */
+  const startEnd = (which: 'start' | 'end', e: Konva.KonvaEventObject<MouseEvent>) => {
+    const stage = stageRef.current;
+    const el = lineOf(useEditor.getState());
+    if (!stage || !el || e.evt.button !== 0) return;
+    e.cancelBubble = true;
+    e.evt.preventDefault();
+    const from = connectorEnds(ed.view(part, el));
+    const p0 = pointer();
+    const key = `end:${keyOf(el)}:${Date.now()}`;
+    ed.log.seal();
+    const move = (ev: MouseEvent) => {
+      stage.setPointersPositions(ev);
+      const p = stage.getRelativePointerPosition();
+      if (!p) return;
+      const at = { x: from[which].x + p.x - p0.x, y: from[which].y + p.y - p0.y };
+      const near = nearestSite(attachable(), at, reach(), el);
+      const point = near?.site ?? at;
+      setHints(hintsNear(at));
+      useEditor.getState().run(setConnectorEnds(ed, part, ed.view(part, el), which === 'start' ? point : from.start, which === 'end' ? point : from.end,
+        { [which]: near ? { id: near.shape.id, index: near.site.index } : null }, key));
+    };
+    const up = () => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+      setHints([]);
+      ed.log.seal();
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  };
+
+  /** The picture being cropped, as the crop geometry reads it: its frame, and the fractions cut off each side. */
+  const cropState = (): { view: ShapeView; state: Cropped } | undefined => {
+    const st = useEditor.getState();
+    const el = st.cropping;
+    if (!el || st.selection.length !== 1 || st.selection[0] !== el || st.text) return undefined;
+    const view = ed.view(part, el);
+    const xfrm = view.xfrm;
+    if (view.kind !== 'pic' || !xfrm) return undefined;
+    const c = pictureCrop(view);
+    return { view, state: { xfrm, crop: { l: c.l / 100000, t: c.t / 100000, r: c.r / 100000, b: c.b / 100000 } } };
+  };
+
+  /**
+   * The mouse goes down on a crop handle: until it comes up, the frame's edge follows it over the picture, which
+   * stays where it is. Every move is the same command again, so the whole drag is one undo step.
+   */
+  const startCrop = (handle: CropHandle, e: Konva.KonvaEventObject<MouseEvent>) => {
+    const stage = stageRef.current;
+    const from = cropState();
+    if (!stage || !from || e.evt.button !== 0) return;
+    e.cancelBubble = true;
+    e.evt.preventDefault();
+    const p0 = pointer();
+    const key = `crop:${keyOf(from.view.el)}:${Date.now()}`;
+    ed.log.seal();
+    const move = (ev: MouseEvent) => {
+      stage.setPointersPositions(ev);
+      const p = stage.getRelativePointerPosition();
+      if (!p) return;
+      const next = dragCrop(from.state, handle, p.x - p0.x, p.y - p0.y);
+      const units = { l: next.crop.l * 100000, t: next.crop.t * 100000, r: next.crop.r * 100000, b: next.crop.b * 100000 };
+      useEditor.getState().run(cropAndPlace(ed, part, ed.view(part, from.view.el), units, next.xfrm, key));
+    };
+    const up = () => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+      ed.log.seal();
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  };
+
+  /**
+   * The format painter is on and the mouse goes down on a shape: it takes the look and is selected; the painter
+   * goes off unless it is sticky. True when it did that, and the press is over.
+   */
+  const paintShape = (rs: RenderShape, e: Konva.KonvaEventObject<MouseEvent>): boolean => {
+    const st = useEditor.getState();
+    if (!st.painting || st.drawing || e.evt.button !== 0) return false;
+    e.cancelBubble = true;
+    e.evt.preventDefault();
+    const el = rs.source.view.el;
+    ed.log.seal();
+    paintFormat([el]);
+    ed.log.seal();
+    set({ selection: [el], text: null, cells: null, painting: st.painting === 'sticky' ? 'sticky' : false });
+    return true;
+  };
+
+  /**
+   * Shift and the mouse down on the table whose cells are picked: the block from the cell picked before to the cell
+   * under the mouse (rather than taking the table out of the selection, as Shift+click does to a shape). True when
+   * it did that, and the press is over.
+   */
+  const extendCells = (rs: RenderShape, e: Konva.KonvaEventObject<MouseEvent>): boolean => {
+    const st = useEditor.getState();
+    const cur = activeCells(st);
+    if (!cur || cur.el !== rs.source.view.el || st.drawing || e.evt.button !== 0 || !e.evt.shiftKey) return false;
+    const cell = cellAtPoint(rs, sess.fonts, pointer());
+    if (!cell) return false;
+    e.cancelBubble = true;
+    set({ cells: { el: cur.el, anchor: cur.anchor, focus: cell, editing: false } });
+    return true;
+  };
+
+  /**
+   * The mouse went down on a table that is (now) the one selected shape: the cell under it is picked. A right click
+   * inside the picked block keeps the block, for the menu.
+   */
+  const onTableDown = (rs: RenderShape, e: Konva.KonvaEventObject<MouseEvent>) => {
+    const st = useEditor.getState();
+    const el = rs.source.view.el;
+    // a double click on a video or a sound plays it where it is
+    if (!st.drawing && rs.source.media?.part && e.evt.button === 0 && e.evt.detail === 2 && st.selection.length === 1 && st.selection[0] === el) {
+      set({ playing: el });
+      return;
+    }
+    // a double click on a chart (the browser's count, on the press) opens its data
+    if (!st.drawing && rs.source.graphic?.kind === 'chart' && e.evt.button === 0 && e.evt.detail === 2 && st.selection.length === 1 && st.selection[0] === el) {
+      set({ chartEditing: true });
+      return;
+    }
+    if (st.drawing || rs.source.graphic?.kind !== 'table' || st.selection.length !== 1 || st.selection[0] !== el) return;
+    const cell = cellAtPoint(rs, sess.fonts, pointer());
+    if (!cell) { set({ cells: null }); return; }
+    const cur = activeCells(st);
+    if (e.evt.button !== 0 && cur) {
+      const g = rangeOf(cur);
+      if (cell.r >= g.r0 && cell.r <= g.r1 && cell.c >= g.c0 && cell.c <= g.c1) return;
+    }
+    set({ cells: { el, anchor: cell, focus: cell, editing: false } });
+    // the second press of a double click (the browser's count, as for text) types in the cell; the default is
+    // stopped so the box laid over the cell keeps the focus it takes
+    if (e.evt.button === 0 && e.evt.detail === 2) {
+      e.evt.preventDefault();
+      editCell();
+    }
+  };
+
   /** The mouse moves over a shape: the cursor says what a click there would do (nothing changes mid-press or drag). */
   const onShapeMove = (rs: RenderShape, p: Placement, e: Konva.KonvaEventObject<MouseEvent>) => {
     const st = useEditor.getState();
@@ -402,6 +614,9 @@ export function SlideCanvas() {
     const tol = 6 / zoom;
     const r = node.getClientRect({ relativeTo: node.getLayer()! });
     const xs = [0, cx / 2, cx], ys = [0, cy / 2, cy];
+    // the guides laid on the slide, while they show
+    const laid = useEditor.getState();
+    if (laid.showGuides) { xs.push(...laid.guides.x); ys.push(...laid.guides.y); }
     for (const o of others) {
       const b = boundsOf(o);
       xs.push(b.x, b.x + b.w / 2, b.x + b.w);
@@ -486,9 +701,14 @@ export function SlideCanvas() {
     if (e.target !== e.target.getStage() && e.target.name() !== 'underlay') return;
     // empty slide, or the grey around it: text editing ends (its selection with it) and nothing is selected
     const st = useEditor.getState();
+    if (st.painting) st.setState({ painting: false });      // a click on nothing puts the painter down
     if (st.text) {
       st.session?.ed.log.seal();
       st.setState({ text: null, pending: null });
+    }
+    if (e.evt.button !== 0) {                             // a right click here opens the slide's menu; no marquee
+      st.select([]);
+      return;
     }
     const p = pointer();
     setMarquee({ x0: p.x, y0: p.y, x1: p.x, y1: p.y });
@@ -497,6 +717,9 @@ export function SlideCanvas() {
   const onStageMove = (e: Konva.KonvaEventObject<MouseEvent>) => {
     if (!marquee) return;
     const p = pointer();
+    // drawing a line or connector: the connection points it could attach to show as it nears a shape
+    const drawn = useEditor.getState().drawing;
+    if (drawn && /Connector|^line$/.test(drawn)) setHints(hintsNear(p));
     if (useEditor.getState().drawing && e.evt.shiftKey) {
       // Shift keeps it square (or a circle), as in PowerPoint
       const d = Math.max(Math.abs(p.x - marquee.x0), Math.abs(p.y - marquee.y0));
@@ -511,9 +734,12 @@ export function SlideCanvas() {
       useEditor.setState({ drawing: null });
       const w = Math.abs(marquee.x1 - marquee.x0), h = Math.abs(marquee.y1 - marquee.y0);
       const line = /Connector|^line$/.test(prst);
+      setHints([]);
       // a click without a drag gives PowerPoint's default size (1 inch) at the click
       if (w < 4 / zoom && h < 4 / zoom) act.insertShapeHere(prst, { x: marquee.x0, y: marquee.y0, w: 914400, h: line ? 0 : 914400 });
-      else act.insertShapeHere(prst, { x: Math.min(marquee.x0, marquee.x1), y: Math.min(marquee.y0, marquee.y1), w, h: line ? (marquee.y1 - marquee.y0) : h });
+      // a line or connector runs from where the drag began to where it ended, and attaches to connection points there
+      else if (line) act.insertConnectorBetween(prst, { x: marquee.x0, y: marquee.y0 }, { x: marquee.x1, y: marquee.y1 }, reach());
+      else act.insertShapeHere(prst, { x: Math.min(marquee.x0, marquee.x1), y: Math.min(marquee.y0, marquee.y1), w, h });
       return;
     }
     const x0 = Math.min(marquee.x0, marquee.x1), x1 = Math.max(marquee.x0, marquee.x1);
@@ -533,10 +759,33 @@ export function SlideCanvas() {
   };
 
   const tv = text ? textViewOf(findRendered(slide, text.el)) : undefined;
+  // the motion paths of the one selected shape (or of the shape a path is being drawn for) start from its middle
+  const pathEl = pathDrawing?.el ?? (selection.length === 1 ? selection[0] : undefined);
+  const pathRs = pathEl ? findRendered(slide, pathEl) : undefined;
+  const pathShape = pathRs ? (() => { const b = boundsOf(pathRs); return { id: pathRs.source.id, center: { x: b.x + b.w / 2, y: b.y + b.h / 2 } }; })() : undefined;
+  // the video or sound playing: the browser's player over its picture
+  const playingRs = playingEl && selection.length === 1 && selection[0] === playingEl ? findRendered(slide, playingEl) : undefined;
+  const playBox = playingRs ? pageBox(boundsOf(playingRs)) : undefined;
+  // a connector selected alone: a handle on each end
+  const lineEl = lineOf({ selection, text, cropping: cropEl });
+  const lineEnds = lineEl ? connectorEnds(ed.view(part, lineEl)) : undefined;
+  // the picture being cropped: the whole picture outlined behind its frame, and a handle on each edge and corner
+  const crop = cropEl && selection.length === 1 && selection[0] === cropEl && !text ? cropState() : undefined;
+  // the cells picked in the selected table: outlined, and typed in through the box laid over the cell
+  const cells = activeCells({ cells: cellState, selection, text });
+  const cellRs = cells ? findRendered(slide, cells.el) : undefined;
+  const cellOutline = cells && cellRs ? cellCorners(cellRs, sess.fonts, rangeOf(cells)) : undefined;
 
   return (
     <div
-      ref={host} className={`canvas-host${drawing ? ' drawing' : ''}`} data-testid="canvas"
+      ref={host} className={`canvas-host${drawing ? ' drawing' : ''}${painting ? ' painting' : ''}`} data-testid="canvas"
+      onContextMenu={e => {
+        // the press that came first selected what is under the pointer: the menu is for that
+        e.preventDefault();
+        const st = useEditor.getState();
+        if (st.drawing) return;
+        set({ menu: { x: e.clientX, y: e.clientY, kind: st.selection.length ? 'shape' : 'slide' } });
+      }}
       onWheel={e => {
         if (!e.ctrlKey && !e.metaKey) return;
         e.preventDefault();
@@ -544,6 +793,7 @@ export function SlideCanvas() {
         set({ zoom: next });
       }}
     >
+      {showRuler && <Rulers host={host} ox={ox} oy={oy} zoom={zoom} onPull={(axis, e) => startGuide(axis, 'new', e)} />}
       <Stage
         ref={stageRef} width={stageW} height={stageH} scaleX={zoom} scaleY={zoom} x={ox} y={oy}
         onMouseDown={onStageDown} onMouseMove={onStageMove} onMouseUp={onStageUp}
@@ -614,7 +864,7 @@ export function SlideCanvas() {
                     ctx.strokeShape(shape);
                   }
                 }}
-                onMouseDown={e => onShapeDown(rs, p, e)}
+                onMouseDown={e => { if (paintShape(rs, e) || extendCells(rs, e)) return; onShapeDown(rs, p, e); onTableDown(rs, e); }}
                 onMouseEnter={() => { hovered.current = el; showHover(); }}
                 onMouseLeave={() => {
                   if (hovered.current === el) { hovered.current = null; showHover(); }
@@ -626,8 +876,12 @@ export function SlideCanvas() {
                   // Konva counts any two clicks within 400 ms as a double click, wherever they land, and the third
                   // click of a triple click too; the browser's count (the same spot, quickly, the second time) is what
                   // a double click means here: two clicks on different words are two clicks, a third is a triple click
-                  if (e.evt.detail !== 2) return;
+                  // (and only the left button double-clicks: two right clicks open the menu twice)
+                  if (e.evt.detail !== 2 || e.evt.button !== 0) return;
                   if (rs.source.kind === 'grpSp') { set({ entered: el, selection: [] }); return; }
+                  if (rs.source.graphic?.kind === 'table') return;                      // a table takes its double click on the press (onTableDown)
+                  // an equation is changed as an equation, not as the text that stands for it here
+                  if (equationOf(el) !== undefined) { set({ selection: [el], text: null, equationEditing: true }); return; }
                   const at = pointer();
                   const v = textViewOf(rs);
                   if (!v) return;
@@ -662,11 +916,34 @@ export function SlideCanvas() {
           {guides.map((g, i) => g.x !== undefined
             ? <Line key={`g${i}`} points={[g.x, -cy, g.x, 2 * cy]} stroke="#e53e3e" strokeWidth={1 / zoom} dash={[4 / zoom, 4 / zoom]} listening={false} />
             : <Line key={`g${i}`} points={[-cx, g.y!, 2 * cx, g.y!]} stroke="#e53e3e" strokeWidth={1 / zoom} dash={[4 / zoom, 4 / zoom]} listening={false} />)}
+          {crop && <Line points={fullCorners(crop.state)} closed stroke="#555" strokeWidth={1 / zoom} dash={[5 / zoom, 4 / zoom]} listening={false} name="crop-full" />}
+          {crop && <Line points={[{ x: -1, y: -1 }, { x: 1, y: -1 }, { x: 1, y: 1 }, { x: -1, y: 1 }].flatMap(h => { const q = handlePoint(crop.state.xfrm, h as CropHandle); return [q.x, q.y]; })}
+            closed stroke="#111" strokeWidth={1.5 / zoom} listening={false} name="crop-frame" />}
+          {crop && CROP_HANDLES.map(h => {
+            const q = handlePoint(crop.state.xfrm, h);
+            const size = 11 / zoom;
+            return <Rect key={`crop${h.x},${h.y}`} name="crop-handle" x={q.x - size / 2} y={q.y - size / 2} width={size} height={size} fill="#111" stroke="#fff" strokeWidth={1.5 / zoom}
+              onMouseDown={e => startCrop(h, e)} onMouseEnter={() => setCursor('crosshair')} onMouseLeave={() => setCursor('')} />;
+          })}
+          {showGuides && userGuides.x.map((g, i) => <Line key={`ux${i}`} name="user-guide" points={[g, -cy * 4, g, cy * 5]} stroke="#d9480f" strokeWidth={1 / zoom} dash={[6 / zoom, 4 / zoom]}
+            hitStrokeWidth={10 / zoom} onMouseDown={e => { e.cancelBubble = true; e.evt.preventDefault(); startGuide('x', i, e.evt); }} onMouseEnter={() => setCursor('col-resize')} onMouseLeave={() => setCursor('')} />)}
+          {showGuides && userGuides.y.map((g, i) => <Line key={`uy${i}`} name="user-guide" points={[-cx * 4, g, cx * 5, g]} stroke="#d9480f" strokeWidth={1 / zoom} dash={[6 / zoom, 4 / zoom]}
+            hitStrokeWidth={10 / zoom} onMouseDown={e => { e.cancelBubble = true; e.evt.preventDefault(); startGuide('y', i, e.evt); }} onMouseEnter={() => setCursor('row-resize')} onMouseLeave={() => setCursor('')} />)}
+          {hints.map((h, i) => <Circle key={`hint${i}`} name="site-hint" x={h.x} y={h.y} radius={4 / zoom} fill="#fff" stroke="#2b6cb0" strokeWidth={1.5 / zoom} listening={false} />)}
+          {lineEnds && (['start', 'end'] as const).map(which => (
+            <Circle key={which} name="end-handle" x={lineEnds[which].x} y={lineEnds[which].y} radius={6 / zoom} fill="#fff" stroke="#2b6cb0" strokeWidth={1.5 / zoom}
+              onMouseDown={e => startEnd(which, e)} onMouseEnter={() => setCursor('crosshair')} onMouseLeave={() => setCursor('')} />
+          ))}
+          {cellOutline && <Line points={cellOutline} closed stroke="#2b6cb0" strokeWidth={2 / zoom} fill="rgba(43,108,176,0.12)" listening={false} name="cell-outline" />}
           {marquee && <Rect x={Math.min(marquee.x0, marquee.x1)} y={Math.min(marquee.y0, marquee.y1)} width={Math.abs(marquee.x1 - marquee.x0)} height={Math.abs(marquee.y1 - marquee.y0)}
             fill="rgba(43,108,176,0.08)" stroke="#2b6cb0" strokeWidth={1 / zoom} listening={false} />}
         </Layer>
       </Stage>
       {tv && text && <TextInput view={tv} stage={stageRef} zoom={zoom} />}
+      {pathShape && <MotionPathOverlay place={{ ox, oy, zoom }} center={pathShape.center} spid={pathShape.id} />}
+      {pathDrawing && <PathDrawer place={{ ox, oy, zoom }} />}
+      {playBox && playingRs?.source.media?.part && <MediaPlayer session={sess} part={playingRs.source.media.part} kind={playingRs.source.media.kind} box={playBox} />}
+      {cells?.editing && cellRs && <CellEditor key={`${keyOf(cells.el)}:${cells.anchor.r},${cells.anchor.c}`} rs={cellRs} stage={stageRef} zoom={zoom} fonts={sess.fonts} />}
       {scene?.error && <div className="slide-error" role="alert">This slide cannot be shown: {scene.error}</div>}
     </div>
   );

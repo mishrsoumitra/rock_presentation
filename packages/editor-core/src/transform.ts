@@ -1,9 +1,10 @@
 // packages/editor-core/src/transform.ts  -- moving, resizing, rotating, flipping, aligning and distributing shapes
-import { is, ShapeView, type Xfrm } from '@pptx/model';
+import { attr, child, children, is, setAttr, ShapeView, type Xfrm } from '@pptx/model';
 import { boxMatrix, childSpaceMatrix, IDENTITY, invert, matchLayoutPlaceholder, matchMasterPlaceholder, multiply, type Matrix } from '@pptx/resolve';
 import type { XmlElement } from '@pptx/xml';
 import type { Editor } from './editor.ts';
 import type { Command } from './history.ts';
+import { rerouted } from './connectors.ts';
 import { twins, unitOf } from './xml.ts';
 
 export interface Box { x: number; y: number; w: number; h: number; }
@@ -72,14 +73,44 @@ export interface TransformChange { shape: ShapeView; xfrm: Xfrm; }
  * parent space. A placeholder that inherited its position gets its own a:xfrm, as PowerPoint writes it; a shape in
  * an alternate content block is changed in every branch.
  */
+/**
+ * A table is as wide as its columns and as tall as its rows, whatever its frame says: when the frame is resized,
+ * the columns and rows are scaled with it (the last one takes the rounding, so they still add up).
+ */
+function scaleTable(frame: XmlElement, sx: number, sy: number): void {
+  const tbl = child(child(child(frame, 'a:graphic'), 'a:graphicData'), 'a:tbl');
+  if (!tbl || (Math.abs(sx - 1) < 1e-9 && Math.abs(sy - 1) < 1e-9)) return;
+  const scale = (els: XmlElement[], name: string, k: number) => {
+    if (Math.abs(k - 1) < 1e-9 || !els.length) return;
+    const old = els.map(e => Number(attr(e, name) ?? 0));
+    const total = Math.round(old.reduce((a, b) => a + b, 0) * k);
+    let used = 0;
+    els.forEach((e, i) => {
+      const v = i === els.length - 1 ? Math.max(0, total - used) : Math.round(old[i]! * k);
+      used += v;
+      setAttr(e, name, v);
+    });
+  };
+  scale(children(child(tbl, 'a:tblGrid'), 'a:gridCol'), 'w', sx);
+  scale(children(tbl, 'a:tr'), 'h', sy);
+}
+
 export function setTransforms(ed: Editor, part: string, changes: TransformChange[], label = 'Move', coalesceKey?: string): Command {
+  // connectors attached to the shapes follow them, in the same step (found now: their elements are in the scope)
+  const followers = rerouted(ed, part, changes.map(c => c.shape)).map(r => r.connector);
   return ed.edit({
     label, parts: [part], ...(coalesceKey ? { coalesceKey } : {}),
-    scope: () => changes.map(c => unitOf(c.shape.el)),
+    scope: () => [...changes.map(c => unitOf(c.shape.el)), ...followers.map(c => unitOf(c.el))],
     apply: () => {
       for (const { shape, xfrm } of changes) {
-        for (const el of twins(shape.el)) new ShapeView(el, ed.doc.owner(part)).setXfrm(xfrm);
+        for (const el of twins(shape.el)) {
+          const v = new ShapeView(el, ed.doc.owner(part));
+          const before = v.xfrm;
+          v.setXfrm(xfrm);
+          if (before) scaleTable(el, before.cx ? xfrm.cx / before.cx : 1, before.cy ? xfrm.cy / before.cy : 1);
+        }
       }
+      for (const r of rerouted(ed, part, changes.map(c => c.shape))) r.connector.setXfrm(r.xfrm);
     },
   });
 }

@@ -1,6 +1,6 @@
 // packages/editor-core/src/animation.ts  -- animations and slide transitions as undoable commands
 import {
-  addEffect, clearTransition, moveEffect, removeEffect, setEffectTiming, setTransition,
+  addEffect, clearTransition, listEffects, moveEffect, removeEffect, setEffectTiming, setEffectTriggerShape, setTransition,
   type AddEffectOptions, type EffectTiming, type Preset, type TransitionSpec,
 } from '@pptx/anim';
 import type { ShapeView } from '@pptx/model';
@@ -34,6 +34,35 @@ export function setAnimationTiming(ed: Editor, part: string, index: number, timi
   return ed.edit({
     label: 'Animation Timing', parts: [part], scope: () => [root], coalesceKey: `anim-timing:${part}:${index}`,
     apply: () => setEffectTiming(ed.slide(part), index, timing),
+  });
+}
+
+/**
+ * What starts an effect: a click on a shape (its id), or null for the slide's own sequence of clicks. The effect
+ * moves to the end of the sequence it joins.
+ */
+export function setAnimationTrigger(ed: Editor, part: string, index: number, triggerShape: number | null): Command {
+  const root = ed.doc.root(part);
+  return ed.edit({
+    label: 'Animation Trigger', parts: [part], scope: () => [root],
+    apply: () => setEffectTriggerShape(ed.slide(part), index, triggerShape ?? undefined),
+  });
+}
+
+/** The same for every effect on a shape, as the ribbon's Trigger does for the selected shape: one undo step. */
+export function setShapeAnimationTrigger(ed: Editor, part: string, spid: number, triggerShape: number | null): Command {
+  const root = ed.doc.root(part);
+  const want = triggerShape ?? undefined;
+  return ed.edit({
+    label: 'Animation Trigger', parts: [part], scope: () => [root],
+    apply: () => {
+      // one at a time, found anew each time: moving an effect changes the indices of the others
+      for (let guard = 0; guard < 1000; guard++) {
+        const next = listEffects(ed.slide(part)).find(e => e.spid === spid && e.triggerShape !== want);
+        if (!next) break;
+        setEffectTriggerShape(ed.slide(part), next.index, want);
+      }
+    },
   });
 }
 

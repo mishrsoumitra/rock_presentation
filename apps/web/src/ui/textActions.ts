@@ -1,14 +1,18 @@
 // apps/web/src/ui/textActions.ts  -- typing and formatting, for the keyboard and the ribbon alike
 import {
-  deleteText, formatParagraphs, formatRuns, paragraphLength, paragraphs, typeText, type Command, type ParaPatch, type RunPatch, type TextPos,
-  type TextRange,
+  clearRunFormatting, deleteText, formatBody, formatParagraphs, formatRuns, paragraphLength, paragraphs, replaceAll, replaceMatch, typeText,
+  type BodyPatch, type Command, type FindOptions, type ParaPatch, type RunPatch, type TextMatch, type TextPos, type TextRange,
 } from '@pptx/editor-core';
 import { ShapeView } from '@pptx/model';
-import type { ResolvedParagraph, ResolvedRunProps } from '@pptx/resolve';
+import type { ResolvedBodyProps, ResolvedParagraph, ResolvedRunProps } from '@pptx/resolve';
 import type { XmlElement } from '@pptx/xml';
 import { refit } from '../engine/textfit.ts';
 import { session, useEditor } from '../state/store.ts';
+import { tableOf, regionOf } from '@pptx/editor-core';
+import { runsOf } from '@pptx/model';
+import { hasLook, type Para } from './richText.ts';
 import { keyOf } from './SlideCanvas.tsx';
+import { activeCells, tableBodies } from './tables.ts';
 
 const ordered = (a: TextPos, b: TextPos): TextRange => (a.p < b.p || (a.p === b.p && a.offset <= b.offset) ? { start: a, end: b } : { start: b, end: a });
 
@@ -75,6 +79,75 @@ export function deleteChars(direction: 'back' | 'forward'): void {
   useEditor.setState({ text: { ...t, caret: edit.caret, anchor: edit.caret } });
 }
 
+/**
+ * The text selected in the box being edited, as paragraphs of runs with the bold, italic and underline the runs
+ * themselves carry, for the clipboard. Undefined with only a caret.
+ */
+export function selectedText(): Para[] | undefined {
+  const st = useEditor.getState();
+  const s = st.session, t = st.text;
+  if (!s || !t) return undefined;
+  const body = new ShapeView(t.el, s.ed.doc.owner(t.part)).txBody;
+  const { start, end } = ordered(t.anchor, t.caret);
+  if (!body || (start.p === end.p && start.offset === end.offset)) return undefined;
+  const flag = (rPr: XmlElement | undefined, name: string) => rPr?.attrs.find(a => a.ns === '' && a.local === name)?.value;
+  const out: Para[] = [];
+  paragraphs(body).forEach((p, pi) => {
+    if (pi < start.p || pi > end.p) return;
+    const para: Para = [];
+    let at = 0;
+    for (const r of runsOf(p)) {
+      const text = r.kind === 'br' ? '\u000b' : r.text;
+      const from = Math.max(pi === start.p ? start.offset : 0, at), to = Math.min(pi === end.p ? end.offset : Infinity, at + text.length);
+      if (to > from) {
+        const b = flag(r.rPr, 'b') === '1', i = flag(r.rPr, 'i') === '1', u = flag(r.rPr, 'u');
+        para.push({ text: text.slice(from - at, to - at), ...(b ? { b } : {}), ...(i ? { i } : {}), ...(u && u !== 'none' ? { u: true } : {}) });
+      }
+      at += text.length;
+    }
+    out.push(para);
+  });
+  return out;
+}
+
+/**
+ * Type paragraphs of runs at the caret (a paste). Text with bold, italic or underline somewhere is typed with each
+ * run's look set outright; plain text is typed as the keyboard would, taking the look of where it lands. It is one
+ * undo step with the typing around it.
+ */
+export function typeRich(paras: Para[]): void {
+  const look = hasLook(paras);
+  paras.forEach((p, i) => {
+    if (i) typeChars('\n');
+    for (const seg of p) {
+      if (!seg.text) continue;
+      if (look) useEditor.setState({ pending: { b: !!seg.b, i: !!seg.i, u: seg.u ? 'sng' : 'none' } });
+      typeChars(seg.text);
+    }
+  });
+  if (look) useEditor.setState({ pending: null });
+}
+
+/** Replace one found match; autofit text is refitted in the same undo step, as when typing. */
+export function replaceOne(m: TextMatch, replacement: string): void {
+  const s = session();
+  if (s) runOn(m.part, m.shape, replaceMatch(s.ed, m, replacement, opts(m.part, m.shape, undefined)));
+}
+
+/** Replace every match in the deck as one undo step; returns how many there were. Text editing ends first. */
+export function replaceEverywhere(query: string, replacement: string, find: FindOptions): number {
+  const st = useEditor.getState();
+  const s = st.session;
+  if (!s) return 0;
+  const r = replaceAll(s.ed, query, replacement, find, m => opts(m.part, m.shape, undefined));
+  if (!r.count) return 0;
+  useEditor.setState({ text: null, pending: null });
+  s.ed.log.seal();
+  st.run(r.command);
+  s.ed.log.seal();
+  return r.count;
+}
+
 /** The bodies a formatting command applies to: the text selection, or all text of each selected shape. */
 function targets(): { part: string; el: XmlElement; body: XmlElement; range: TextRange }[] {
   const st = useEditor.getState();
@@ -85,6 +158,8 @@ function targets(): { part: string; el: XmlElement; body: XmlElement; range: Tex
     return body ? [{ part: st.text.part, el: st.text.el, body, range: ordered(st.text.anchor, st.text.caret) }] : [];
   }
   return st.selection.flatMap(el => {
+    // a table: the cells picked in it, or all of its cells
+    if (tableOf(el)) return tableBodies(el, st.cells?.el === el ? activeCells(st) : null).map(body => ({ part: st.slide!, el, body, range: wholeBody(body) }));
     const body = new ShapeView(el, s.ed.doc.owner(st.slide!)).txBody;
     return body ? [{ part: st.slide!, el, body, range: wholeBody(body) }] : [];
   });
@@ -114,25 +189,56 @@ export function formatPara(patch: ParaPatch, label = 'Paragraph'): void {
   for (const x of targets()) runOn(x.part, x.el, formatParagraphs(s.ed, x.part, x.body, x.range, patch, { ...opts(x.part, x.el, undefined), label }));
 }
 
+/** Text box options (anchor, margins, columns) for the box being edited or every selected shape with text. */
+export function formatTextBox(patch: BodyPatch, label = 'Text Options'): void {
+  const s = useEditor.getState().session;
+  if (!s) return;
+  for (const x of targets()) runOn(x.part, x.el, formatBody(s.ed, x.part, x.body, patch, { ...opts(x.part, x.el, undefined), label }));
+}
+
+/**
+ * Clear All Formatting: the selected text, or all text of the selected shapes, goes back to what its placeholder or
+ * the deck's defaults give. With only a caret, the caret's whole paragraph is cleared, and so is pending formatting.
+ */
+export function clearFormatting(): void {
+  const st = useEditor.getState();
+  const s = st.session;
+  if (!s) return;
+  useEditor.setState({ pending: null });
+  for (const x of targets()) {
+    const caret = x.range.start.p === x.range.end.p && x.range.start.offset === x.range.end.offset;
+    const p = caret ? paragraphs(x.body)[x.range.start.p] : undefined;
+    const range = p ? { start: { p: x.range.start.p, offset: 0 }, end: { p: x.range.start.p, offset: paragraphLength(p) } } : x.range;
+    runOn(x.part, x.el, clearRunFormatting(s.ed, x.part, x.body, range, opts(x.part, x.el, undefined)));
+  }
+}
+
 /** The resolved formatting at the caret or of the selected shape's first run (for the ribbon's toggles). */
-export function formattingHere(): { run?: ResolvedRunProps; para?: ResolvedParagraph } {
+export function formattingHere(): { run?: ResolvedRunProps; para?: ResolvedParagraph; body?: ResolvedBodyProps } {
   const st = useEditor.getState();
   const s = st.session;
   if (!s || !st.slide) return {};
   const el = st.text?.el ?? st.selection[0];
   if (!el) return {};
   const scene = s.scenes.get(st.slide);
-  const walk = (list: typeof scene.slide.shapes): ResolvedParagraph[] | undefined => {
+  const walk = (list: typeof scene.slide.shapes): { paragraphs: ResolvedParagraph[]; body: ResolvedBodyProps } | undefined => {
     for (const r of list) {
-      if (r.source?.view.el === el) return r.source.text?.paragraphs;
+      if (r.source?.view.el === el) {
+        const g = r.source.graphic;
+        if (g?.kind !== 'table') return r.source.text ?? undefined;
+        // a table shows the formatting of the cell picked (its first cell when none is)
+        const cells = activeCells(st);
+        const at = cells ? regionOf(tableOf(el)!, cells.anchor.r, cells.anchor.c) : { r0: 0, c0: 0 };
+        return g.table.cells.find(c => c.row === at.r0 && c.col === at.c0)?.text ?? undefined;
+      }
       const inner = walk(r.children);
       if (inner) return inner;
     }
     return undefined;
   };
-  const paras = walk(scene.slide.shapes);
-  const p = paras?.[st.text?.caret.p ?? 0];
-  if (!p) return {};
+  const text = walk(scene.slide.shapes);
+  const p = text?.paragraphs[st.text?.caret.p ?? 0];
+  if (!p || !text) return {};
   let run = p.runs[0]?.props ?? p.endProps;
   if (st.text) {
     let at = 0;
@@ -142,5 +248,12 @@ export function formattingHere(): { run?: ResolvedRunProps; para?: ResolvedParag
       at += len;
     }
   }
-  return { run: { ...run, ...(st.pending?.b !== undefined ? { bold: !!st.pending.b } : {}), ...(st.pending?.i !== undefined ? { italic: !!st.pending.i } : {}) }, para: p };
+  const pend = st.pending;
+  return {
+    run: {
+      ...run, ...(pend?.b !== undefined ? { bold: !!pend.b } : {}), ...(pend?.i !== undefined ? { italic: !!pend.i } : {}),
+      ...(pend?.baseline !== undefined ? { baseline: (pend.baseline ?? 0) / 100000 } : {}),
+    },
+    para: p, body: text.body,
+  };
 }

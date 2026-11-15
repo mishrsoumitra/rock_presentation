@@ -27,7 +27,7 @@ export function shapeName(prst: string): string {
 }
 
 /** Where new shapes go: on top of everything, before the shape tree's extLst. */
-function topSlot(tree: XmlElement): number {
+export function topSlot(tree: XmlElement): number {
   const units = unitsIn(tree);
   const last = units[units.length - 1];
   if (last) return tree.children.indexOf(last) + 1;

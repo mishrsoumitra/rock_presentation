@@ -536,6 +536,30 @@ export function setEffectTiming(slide: SlideView, index: number, timing: EffectT
   commit(slide, el, [seq]);
 }
 
+/**
+ * Change what starts the effect at `index`: a click on shape `triggerShape` (the effect moves to the end of that
+ * shape's sequence, which is made when it has none), or `undefined` for the slide's own sequence of clicks (the
+ * effect moves to its end). A sequence left empty is removed. The effect keeps its timing and becomes the start
+ * of a click group where it lands, as PowerPoint leaves one it moves this way.
+ */
+export function setEffectTriggerShape(slide: SlideView, index: number, triggerShape: number | undefined): void {
+  const timing = slide.timing;
+  if (!timing) throw new RangeError(`no effect ${index}: the slide has no animations`);
+  if (locate(slide, index).seq.trigger === triggerShape) return;
+  if (triggerShape !== undefined && !findShape(slide, triggerShape)) throw new RangeError(`no shape ${triggerShape} on the slide`);
+  // the sequence it goes to, made first: an empty sequence changes no effect's index
+  const destEl = triggerShape !== undefined ? ensureInteractiveSeq(timing, triggerShape) : ensureMainSeq(timing);
+  const { seqs, seq, at } = locate(slide, index);
+  const dest = seqs.find(s => s.el === destEl) ?? { el: destEl, node: undefined as never, ...(triggerShape !== undefined ? { trigger: triggerShape } : {}), entries: [] };
+  const [moved] = seq.entries.splice(at, 1);
+  if (!moved) return;
+  dest.entries.push({ el: moved.el, trigger: 'click' });
+  // what followed it with or after it now starts its own group
+  const next = seq.entries[at];
+  if (next && moved.trigger === 'click' && next.trigger !== 'click' && seq.trigger === undefined) next.trigger = 'click';
+  commit(slide, timing, [seq, dest]);
+}
+
 /** Remove every effect on a shape and the sequences it triggers, as when the shape is deleted. */
 export function removeEffectsOf(slide: SlideView, spid: number): void {
   const timing = slide.timing;

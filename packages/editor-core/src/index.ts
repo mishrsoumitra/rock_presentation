@@ -5,23 +5,44 @@ export {
   align, distribute, effectiveXfrm, flip, moveBy, parentGroup, parentMatrix, rotateQuarter, setTransforms, unionBounds, visualBounds,
   type Alignment, type Box, type TransformChange,
 } from './transform.ts';
-export { group, rename, setAltText, ungroup, zOrder, type ZOrder } from './arrange.ts';
+export { group, rename, setAltText, setShapesHidden, ungroup, zOrder, type ZOrder } from './arrange.ts';
 export {
   copyShapes, deleteShapes, duplicateShapes, insertShape, insertTextBox, paragraphsXml, pasteShapes, shapeName, type Rect, type ShapeClip,
 } from './shapes.ts';
 export {
   bodyPlainText, deleteText, formatBody, formatParagraphs, formatRuns, layoutToModel, modelToLayout, paragraphLength, paragraphs,
-  patchRunProps, replaceText, textIn, typeText,
-  type BodyPatch, type BulletSpec, type ColorSpec, type ParaPatch, type RunPatch, type SpacingSpec, type TextEdit, type TextOptions, type TextPos,
+  clearRunFormatting, patchRunProps, replaceText, retypeText, textIn, typeText,
+  type BodyPatch, type BulletSpec, type ColorSpec, type ParaPatch, type RunPatch, type TextEffect, type SpacingSpec, type TextEdit, type TextOptions, type TextPos,
   type TextRange,
 } from './text.ts';
-export { cropPicture, insertPicture, naturalSize, prepareImage, prepareSvg, replacePicture, retarget, type ImageData, type SvgImage } from './pictures.ts';
-export { addSlide, applyLayout, deleteSlide, duplicateSlide, moveSlide, setBackground, setSlideHidden } from './slides.ts';
+export { applyBackgroundToAll, cropAndPlace, cropPicture, pictureCrop, insertMedia, insertPicture, prepareMedia, setSlideBackground, type BackgroundSpec, type MediaData, naturalSize, prepareImage, prepareSvg, replacePicture, retarget, setPictureFill, type ImageData, type SvgImage } from './pictures.ts';
+export { addSlide, applyLayout, copySlide, deleteSlide, duplicateSlide, moveSlide, pasteSlide, setBackground, setSlideHidden, type SlideClip } from './slides.ts';
+export { notesText, setNotes } from './notes.ts';
+export { addMotionPath, motionPathsOf, pathFromPoints, simplifyPath, type PathPoint } from './motionpath.ts';
+export { equationOf, equationPieces, insertEquation, linearOf, ommlOf, parseEquation, setEquation, type MathNode } from './equations.ts';
+export { insertWordArt, WORDART_STYLES, type WordArtStyle } from './wordart.ts';
+export { headerFooter, setHeaderFooter, setHeaderFooterAll, type FooterKind, type HeaderFooter } from './footers.ts';
+export { chartData, chartPartOf, insertChart, SAMPLE_DATA, setChartData, type ChartData, type ChartKind } from './charts.ts';
+export { addSection, removeAllSections, removeSection, renameSection, sections, type Section } from './sections.ts';
+export {
+  COLOR_SCHEMES, FONT_SCHEMES, setThemeColors, setThemeFonts, THEME_SLOTS, themeOfSlide, themeSchemes, type ColorScheme, type FontScheme, type ThemeSlot,
+} from './theme.ts';
+export { addComment, commentCount, deleteComment, editComment, initialsOf, slideComments, type SlideComment } from './comments.ts';
+export { setShapeLink, setTextLink, shapeLink, textLinkAt, type LinkTarget } from './links.ts';
+export {
+  cellAt, cellBody, cellText, DEFAULT_TABLE_STYLE, deleteColumns, deleteRows, insertColumn, insertRow, insertTable, isMerged, mergeCells, regionOf,
+  ROW_HEIGHT, setCellText, splitCell, tableOf, tableSize, wholeRegions, type CellRange, type CellRef,
+} from './tables.ts';
+export { compareMatches, findInText, findText, matchRange, replaceAll, replaceMatch, type FindOptions, type TextMatch } from './find.ts';
 export { importMasters, partText, prepareTemplate } from './templates.ts';
 export { lightnessClass, STANDARD_COLORS, themePalette, type PaletteColumn, type Swatch } from './palette.ts';
 export { setSlideSize, type ScaleMode } from './slide-size.ts';
-export { colorXml, setFill, setLine, type LineSpec } from './format.ts';
-export { addAnimation, moveAnimation, removeAnimation, setAnimationTiming, setSlideTransition, setTransitionOnAll } from './animation.ts';
+export { copyFormat, copyTextFormat, pasteFormat, type FormatClip } from './painter.ts';
+export {
+  attachments, connectionSites, connectorEnds, frameBetween, isConnector, nearestSite, rerouted, setConnectorEnds, type Attachment, type Point, type Site,
+} from './connectors.ts';
+export { colorXml, fillColorOf, setFill, setFillTransparency, setGradientFill, setLine, setShadow, SHADOWS, type GradientSpec, type LineSpec } from './format.ts';
+export { addAnimation, moveAnimation, removeAnimation, setAnimationTiming, setAnimationTrigger, setShapeAnimationTrigger, setSlideTransition, setTransitionOnAll } from './animation.ts';
 export { prepareForSave } from './save.ts';
 export { collectOrphans, copyPart, dropUnreferenced, findMedia, freeName, hashMedia, mediaPart, referencedIds, relRefs } from './parts.ts';
 export { convertFlavour, element, fragment, idOf, nextShapeId, shapeIds, shapesOfUnit, twins, unitOf, unitsIn } from './xml.ts';
