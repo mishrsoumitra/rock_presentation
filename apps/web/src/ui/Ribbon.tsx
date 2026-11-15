@@ -2,6 +2,7 @@
 import { useRef, useState } from 'react';
 import { useEditor, type EditorState } from '../state/store.ts';
 import * as act from './actions.ts';
+import { BULLET_STYLES, bulletPatch, NUMBER_STYLES, numberSample } from './bullets.ts';
 import { clearFormatting, formatPara, formatText, formatTextBox, formattingHere } from './textActions.ts';
 import { Btn, ColorGrid, keepFocus, Menu, MenuItem, refocusText, ShapeGallery } from './widgets.tsx';
 
@@ -38,7 +39,7 @@ function shown(s: EditorState): string {
   return [
     s.session?.name, s.session?.password ? 'pw' : '', log?.canUndo, log?.undoLabel, log?.canRedo, log?.redoLabel, !!s.clipboard,
     s.selection.length, s.selection[0]?.local, !!s.text,
-    run?.latin, run?.size, run?.bold, run?.italic, run?.underline, run?.strike, para?.bullet?.kind, para?.level, para?.align,
+    run?.latin, run?.size, run?.bold, run?.italic, run?.underline, run?.strike, para?.bullet?.kind, para?.bullet?.char, para?.bullet?.scheme, para?.marL, para?.indent, para?.level, para?.align,
     run?.baseline, run?.spacing, para?.lineSpacing.kind, para?.lineSpacing.val, para?.spaceBefore.val, para?.spaceAfter.val,
     here.body?.anchor, here.body?.numCol, here.body && Object.values(here.body.insets).join(','),
   ].join('|');
@@ -120,8 +121,18 @@ export function Ribbon({ extraTabs }: { extraTabs?: Partial<Record<Tab, React.Re
               <Btn icon="clear" label="Clear All Formatting" onClick={clearFormatting} testid="clear-formatting" />
             </section>
             <section className="group" aria-label="Paragraph">
-              <Btn icon="bullets" label="Bullets" active={para?.bullet?.kind === 'char'} onClick={() => formatPara({ bullet: para?.bullet?.kind === 'char' ? { kind: 'none' } : { kind: 'char', char: '•', font: 'Arial' } }, 'Bullets')} />
-              <Btn icon="numbers" label="Numbering" active={para?.bullet?.kind === 'autonum'} onClick={() => formatPara({ bullet: para?.bullet?.kind === 'autonum' ? { kind: 'none' } : { kind: 'autonum', scheme: 'arabicPeriod' } }, 'Numbering')} />
+              <Btn icon="bullets" label="Bullets" active={para?.bullet?.kind === 'char'} onClick={() => formatPara(bulletPatch(para?.bullet?.kind === 'char' ? { kind: 'none' } : { kind: 'char', char: '•', font: 'Arial' }, para), 'Bullets')} testid="bullets" />
+              <Menu label="Bullet Styles" wide={false} testid="bullet-styles">{close => (<>
+                <MenuItem label="None" checked={!para?.bullet} onClick={() => { close(); formatPara(bulletPatch({ kind: 'none' }, para), 'Bullets'); }} />
+                {BULLET_STYLES.map(b => <MenuItem key={b.char} label={`${b.char} ${b.name}`} checked={para?.bullet?.kind === 'char' && para.bullet.char === b.char}
+                  onClick={() => { close(); formatPara(bulletPatch({ kind: 'char', char: b.char, font: 'Arial' }, para), 'Bullets'); }} />)}
+              </>)}</Menu>
+              <Btn icon="numbers" label="Numbering" active={para?.bullet?.kind === 'autonum'} onClick={() => formatPara(bulletPatch(para?.bullet?.kind === 'autonum' ? { kind: 'none' } : { kind: 'autonum', scheme: 'arabicPeriod' }, para), 'Numbering')} testid="numbering" />
+              <Menu label="Numbering Styles" wide={false} testid="number-styles">{close => (<>
+                <MenuItem label="None" checked={!para?.bullet} onClick={() => { close(); formatPara(bulletPatch({ kind: 'none' }, para), 'Numbering'); }} />
+                {NUMBER_STYLES.map(sc => <MenuItem key={sc} label={numberSample(sc)} checked={para?.bullet?.kind === 'autonum' && para.bullet.scheme === sc}
+                  onClick={() => { close(); formatPara(bulletPatch({ kind: 'autonum', scheme: sc }, para), 'Numbering'); }} />)}
+              </>)}</Menu>
               <Btn icon="outdent" label="Decrease List Level" onClick={() => formatPara({ lvl: Math.max(0, (para?.level ?? 0) - 1) }, 'Decrease Indent')} />
               <Btn icon="indent" label="Increase List Level" onClick={() => formatPara({ lvl: Math.min(8, (para?.level ?? 0) + 1) }, 'Increase Indent')} />
               <Btn icon="left" label="Align Left" active={para?.align === 'l'} onClick={() => formatPara({ algn: 'l' }, 'Align Left')} />

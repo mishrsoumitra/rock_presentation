@@ -202,6 +202,60 @@ describe('text formatting from the ribbon', () => {
   }, 60_000);
 });
 
+describe('bullet and number styles', () => {
+  test('pick a bullet character and a numbering scheme; the menus tick the one in force; text in a box gets a hanging indent', async () => {
+    await textBox('one\ntwo');
+    await page.keyboard.press('Control+a');
+    expect(await ticked('bullet-styles')).toEqual(['None']);
+
+    await choose('bullet-styles', '■ Filled Square');
+    let xml = await shapeXml();
+    expect(xml.match(/<a:pPr marL="285750" indent="-285750"><a:buFont typeface="Arial"><\/buFont><a:buChar char="■"><\/buChar><\/pPr>/g)?.length).toBe(2);
+    expect(await ticked('bullet-styles')).toEqual(['■ Filled Square']);
+    expect(await ticked('number-styles')).toEqual([]);
+    expect(await pressed('bullets')).toBe('true');
+
+    await choose('number-styles', 'a) b) c)');
+    xml = await shapeXml();
+    expect(xml.match(/<a:buAutoNum type="alphaLcParenR">/g)?.length).toBe(2);
+    expect(xml).not.toContain('buChar');
+    expect(xml).toContain('marL="342900" indent="-342900"');            // numbers get the wider indent
+    expect(await ticked('number-styles')).toEqual(['a) b) c)']);
+    expect([await pressed('bullets'), await pressed('numbering')]).toEqual(['false', 'true']);
+
+    await choose('number-styles', 'I. II. III.');
+    expect(await shapeXml()).toContain('<a:buAutoNum type="romanUcPeriod">');
+    expect(await state<string>('return s.session.ed.log.undoLabel;')).toBe('Numbering');
+
+    // None takes the numbers and the indent away; the plain buttons still toggle the default styles
+    await choose('number-styles', 'None');
+    xml = await shapeXml();
+    expect(xml).toContain('<a:buNone>');
+    expect(xml).toContain('marL="0" indent="0"');
+    expect(await ticked('bullet-styles')).toEqual(['None']);
+    await page.getByTestId('bullets').click();
+    expect(await ticked('bullet-styles')).toEqual(['• Filled Round']);
+    await page.getByTestId('bullets').click();
+    expect(await ticked('bullet-styles')).toEqual(['None']);
+
+    await choose('bullet-styles', '– Dash');
+    const ed = await saved();
+    const box = ed.doc.slide(ed.doc.slideParts()[0]!).shapes.find(sh => sh.name.startsWith('TextBox'))!;
+    expect(new TextDecoder().decode(ed.pkg.getPart(ed.doc.slideParts()[0]!)!.bytes)).toContain('<a:buChar char="–"/>');
+    expect(box.txBody).toBeDefined();
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('only the paragraph of the caret changes when nothing is selected', async () => {
+    await textBox('one\ntwo');
+    await choose('bullet-styles', '○ Hollow Round');
+    const xml = await shapeXml();
+    expect(xml.match(/<a:buChar/g)?.length).toBe(1);
+    expect(xml.indexOf('<a:buChar')).toBeGreaterThan(xml.indexOf('one'));
+    expect(errors).toEqual([]);
+  }, 60_000);
+});
+
 describe('speaker notes', () => {
   test('type notes under the slide, undo and redo them, keep them per slide, and find them in the saved file', async () => {
     const notes = page.getByTestId('notes');
