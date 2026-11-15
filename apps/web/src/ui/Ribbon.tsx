@@ -3,6 +3,7 @@ import { useRef, useState } from 'react';
 import { COLOR_SCHEMES, FONT_SCHEMES } from '@pptx/editor-core';
 import { unsaved, useEditor, type EditorState } from '../state/store.ts';
 import * as act from './actions.ts';
+import { SYMBOL_GROUPS } from './symbols.ts';
 import { BULLET_STYLES, bulletPatch, NUMBER_STYLES, numberSample } from './bullets.ts';
 import { linkContext } from './linkActions.ts';
 import { newGuideAt } from './rulers.ts';
@@ -285,6 +286,18 @@ export function Ribbon({ extraTabs }: { extraTabs?: Partial<Record<Tab, React.Re
               </FilePicker>
               <Menu icon="outline" label="Shapes">{close => <ShapeGallery onPick={p => { close(); act.startDrawing(p); }} />}</Menu>
               <Btn icon="text" label="Text Box" wide disabled={!session} onClick={act.insertTextBoxHere} testid="text-box" />
+              <Menu icon="symbol" label="Symbol" testid="insert-symbol">{() => (
+                <div className="symbols" data-testid="symbols">
+                  {SYMBOL_GROUPS.map(([title, chars]) => (
+                    <div key={title}>
+                      <div className="colors-title">{title}</div>
+                      <div className="symbol-cells">
+                        {chars.map(c => <button key={c.char} type="button" className="symbol" title={c.name} aria-label={c.name} disabled={!session} onClick={() => act.insertSymbol(c.char)} onMouseDown={e => e.preventDefault()}>{c.char}</button>)}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}</Menu>
             </section>
             <section className="group" aria-label="Media">
               <Btn icon="play" label="Video" wide disabled={!session} onClick={() => void pickFile('video/mp4,video/webm,video/quicktime,.mp4,.m4v,.mov,.webm,.wmv,.avi').then(f => (f ? act.insertMediaFile(f) : undefined))} testid="insert-video" />

@@ -19,6 +19,7 @@ import { autosave, type Autosaved } from '../engine/autosave.ts';
 import { deckPdf, slidePng, slidesZip } from '../engine/export.ts';
 import { audioIcon, mediaTypeOf, videoPoster } from '../engine/media.ts';
 import { markSaved, useEditor, type FileHandle } from '../state/store.ts';
+import { typeChars } from './textActions.ts';
 
 const st = () => useEditor.getState();
 
@@ -238,6 +239,28 @@ export function insertTextBoxHere(): void {
   c.s.run(r.command);
   const els = inserted(r.id);
   if (els[0]) useEditor.setState({ selection: els, text: { part: c.part, el: els[0], caret: { p: 0, offset: 0 }, anchor: { p: 0, offset: 0 } } });
+}
+
+/**
+ * Insert a character from the Symbol menu: at the caret when text is being typed (on the slide, in a table cell,
+ * in the notes), and otherwise in a new text box in the middle of the slide, the caret left after it.
+ */
+export function insertSymbol(char: string): void {
+  const s = st();
+  if (s.text) { typeChars(char); return; }
+  const focus = typeof document === 'undefined' ? null : document.activeElement;
+  if (focus instanceof HTMLTextAreaElement || (focus instanceof HTMLInputElement && focus.type === 'text')) {
+    document.execCommand('insertText', false, char);                     // as if typed: the field's own undo and change events
+    return;
+  }
+  const c = ctx();
+  if (!c) return;
+  const size = c.ed.doc.presentation.slideSize;
+  const r = insertTextBox(c.ed, c.part, { x: size.cx / 2 - 1524000, y: size.cy / 2 - 184666, w: 3048000, h: 369332 }, char);
+  c.s.run(r.command);
+  const els = inserted(r.id);
+  const at = { p: 0, offset: char.length };
+  if (els[0]) useEditor.setState({ selection: els, text: { part: c.part, el: els[0], caret: at, anchor: at } });
 }
 
 /**

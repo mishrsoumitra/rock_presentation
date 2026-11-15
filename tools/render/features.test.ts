@@ -1940,6 +1940,70 @@ describe('theme colours and fonts', () => {
   }, 60_000);
 });
 
+describe('special characters', () => {
+  const pick = (name: string) => page.getByTestId('symbols').getByRole('button', { name, exact: true }).click();
+  const text = () => state<string>(`
+    const el = s.text?.el ?? s.selection[0]; if (!el) return '';
+    const walk = e => e.children.map(c => (c.kind === 'element' ? walk(c) : c.value ?? '')).join('');
+    return walk(el);`);
+  async function openSymbols(): Promise<void> {
+    await page.getByRole('tab', { name: 'Insert' }).click();
+    await page.getByTestId('insert-symbol').click();
+    await page.getByTestId('symbols').waitFor();
+  }
+
+  test('with nothing being typed, a symbol comes in as a new text box, and the next ones follow it there', async () => {
+    const before = await state<number>('return s.session.ed.doc.slide(s.slide).shapes.length;');
+    await openSymbols();
+    await pick('Euro');
+    expect(await state<number>('return s.session.ed.doc.slide(s.slide).shapes.length;')).toBe(before + 1);
+    expect(await text()).toBe('€');
+    await pick('Pound');                                                  // the menu stays open for more
+    await pick('Right arrow');
+    expect(await text()).toBe('€£→');
+    expect(await state<number>('return s.session.ed.doc.slide(s.slide).shapes.length;')).toBe(before + 1);
+    await page.keyboard.press('Escape');
+    await page.keyboard.type('!');                                        // typing goes on after the symbols
+    expect(await text()).toBe('€£→!');
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('while typing, a symbol goes in at the caret, in the look of the text around it, and undo takes it out', async () => {
+    await textBox('ab');
+    await page.getByTestId('bold').click();
+    await page.keyboard.press('ArrowLeft');
+    await openSymbols();
+    await pick('Almost equal');
+    await page.getByTestId('insert-symbol').click();                      // close the menu; the caret stays where it was
+    expect(await text()).toBe('a≈b');
+    await page.keyboard.type('c');
+    expect(await text()).toBe('a≈cb');
+    await page.keyboard.press('Control+z');
+    expect(await text()).not.toContain('≈');
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('in the speaker notes a symbol goes into the notes, not onto the slide', async () => {
+    const before = await state<number>('return s.session.ed.doc.slide(s.slide).shapes.length;');
+    await page.getByTestId('notes').click();
+    await page.keyboard.type('half is ');
+    await openSymbols();
+    await pick('One half');
+    expect(await page.getByTestId('notes').inputValue()).toBe('half is ½');
+    expect(await state<number>('return s.session.ed.doc.slide(s.slide).shapes.length;')).toBe(before);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('every character offered has a button named for it', async () => {
+    await openSymbols();
+    const buttons = page.getByTestId('symbols').getByRole('button');
+    expect(await buttons.count()).toBeGreaterThan(80);
+    expect(await page.getByTestId('symbols').getByRole('button', { name: 'Capital omega', exact: true }).innerText()).toBe('Ω');
+    expect(await page.getByTestId('symbols').getByRole('button', { name: 'Infinity', exact: true }).getAttribute('title')).toBe('Infinity');
+    expect(errors).toEqual([]);
+  }, 60_000);
+});
+
 describe('video and audio', () => {
   /** A real sound file: a third of a second of a 440 Hz tone, 8 kHz mono 16-bit WAV. */
   function wavFile(): string {
