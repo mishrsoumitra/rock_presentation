@@ -23,6 +23,8 @@ beforeAll(async () => {
   browser = await chromium.launch();
   page = await browser.newPage({ viewport: { width: 1400, height: 860 }, acceptDownloads: true });
   page.on('pageerror', e => errors.push(String(e)));
+  // leaving a deck with unsaved changes asks first: the tests always leave
+  page.on('dialog', d => void d.accept().catch(() => undefined));
 }, 120_000);
 
 afterAll(async () => {
@@ -33,6 +35,9 @@ afterAll(async () => {
 /** A new presentation in a freshly loaded app: one title slide, nothing selected, an empty undo history. */
 beforeEach(async () => {
   errors.length = 0;
+  await page.goto(server.resolvedUrls!.local[0]!);
+  // nothing kept by autosave from the test before: the app starts as it does the first time
+  await page.evaluate(() => new Promise(done => { const q = indexedDB.deleteDatabase('presentations'); q.onsuccess = q.onerror = q.onblocked = () => done(null); }));
   await page.goto(server.resolvedUrls!.local[0]!);
   await page.getByTestId('welcome-new').click();
   await page.getByTestId('canvas').waitFor();
@@ -1469,6 +1474,136 @@ describe('presenter view and the laser pointer', () => {
     await page.mouse.move(420, 310);
     expect(await page.getByTestId('laser').count()).toBe(1);
     await page.keyboard.press('Escape');
+    expect(errors).toEqual([]);
+  }, 60_000);
+});
+
+describe('saving, autosave and recovery', () => {
+  const docName = () => page.getByTestId('doc-name').innerText();
+  /** Write the recovery copy now instead of after the usual wait. */
+  const autosaveNow = () => page.evaluate(`import('/src/state/store.ts').then(m => m.autosaveNow())`);
+  /** What autosave has kept: the deck's name and whether it holds bytes, or null. */
+  const kept = () => page.evaluate(() => new Promise<{ name: string; bytes: number } | null>(done => {
+    const open = indexedDB.open('presentations', 1);
+    open.onupgradeneeded = () => open.result.createObjectStore('autosave');
+    open.onsuccess = () => {
+      const get = open.result.transaction('autosave').objectStore('autosave').get('current');
+      get.onsuccess = () => { open.result.close(); done(get.result ? { name: get.result.name, bytes: get.result.bytes.length } : null); };
+      get.onerror = () => { open.result.close(); done(null); };
+    };
+    open.onerror = () => done(null);
+  }));
+  const boxTexts = () => state<string[]>(`
+    const textOf = el => { const out = []; const walk = e => { if (e.local === 't') out.push(e.children.map(c => c.value ?? '').join('')); for (const c of e.children) if (c.kind === 'element') walk(c); }; walk(el); return out.join(''); };
+    return s.session.ed.doc.slide(s.slide).shapes.filter(sh => sh.name.startsWith('TextBox')).map(sh => textOf(sh.el));`);
+  /** A file picker of the test's own in place of the browser's: it hands out a file that remembers what is written to it. */
+  const fakePicker = (name: string | null) => page.evaluate(n => {
+    const w = window as unknown as { __picks: unknown[]; __written: number[][]; showSaveFilePicker: (o: unknown) => Promise<unknown> };
+    w.__picks = [];
+    w.__written = [];
+    w.showSaveFilePicker = async (options: unknown) => {
+      w.__picks.push(options);
+      if (n === null) throw new DOMException('The user aborted a request.', 'AbortError');
+      return { name: n, getFile: async () => new File([], n), createWritable: async () => ({ write: async (data: Uint8Array) => { w.__written.push(Array.from(data)); }, close: async () => undefined }) };
+    };
+  }, name);
+  const picks = () => page.evaluate(() => (window as unknown as { __picks: { suggestedName: string }[] }).__picks.map(p => p.suggestedName));
+  const written = () => page.evaluate(() => (window as unknown as { __written: number[][] }).__written);
+
+  test('a deck with unsaved changes is kept by autosave, offered on the welcome screen after the tab is closed, and restored whole', async () => {
+    expect(await docName()).toBe('Presentation1.pptx');
+    expect(await kept()).toBeNull();
+    await textBox('keep me');
+    await page.keyboard.press('Escape');
+    expect(await docName()).toBe('Presentation1.pptx (unsaved changes)');
+    await autosaveNow();
+    const record = await kept();
+    expect(record?.name).toBe('Presentation1.pptx');
+    expect(record!.bytes).toBeGreaterThan(1000);
+
+    // the tab goes away without a save; the app, opened again, offers the deck
+    await page.goto(server.resolvedUrls!.local[0]!);
+    await page.getByTestId('recover').waitFor();
+    expect(await page.getByTestId('recover').innerText()).toContain('Presentation1.pptx has changes that were not saved');
+    await page.getByTestId('recover-restore').click();
+    await page.getByTestId('canvas').waitFor();
+    expect(await boxTexts()).toEqual(['keep me']);
+    expect(await docName()).toBe('Presentation1.pptx (unsaved changes)');     // restored, and still not saved anywhere
+
+    // a real save: nothing is unsaved, and nothing is offered next time
+    const [download] = await Promise.all([page.waitForEvent('download'), (async () => { await page.getByRole('tab', { name: 'File' }).click(); await page.getByTestId('save').click(); })()]);
+    expect(download.suggestedFilename()).toBe('Presentation1.pptx');
+    await expect.poll(docName).toBe('Presentation1.pptx');
+    await expect.poll(kept).toBeNull();
+    await page.goto(server.resolvedUrls!.local[0]!);
+    await page.getByTestId('welcome-new').waitFor();
+    await page.waitForTimeout(150);
+    expect(await page.getByTestId('recover').count()).toBe(0);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('autosave follows the deck by itself a few seconds after a change; undoing back to the saved state leaves nothing to keep; Discard throws the kept deck away', async () => {
+    await textBox('typed once');
+    await page.keyboard.press('Escape');
+    await expect.poll(kept, { timeout: 12_000 }).not.toBeNull();          // with no call from the test: the timer wrote it
+    // undone to where the deck started: still counted as changed (an undo is an edit), so still kept
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Control+z');
+    await page.keyboard.press('Control+z');
+    expect(await docName()).toContain('unsaved changes');
+
+    await page.goto(server.resolvedUrls!.local[0]!);
+    await page.getByTestId('recover').waitFor();
+    await page.getByTestId('recover-discard').click();
+    expect(await page.getByTestId('recover').count()).toBe(0);
+    await expect.poll(kept).toBeNull();
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('Save asks where the first time, then writes the same file with no questions; Save As asks again', async () => {
+    await fakePicker('chosen.pptx');
+    await textBox('first');
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Control+s');
+    await expect.poll(async () => (await written()).length).toBe(1);
+    expect(await picks()).toEqual(['Presentation1.pptx']);
+    await expect.poll(docName).toBe('chosen.pptx');                      // named after the file, and nothing unsaved
+    await expect.poll(() => page.locator('.status .message').innerText()).toContain('Saved chosen.pptx.');
+    // what was written is the deck
+    const first = new Editor(OpcPackage.open(new Uint8Array((await written())[0]!)));
+    expect(first.doc.slide(first.doc.slideParts()[0]!).shapes.some(sh => sh.name.startsWith('TextBox'))).toBe(true);
+
+    await page.getByTestId('new-slide').click();
+    expect(await docName()).toBe('chosen.pptx (unsaved changes)');
+    await page.getByRole('tab', { name: 'File' }).click();
+    await page.getByTestId('save-file').click();
+    await expect.poll(async () => (await written()).length).toBe(2);
+    expect((await picks()).length).toBe(1);                              // no second question
+    const second = new Editor(OpcPackage.open(new Uint8Array((await written())[1]!)));
+    expect(second.doc.slideParts().length).toBe(2);
+
+    await page.getByTestId('save-as').click();
+    await expect.poll(async () => (await written()).length).toBe(3);
+    expect(await picks()).toEqual(['Presentation1.pptx', 'chosen.pptx']);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('a file dialog that is cancelled saves nothing and says nothing; where the browser cannot write files, Save downloads', async () => {
+    await fakePicker(null);
+    await textBox('unsaved');
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Control+s');
+    await expect.poll(async () => (await picks()).length).toBe(1);
+    expect(await written()).toEqual([]);
+    expect(await docName()).toBe('Presentation1.pptx (unsaved changes)');
+    expect(await page.locator('.status .message.error').count()).toBe(0);
+
+    await page.evaluate(() => { delete (window as unknown as { showSaveFilePicker?: unknown }).showSaveFilePicker; });
+    const [download] = await Promise.all([page.waitForEvent('download'), page.keyboard.press('Control+s')]);
+    expect(download.suggestedFilename()).toBe('Presentation1.pptx');
+    await expect.poll(docName).toBe('Presentation1.pptx');
     expect(errors).toEqual([]);
   }, 60_000);
 });

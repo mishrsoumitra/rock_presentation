@@ -15,7 +15,8 @@ import { ShapeView } from '@pptx/model';
 import type { XmlElement } from '@pptx/xml';
 import { blankPresentation } from '../engine/blank.ts';
 import { decodeImage } from '../engine/images.ts';
-import { useEditor } from '../state/store.ts';
+import { autosave, type Autosaved } from '../engine/autosave.ts';
+import { markSaved, useEditor, type FileHandle } from '../state/store.ts';
 
 const st = () => useEditor.getState();
 
@@ -41,19 +42,108 @@ export async function openFile(file: File): Promise<void> {
   await st().open(new Uint8Array(await file.arrayBuffer()), file.name);
 }
 
+/** The name a saved file gets: the deck's, as a .pptx (a template or a show opened here is saved as a presentation). */
+function saveName(name: string): string {
+  const n = name.replace(/\.(potx|ppsx|pptm|potm|ppsm)$/i, '.pptx');
+  return /\.pptx$/i.test(n) ? n : `${n}.pptx`;
+}
+
+const PPTX_TYPE = { description: 'PowerPoint presentation', accept: { 'application/vnd.openxmlformats-officedocument.presentationml.presentation': ['.pptx'] } };
+type Pickers = {
+  showSaveFilePicker?: (o: { suggestedName: string; types: unknown[] }) => Promise<FileHandle>;
+  showOpenFilePicker?: (o: { types: unknown[]; multiple: false }) => Promise<FileHandle[]>;
+};
+const pickers = () => window as unknown as Pickers;
+const cancelled = (e: unknown) => e instanceof DOMException && e.name === 'AbortError';
+
+async function deckBytes(): Promise<Uint8Array | undefined> {
+  const s = st();
+  return s.save().catch(e => { s.notify('error', `Saving failed: ${e instanceof Error ? e.message : String(e)}`); return undefined; });
+}
+
+/** Download the deck as a file: where the browser cannot write files itself, and for "Save a copy". */
 export async function saveAndDownload(): Promise<void> {
   const s = st();
-  const bytes = await s.save().catch(e => { s.notify('error', `Saving failed: ${e instanceof Error ? e.message : String(e)}`); return undefined; });
+  const bytes = await deckBytes();
   if (!bytes || !s.session) return;
-  const name = s.session.name.replace(/\.(potx|ppsx|pptm|potm|ppsm)$/i, '.pptx');
   const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' }));
   const a = document.createElement('a');
   a.href = url;
-  a.download = /\.pptx$/i.test(name) ? name : `${name}.pptx`;
+  a.download = saveName(s.session.name);
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  markSaved();
   s.notify('info', `Saved ${a.download}${s.session.password ? ' (encrypted)' : ''}.`);
 }
+
+/**
+ * Save (Ctrl/Cmd+S): to the file the deck was opened from or last saved to, with no questions; the first time, the
+ * browser asks where. `as` asks where again (Save As). Browsers that cannot write files download a copy instead.
+ */
+export async function saveFile(as = false): Promise<void> {
+  const s = st();
+  const session = s.session;
+  if (!session) return;
+  let handle = as ? undefined : session.handle;
+  if (!handle) {
+    const pick = pickers().showSaveFilePicker;
+    if (!pick) { await saveAndDownload(); return; }
+    try {
+      handle = await pick({ suggestedName: saveName(session.name), types: [PPTX_TYPE] });
+    } catch (e) {
+      if (!cancelled(e)) s.notify('error', `Saving failed: ${e instanceof Error ? e.message : String(e)}`);
+      return;
+    }
+  }
+  const bytes = await deckBytes();
+  if (!bytes) return;
+  try {
+    const w = await handle.createWritable();
+    await w.write(bytes);
+    await w.close();
+  } catch (e) {
+    if (!cancelled(e)) s.notify('error', `${handle.name} could not be written: ${e instanceof Error ? e.message : String(e)}`);
+    return;
+  }
+  session.handle = handle;
+  session.name = handle.name;
+  markSaved();
+  useEditor.setState(x => ({ version: x.version + 1 }));
+  s.notify('info', `Saved ${handle.name}${session.password ? ' (encrypted)' : ''}.`);
+}
+
+/**
+ * Open with the browser's own file picker where it has one, so Save can write back to the same file. Returns false
+ * where it has none: the caller then uses an ordinary file input.
+ */
+export async function openWithPicker(): Promise<boolean> {
+  const pick = pickers().showOpenFilePicker;
+  if (!pick) return false;
+  try {
+    const [handle] = await pick({ multiple: false, types: [{ description: 'PowerPoint files', accept: { 'application/vnd.openxmlformats-officedocument.presentationml.presentation': ['.pptx', '.pptm', '.potx', '.ppsx'] } }] });
+    if (!handle) return true;
+    const file = await handle.getFile();
+    await st().open(new Uint8Array(await file.arrayBuffer()), file.name);
+    const now = st().session;
+    if (now && now.name === file.name) now.handle = handle;
+  } catch (e) {
+    if (!cancelled(e)) st().notify('error', `That file could not be opened: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  return true;
+}
+
+/** The deck kept by autosave, if there is one to offer on the welcome screen. */
+export const recoverable = (): Promise<Autosaved | undefined> => autosave.get();
+
+/** Open the deck autosave kept. It opens with unsaved changes (it was never saved), and stays kept until it is. */
+export async function restoreAutosaved(): Promise<void> {
+  const kept = await autosave.get();
+  if (!kept) return;
+  await st().open(kept.bytes, kept.name);
+  if (st().session) useEditor.setState(x => ({ edits: x.edits + 1 }));
+}
+
+export const discardAutosaved = (): Promise<void> => autosave.clear();
 
 /** Pick a shape to draw: the next drag on the slide gives its box (a click gives the default size there). */
 export function startDrawing(prst: string): void {

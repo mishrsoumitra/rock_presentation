@@ -1,6 +1,6 @@
 // apps/web/src/ui/Ribbon.tsx  -- the commands, in tabs as PowerPoint arranges them
 import { useRef, useState } from 'react';
-import { useEditor, type EditorState } from '../state/store.ts';
+import { unsaved, useEditor, type EditorState } from '../state/store.ts';
 import * as act from './actions.ts';
 import { BULLET_STYLES, bulletPatch, NUMBER_STYLES, numberSample } from './bullets.ts';
 import { linkContext } from './linkActions.ts';
@@ -52,6 +52,7 @@ function shown(s: EditorState): string {
 export function Ribbon({ extraTabs }: { extraTabs?: Partial<Record<Tab, React.ReactNode>> }) {
   const [tab, setTab] = useState<Tab>('Home');
   const session = useEditor(s => s.session);
+  const dirty = useEditor(s => unsaved(s));
   useEditor(shown);
   const selection = useEditor.getState().selection;
   const log = session?.ed.log;
@@ -72,13 +73,15 @@ export function Ribbon({ extraTabs }: { extraTabs?: Partial<Record<Tab, React.Re
     <header className="ribbon">
       <nav className="tabs" role="tablist">
         {tabs.map(t => <button key={t} type="button" role="tab" aria-selected={tab === t} className={tab === t ? 'tab active' : 'tab'} onClick={() => setTab(t)} onMouseDown={keepFocus}>{t}</button>)}
-        <span className="doc-name">{session?.name ?? ''}</span>
+        <span className="doc-name" data-testid="doc-name">{session ? `${session.name}${dirty ? ' (unsaved changes)' : ''}` : ''}</span>
       </nav>
       <div className="groups" role="toolbar">
         {tab === 'File' && (
           <>
             <section className="group"><Btn icon="file" label="New" wide onClick={() => void act.newPresentation()} testid="new" />
-              <FilePicker accept=".pptx,.pptm,.potx,.ppsx,.ppt" onFile={f => void act.openFile(f)}>{open => <Btn icon="open" label="Open…" wide onClick={open} testid="open" />}</FilePicker>
+              <FilePicker accept=".pptx,.pptm,.potx,.ppsx,.ppt" onFile={f => void act.openFile(f)}>{open => <Btn icon="open" label="Open…" wide onClick={() => void act.openWithPicker().then(done => { if (!done) open(); })} testid="open" />}</FilePicker>
+              <Btn icon="save" label="Save" wide disabled={!session} onClick={() => void act.saveFile()} testid="save-file" />
+              <Btn icon="save" label="Save As…" wide disabled={!session} onClick={() => void act.saveFile(true)} testid="save-as" />
               <Btn icon="save" label="Save a copy" wide disabled={!session} onClick={() => void act.saveAndDownload()} testid="save" /></section>
             <section className="group"><Btn icon="lock" label={session?.password ? 'Change password…' : 'Encrypt with password…'} wide disabled={!session}
               onClick={() => window.dispatchEvent(new CustomEvent('ask-new-password'))} />

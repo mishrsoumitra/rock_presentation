@@ -6,6 +6,7 @@ import { ShapeView } from '@pptx/model';
 import { OpcError, OpcPackage } from '@pptx/opc';
 import type { FontRegistry } from '@pptx/text';
 import type { XmlElement } from '@pptx/xml';
+import { autosave } from '../engine/autosave.ts';
 import { loadFonts, registerCssFonts } from '../engine/fonts.ts';
 import { ImageCache } from '../engine/images.ts';
 import { SceneCache } from '../engine/scene.ts';
@@ -32,12 +33,24 @@ export interface Session {
   name: string;
   /** The password the deck was opened with: saving encrypts again with it. It stays in this tab. */
   password: string | null;
+  /** The file on this computer the deck was opened from or last saved to, where the browser lets a page write files. */
+  handle?: FileHandle;
+}
+
+/** The part of the File System Access API's file handle this editor uses. */
+export interface FileHandle {
+  name: string;
+  getFile(): Promise<File>;
+  createWritable(): Promise<{ write(data: Uint8Array): Promise<void>; close(): Promise<void> }>;
 }
 
 export interface EditorState {
   session: Session | null;
   /** Bumped on every change, so components re-render; per-part versions decide what actually redraws. */
   version: number;
+  /** How many edits (commands, undos, redos) the deck has had, and how many it had when it was last saved. */
+  edits: number;
+  savedEdits: number;
   slide: string | null;
   selection: XmlElement[];
   /** The group being edited inside (double-click on a group), or null at the top of the slide. */
@@ -115,7 +128,7 @@ function fitted(s: Session, t: TextEditing | null): TextEditing | null {
 }
 
 export const useEditor = create<EditorState>((set, get) => ({
-  session: null, version: 0, slide: null, selection: [], entered: null, text: null, cells: null, pending: null,
+  session: null, version: 0, edits: 0, savedEdits: 0, slide: null, selection: [], entered: null, text: null, cells: null, pending: null,
   zoom: 'fit', drawing: null, mode: 'edit', presenterView: false, view: 'normal', showRuler: false, showGuides: true, guides: { x: [], y: [] }, pane: 'none', finding: false, linking: false, menu: null, clipboard: null, clipId: null, slideClip: null, formatClip: null, painting: false, cropping: null, message: null, askPassword: null,
 
   async open(bytes, name, password) {
@@ -144,6 +157,7 @@ export const useEditor = create<EditorState>((set, get) => ({
       });
       set({
         session, slide: ed.doc.slideParts()[0] ?? null, selection: [], entered: null, text: null, cells: null, pending: null, askPassword: null, guides: { x: [], y: [] },
+        edits: 0, savedEdits: 0,
         version: get().version + 1,
         message: ed.mainKind === 'template' ? { kind: 'info', text: 'Opened a template: saving writes a presentation (.pptx).' }
           : ed.mainKind === 'macro' || pkg.partNames().some(n => /vbaProject\.bin$/i.test(n))
@@ -165,7 +179,7 @@ export const useEditor = create<EditorState>((set, get) => ({
     if (!s) return;
     try {
       s.ed.run(cmd);
-      if (after) set(after);
+      set(st => ({ ...(after ?? {}), edits: st.edits + 1 }));
     } catch (e) {
       get().notify('error', `${cmd.label} failed: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -175,7 +189,7 @@ export const useEditor = create<EditorState>((set, get) => ({
     const s = get().session;
     if (!s?.ed.undo()) return;
     s.thumbs.flush();
-    set(st => ({ selection: attached(st.selection), text: fitted(s, st.text), pending: null }));
+    set(st => ({ selection: attached(st.selection), text: fitted(s, st.text), pending: null, edits: st.edits + 1 }));
     const slides = s.ed.doc.slideParts();
     if (!slides.includes(get().slide ?? '')) set({ slide: slides[0] ?? null });
   },
@@ -184,7 +198,7 @@ export const useEditor = create<EditorState>((set, get) => ({
     const s = get().session;
     if (!s?.ed.redo()) return;
     s.thumbs.flush();
-    set(st => ({ selection: attached(st.selection), text: fitted(s, st.text), pending: null }));
+    set(st => ({ selection: attached(st.selection), text: fitted(s, st.text), pending: null, edits: st.edits + 1 }));
     const slides = s.ed.doc.slideParts();
     if (!slides.includes(get().slide ?? '')) set({ slide: slides[0] ?? null });
   },
@@ -230,3 +244,67 @@ useEditor.subscribe((st, prev) => { if (prev.text && !st.text) st.session?.thumb
 
 /** The session, for code outside React (event handlers). */
 export const session = () => useEditor.getState().session;
+
+/** Whether the deck has changes that have not been saved. */
+export const unsaved = (s: Pick<EditorState, 'session' | 'edits' | 'savedEdits'> = useEditor.getState()) => !!s.session && s.edits !== s.savedEdits;
+
+/** The deck has just been written somewhere: nothing is unsaved, and the copy kept for recovery is no longer needed. */
+export function markSaved(): void {
+  useEditor.setState(s => ({ savedEdits: s.edits }));
+  void autosave.clear();
+}
+
+/**
+ * Autosave: a few seconds after the last change the deck is written (as a save would write it, password and all)
+ * to this browser's own database, where the welcome screen finds it if the tab is closed before a real save. The
+ * wait grows with the time a save takes, so a very large deck is not being written all the time.
+ */
+let timer: ReturnType<typeof setTimeout> | undefined;
+let writing = false;
+let wait = 2500;
+/** Decks larger than this are not autosaved: writing one would stall the editor again and again. */
+export const AUTOSAVE_LIMIT = 48 << 20;
+function tooLarge(s: Session): boolean {
+  let total = 0;
+  for (const n of s.ed.pkg.partNames()) {
+    total += s.ed.pkg.getPart(n)?.bytes.length ?? 0;
+    if (total > AUTOSAVE_LIMIT) return true;
+  }
+  return false;
+}
+async function keep(): Promise<void> {
+  const s = useEditor.getState();
+  if (!s.session || writing || !autosave.available()) return;
+  if (!unsaved(s)) { void autosave.clear(); return; }
+  if (tooLarge(s.session)) return;
+  writing = true;
+  const edits = s.edits, session = s.session, started = performance.now();
+  try {
+    const bytes = await s.save();
+    // only when this is still the deck, and nothing saved it meanwhile
+    if (bytes && useEditor.getState().session === session && unsaved()) await autosave.put({ name: session.name, bytes, at: Date.now(), encrypted: !!session.password });
+  } catch {
+    // a deck that cannot be written now is tried again after the next change
+  } finally {
+    writing = false;
+    wait = Math.max(2500, Math.min(60_000, (performance.now() - started) * 10));
+    if (useEditor.getState().edits !== edits) schedule();
+  }
+}
+function schedule(): void {
+  if (timer) clearTimeout(timer);
+  timer = setTimeout(() => void keep(), wait);
+}
+useEditor.subscribe((st, prev) => { if (st.edits !== prev.edits || st.session !== prev.session) schedule(); });
+/** Write the recovery copy now (tests, and before the page goes away where there is time). */
+export const autosaveNow = () => { if (timer) clearTimeout(timer); return keep(); };
+
+// leaving with unsaved changes asks first, as browsers let a page ask
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeunload', e => {
+    if (!unsaved()) return;
+    e.preventDefault();
+    e.returnValue = '';
+  });
+}
+

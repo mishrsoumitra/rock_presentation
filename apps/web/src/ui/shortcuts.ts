@@ -41,7 +41,7 @@ export function useShortcuts(): void {
       else if (mod && k === 'd') { handled(); act.duplicateSelection(); }
       else if (mod && k === 'g') { handled(); if (e.shiftKey) act.ungroupSelection(); else act.groupSelection(); }
       else if (mod && k === 'm') { handled(); act.newSlide(); }
-      else if (mod && k === 's') { handled(); void act.saveAndDownload(); }
+      else if (mod && k === 's') { handled(); void act.saveFile(e.shiftKey); }
       else if (mod && k === 'a') { handled(); act.selectAllShapes(); }
       else if (e.key === 'Delete' || e.key === 'Backspace') { if (s.selection.length) { handled(); act.deleteSelection(); } }
       else if (e.key === 'Escape') { handled(); if (s.drawing) s.setState({ drawing: null }); else if (s.entered) s.setState({ entered: null, selection: [] }); else s.select([]); }

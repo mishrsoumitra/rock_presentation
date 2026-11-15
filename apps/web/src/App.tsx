@@ -1,7 +1,8 @@
 // apps/web/src/App.tsx  -- the editor's window: ribbon, slide panel, the slide, status bar
 import { useEffect, useState } from 'react';
 import { useEditor } from './state/store.ts';
-import { newPresentation, openFile } from './ui/actions.ts';
+import type { Autosaved } from './engine/autosave.ts';
+import { discardAutosaved, newPresentation, openFile, recoverable, restoreAutosaved } from './ui/actions.ts';
 import { ContextMenu } from './ui/ContextMenu.tsx';
 import { LinkDialog, NewPasswordDialog, OpenPasswordDialog, SlideSizeDialog } from './ui/Dialogs.tsx';
 import { FindBar } from './ui/FindBar.tsx';
@@ -46,12 +47,22 @@ function StatusBar() {
 
 function Welcome() {
   const [over, setOver] = useState(false);
+  // a deck with changes that were never saved, kept by autosave from before the tab was closed
+  const [kept, setKept] = useState<Autosaved | undefined>(undefined);
+  useEffect(() => { void recoverable().then(setKept); }, []);
   return (
     <div className={`welcome${over ? ' over' : ''}`}
       onDragOver={e => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)}
       onDrop={e => { e.preventDefault(); setOver(false); const f = e.dataTransfer.files[0]; if (f) void openFile(f); }}>
       <h1>Presentations</h1>
       <p>Open a PowerPoint file (.pptx, .potx, .ppsx), or drop one here. Everything stays in this browser tab.</p>
+      {kept && (
+        <div className="recover" role="status" data-testid="recover">
+          <span><strong>{kept.name}</strong> has changes that were not saved (kept {new Date(kept.at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}{kept.encrypted ? ', encrypted with its password' : ''}).</span>
+          <button type="button" onClick={() => void restoreAutosaved()} data-testid="recover-restore">Restore</button>
+          <button type="button" onClick={() => { void discardAutosaved(); setKept(undefined); }} data-testid="recover-discard">Discard</button>
+        </div>
+      )}
       <div className="welcome-buttons">
         <button type="button" onClick={() => void newPresentation()} data-testid="welcome-new">New presentation</button>
         <label className="button">Open…<input type="file" hidden accept=".pptx,.pptm,.potx,.ppsx,.ppt" data-testid="welcome-open"

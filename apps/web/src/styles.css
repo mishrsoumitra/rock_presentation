@@ -70,6 +70,8 @@ select { height: 28px; border: 1px solid var(--line); border-radius: var(--radiu
 .table-grid-cells { display: grid; gap: 2px; }
 .table-grid-cell { width: 18px; height: 18px; padding: 0; border: 1px solid var(--line); background: var(--panel); border-radius: 2px; cursor: pointer; }
 .table-grid-cell.on { background: var(--accent-soft); border-color: var(--accent); }
+.recover { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: center; margin: 4px 0 14px; padding: 10px 14px; border: 1px solid var(--accent); border-radius: 8px; background: var(--accent-soft); max-width: 640px; }
+.recover button { border: 1px solid var(--line); background: var(--panel); border-radius: var(--radius); padding: 5px 12px; cursor: pointer; }
 
 /* workspace */
 .workspace { display: grid; grid-template-columns: 210px 1fr; min-height: 0; }
