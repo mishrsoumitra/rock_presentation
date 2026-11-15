@@ -111,6 +111,12 @@ select { height: 28px; border: 1px solid var(--line); border-radius: var(--radiu
 .ruler-v { border-right: 1px solid var(--line); }
 .ruler-corner { position: absolute; top: 0; left: 0; width: 18px; height: 18px; background: var(--panel); border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
 
+/* master view's list of masters and layouts */
+.master-thumb { flex-direction: column; align-items: flex-start; gap: 2px; }
+.master-thumb.layout { margin-left: 24px; }
+.master-name { font-size: 11px; color: var(--muted); max-width: 168px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.master-status button { margin-left: 8px; border: 1px solid var(--line); background: var(--panel); border-radius: var(--radius); padding: 1px 8px; cursor: pointer; }
+
 /* the slide with its speaker notes under it */
 .editing { display: grid; grid-template-rows: minmax(0, 1fr) auto; min-width: 0; min-height: 0; }
 .notes { border-top: 1px solid var(--line); background: var(--panel); }

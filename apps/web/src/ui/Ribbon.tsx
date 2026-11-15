@@ -320,8 +320,10 @@ export function Ribbon({ extraTabs }: { extraTabs?: Partial<Record<Tab, React.Re
           return (
             <>
               <section className="group" aria-label="Views">
-                <Btn icon="layout" label="Grid View" wide disabled={!session} active={st.view === 'grid'} testid="view-tab-grid"
+                <Btn icon="layout" label="Grid View" wide disabled={!session || st.view === 'master'} active={st.view === 'grid'} testid="view-tab-grid"
                   onClick={() => useEditor.setState({ view: st.view === 'grid' ? 'normal' : 'grid', text: null, selection: [], cells: null, cropping: null })} />
+                <Btn icon="layout" label="Slide Master" wide disabled={!session || st.view === 'grid'} active={st.view === 'master'} testid="view-master"
+                  onClick={() => (st.view === 'master' ? act.closeMasterView() : act.openMasterView())} />
               </section>
               <section className="group" aria-label="Show">
                 <Btn icon="size" label="Ruler" wide disabled={!session} active={st.showRuler} onClick={() => useEditor.setState({ showRuler: !st.showRuler })} testid="view-ruler" />

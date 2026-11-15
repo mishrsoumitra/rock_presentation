@@ -54,6 +54,11 @@ export interface RenderShape {
 
 export interface RenderSlide {
   part: string;
+  /**
+   * Which layer holds the page's own shapes: 'slide' for a slide (and a master shown on its own), 'layout' for a
+   * layout shown on its own. Absent means 'slide'. An editor picks and edits only shapes of this layer.
+   */
+  own?: 'slide' | 'layout';
   size: { cx: number; cy: number };
   background: Paint;
   shapes: RenderShape[];

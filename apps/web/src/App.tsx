@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import { useEditor } from './state/store.ts';
 import type { Autosaved } from './engine/autosave.ts';
-import { discardAutosaved, newPresentation, openFile, recoverable, restoreAutosaved } from './ui/actions.ts';
+import { closeMasterView, discardAutosaved, newPresentation, openFile, recoverable, restoreAutosaved } from './ui/actions.ts';
 import { CommentsPane } from './ui/CommentsPane.tsx';
 import { ContextMenu } from './ui/ContextMenu.tsx';
 import { LinkDialog, NewPasswordDialog, OpenPasswordDialog, SlideSizeDialog } from './ui/Dialogs.tsx';
@@ -14,7 +14,7 @@ import { Ribbon } from './ui/Ribbon.tsx';
 import { SelectionPane } from './ui/SelectionPane.tsx';
 import { SpellingPane } from './ui/SpellingPane.tsx';
 import { SlideCanvas } from './ui/SlideCanvas.tsx';
-import { SlideGrid, SlidePanel } from './ui/SlidePanel.tsx';
+import { MasterPanel, SlideGrid, SlidePanel } from './ui/SlidePanel.tsx';
 import { useClipboard } from './ui/clipboard.ts';
 import { useShortcuts } from './ui/shortcuts.ts';
 
@@ -30,16 +30,19 @@ function StatusBar() {
     return `${s.slide ? parts.indexOf(s.slide) + 1 : 0}/${parts.length}`;
   });
   const [n, count] = place.split('/').map(Number);
+  const masterName = useEditor(s => (s.session && s.view === 'master' && s.slide && s.session.ed.pkg.getPart(s.slide) ? s.session.ed.doc.slide(s.slide).name || 'Slide Master' : ''));
   const setZoom = (z: number | 'fit') => useEditor.setState({ zoom: z });
   const current = typeof zoom === 'number' ? zoom * 914400 / 96 : undefined;
   return (
     <footer className="status">
-      <span data-testid="slide-count">{session ? `Slide ${n} of ${count}` : 'No presentation'}</span>
+      {session && view === 'master'
+        ? <span data-testid="slide-count" className="master-status">Slide Master view: {masterName} <button type="button" onClick={closeMasterView} data-testid="close-master">Close Master View</button></span>
+        : <span data-testid="slide-count">{session ? `Slide ${n} of ${count}` : 'No presentation'}</span>}
       {message && <span className={`message ${message.kind}`} role={message.kind === 'error' ? 'alert' : 'status'}>{message.text}
         <button type="button" aria-label="Dismiss" onClick={() => useEditor.setState({ message: null })}>×</button></span>}
       <span className="zoom">
         {session && <button type="button" className="view-toggle" aria-pressed={view === 'grid'} title="Grid view: every slide at once" data-testid="view-grid"
-          onClick={() => useEditor.setState({ view: view === 'grid' ? 'normal' : 'grid', text: null, selection: [], cells: null, cropping: null })}>Grid view</button>}
+          disabled={view === 'master'} onClick={() => useEditor.setState({ view: view === 'grid' ? 'normal' : 'grid', text: null, selection: [], cells: null, cropping: null })}>Grid view</button>}
         <button type="button" onClick={() => setZoom('fit')} aria-pressed={zoom === 'fit'}>Fit</button>
         {[0.5, 0.75, 1, 1.5, 2].map(z => <button key={z} type="button" aria-pressed={current !== undefined && Math.abs(current - z) < 0.01} onClick={() => setZoom((z * 96) / 914400)}>{z * 100}%</button>)}
       </span>
@@ -100,7 +103,7 @@ export function App() {
       <Ribbon extraTabs={{ Transitions: <TransitionsTab />, Animations: <AnimationsTab /> }} />
       <main className={`workspace${session && view === 'grid' ? ' grid-view' : session && pane !== 'none' ? ' with-pane' : ''}`}>
         {!session ? <Welcome /> : view === 'grid' ? <SlideGrid />
-          : <><SlidePanel /><div className="editing"><SlideCanvas /><NotesPane /><FindBar /></div>{pane === 'animation' && <AnimationPane />}{pane === 'selection' && <SelectionPane />}{pane === 'comments' && <CommentsPane />}{pane === 'spelling' && <SpellingPane />}</>}
+          : <>{view === 'master' ? <MasterPanel /> : <SlidePanel />}<div className="editing"><SlideCanvas />{view !== 'master' && <NotesPane />}<FindBar /></div>{pane === 'animation' && <AnimationPane />}{pane === 'selection' && <SelectionPane />}{pane === 'comments' && <CommentsPane />}{pane === 'spelling' && <SpellingPane />}</>}
       </main>
       <StatusBar />
       <ContextMenu />

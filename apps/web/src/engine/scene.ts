@@ -41,7 +41,8 @@ export class SceneCache {
     if (!chain || chain.at !== at) {
       const layout = d.pkg.getPart(part) ? d.layoutOf(part) : undefined;
       const master = layout ? d.masterOf(layout) : d.masterOf(part);
-      const theme = master ? d.themeOf(master) : undefined;
+      // (a master shown on its own in master view is its own end of the chain: its theme is the theme)
+      const theme = master ? d.themeOf(master) : d.pkg.getPart(part) ? d.themeOf(part) : undefined;
       chain = { at, parts: [part, layout, master, theme, d.mainPart] };
       this.chains.set(part, chain);
     }
@@ -85,7 +86,7 @@ export class SceneCache {
     const [oldSlide, ...oldRest] = oldKey.split(':');
     const [, ...newRest] = newKey.split(':');
     if (Number(oldSlide) !== x.from || this.ed.versionOf(part) !== x.to || oldRest.join(':') !== newRest.join(':')) return undefined;
-    if (!prev.resolved || prev.error) return undefined;
+    if (!prev.resolved || prev.error || prev.resolved.kind !== 'slide') return undefined;      // a layout or master is rebuilt whole
     const own = this.ed.doc.slide(part);
     const tops = [...own.shapes, ...own.controlPictures].filter(s => !s.hidden);
     const touched = new Set<XmlElement>();

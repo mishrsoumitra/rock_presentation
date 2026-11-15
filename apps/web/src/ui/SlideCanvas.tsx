@@ -38,7 +38,7 @@ const BAND_PX = 8;
 
 /** Shapes the user can pick: the slide's own, or the members of the group entered. */
 function pickable(slide: RenderSlide, entered: XmlElement | null): RenderShape[] {
-  const own = slide.shapes.filter(s => s.layer === 'slide' && s.source);
+  const own = slide.shapes.filter(s => s.layer === (slide.own ?? 'slide') && s.source);
   if (!entered) return own;
   const find = (list: RenderShape[]): RenderShape | undefined => {
     for (const s of list) {
@@ -115,7 +115,7 @@ function textHitAreas(rs: RenderShape, p: Placement, pad: number): number[][] | 
 function findRendered(slide: RenderSlide, el: XmlElement): RenderShape | undefined {
   const walk = (list: RenderShape[]): RenderShape | undefined => {
     for (const s of list) {
-      if (s.source?.view.el === el && s.layer === 'slide') return s;
+      if (s.source?.view.el === el && s.layer === (slide.own ?? 'slide')) return s;
       const inner = walk(s.children);
       if (inner) return inner;
     }

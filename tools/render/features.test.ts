@@ -499,6 +499,20 @@ describe('copy, cut and paste slides', () => {
     expect(errors).toEqual([]);
   }, 60_000);
 
+  test('undo and redo work with the keyboard in the slide panel', async () => {
+    await threeSlides();                                                 // the panel has the focus
+    await page.keyboard.press('Delete');
+    expect(await marks()).toEqual(['two', 'three']);
+    await page.keyboard.press('Control+z');
+    expect(await marks()).toEqual(['one', 'two', 'three']);
+    await page.keyboard.press('Control+y');
+    expect(await marks()).toEqual(['two', 'three']);
+    await page.keyboard.press('Control+z');
+    await page.keyboard.press('Control+Shift+z');
+    expect(await marks()).toEqual(['two', 'three']);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
   test('the only slide of a deck cannot be cut; shapes on the slide are not copied while the panel has the focus', async () => {
     await textBox('alone');
     await page.keyboard.press('Escape');                                 // the box stays selected
@@ -1922,6 +1936,99 @@ describe('theme colours and fonts', () => {
     expect(xml).toContain('<a:clrScheme name="Violet">');
     expect(xml).toContain('<a:accent1><a:srgbClr val="AD84C6"/></a:accent1>');
     expect(xml).toMatch(/<a:fontScheme name="Georgia and Verdana"><a:majorFont><a:latin typeface="Georgia"/);
+    expect(errors).toEqual([]);
+  }, 60_000);
+});
+
+describe('slide master view', () => {
+  const openMaster = async () => { await page.getByRole('tab', { name: 'View' }).click(); await page.getByTestId('view-master').click(); await page.getByTestId('master-panel').waitFor(); await page.getByRole('tab', { name: 'Home' }).click(); };
+  const pixel = async (x: number, y: number) => {
+    await frames();
+    const p = await slidePoint(x, y);
+    return page.evaluate(([px, py]) => {
+      const c = document.querySelector('[data-testid="canvas"] canvas') as HTMLCanvasElement;
+      const r = c.getBoundingClientRect();
+      const d = c.getContext('2d')!.getImageData(Math.round((px - r.left) * (c.width / r.width)), Math.round((py - r.top) * (c.height / r.height)), 1, 1).data;
+      return [d[0]!, d[1]!, d[2]!];
+    }, [p.x, p.y] as const);
+  };
+  /** What kind of page is being edited, and its name. */
+  const page_ = () => state<string>(`const v = s.session.ed.doc.slide(s.slide); return v.kind + ':' + (v.name || '');`);
+  const slideCount = () => state<number>('return s.session.ed.doc.slideParts().length;');
+  const MARK = { x: 10500000, y: 6000000, w: 1200000, h: 500000 };      // a spot no placeholder of the title layout covers
+
+  test('it opens on the layout of the slide that was showing, lists the master and its layouts, and Close goes back to the slide', async () => {
+    await openMaster();
+    expect(await page_()).toBe('layout:Title Slide');
+    const kinds = await page.getByTestId('master-panel').locator('.master-thumb').evaluateAll(els => els.map(e => (e as HTMLElement).dataset.kind));
+    expect(kinds[0]).toBe('master');
+    expect(kinds.slice(1).every(k => k === 'layout')).toBe(true);
+    expect(kinds.length).toBeGreaterThan(3);
+    expect(await page.getByTestId('master-panel').locator('.master-thumb.current').getAttribute('title')).toBe('Title Slide');
+    expect(await page.getByTestId('slide-count').innerText()).toContain('Slide Master view: Title Slide');
+    expect(await page.getByTestId('notes').count()).toBe(0);             // a layout has no speaker notes
+    // slide commands do nothing here
+    const n = await slideCount();
+    await page.getByTestId('new-slide').click();
+    await page.keyboard.press('Control+m');
+    expect(await slideCount()).toBe(n);
+    expect(await page_()).toBe('layout:Title Slide');
+
+    await page.getByTestId('master-thumb-1').click();
+    expect(await page_()).toMatch(/^master:/);
+    await page.getByTestId('close-master').click();
+    expect(await page.getByTestId('master-panel').count()).toBe(0);
+    expect(await page_()).toMatch(/^slide:/);
+    expect(await page.getByTestId('slide-count').innerText()).toBe('Slide 1 of 1');
+    expect(await page.getByTestId('notes').count()).toBe(1);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('a shape drawn on a layout shows on the slides that use it, where it cannot be picked; undo takes it off the layout', async () => {
+    await openMaster();
+    await drawShape('rect', MARK.x, MARK.y, MARK.w, MARK.h);
+    expect(await selectedNames()).toEqual([expect.stringMatching(/^Rectangle/)]);      // the layout's own shapes are picked and edited here
+    await page.keyboard.press('Escape');
+    expect(await pixel(MARK.x + MARK.w / 2, MARK.y + MARK.h / 2)).toEqual([0x44, 0x72, 0xc4]);
+    // and its placeholders too: a click on the title placeholder's text starts editing it
+    await page.getByTestId('close-master').click();
+
+    expect(await pixel(MARK.x + MARK.w / 2, MARK.y + MARK.h / 2)).toEqual([0x44, 0x72, 0xc4]);
+    const at = await slidePoint(MARK.x + MARK.w / 2, MARK.y + MARK.h / 2);
+    await page.mouse.click(at.x, at.y);
+    expect(await selectedNames()).toEqual([]);                           // it belongs to the layout
+    expect(await state<number>('return s.session.ed.doc.slide(s.slide).shapes.length;')).toBe(2);
+    // a slide of another layout does not have it
+    await page.getByTestId('new-slide').click();
+    expect(await pixel(MARK.x + MARK.w / 2, MARK.y + MARK.h / 2)).toEqual([255, 255, 255]);
+    await page.getByTestId('thumb-1').click();
+
+    const ed = await saved();
+    const layout = ed.doc.layoutOf(ed.doc.slideParts()[0]!)!;
+    expect(ed.doc.slide(layout).shapes.some(sh => sh.name.startsWith('Rectangle'))).toBe(true);
+    expect(ed.doc.slide(ed.doc.slideParts()[0]!).shapes.some(sh => sh.name.startsWith('Rectangle'))).toBe(false);
+
+    await page.keyboard.press('Control+z');                              // the second slide
+    await page.keyboard.press('Control+z');                              // the rectangle on the layout
+    expect(await pixel(MARK.x + MARK.w / 2, MARK.y + MARK.h / 2)).toEqual([255, 255, 255]);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('the master\'s background, set in master view, is every slide\'s background', async () => {
+    await page.getByTestId('new-slide').click();
+    await openMaster();
+    await page.getByTestId('master-thumb-1').click();
+    await page.getByRole('tab', { name: 'Design' }).click();
+    await page.getByTestId('format-background').click();
+    await page.locator('.menu-panel .swatch[title="Yellow"]').first().click();
+    await frames();
+    expect(await pixel(300000, 300000)).toEqual([255, 255, 0]);
+    await page.getByTestId('close-master').click();
+    expect(await pixel(300000, 300000)).toEqual([255, 255, 0]);
+    await page.getByTestId('thumb-1').click();
+    expect(await pixel(300000, 300000)).toEqual([255, 255, 0]);
+    // the slides have no background of their own: it is the master's
+    expect(await state<boolean>(`return s.session.ed.doc.slideParts().some(p => s.session.ed.doc.root(p).children.find(c => c.local === 'cSld').children.some(c => c.local === 'bg'));`)).toBe(false);
     expect(errors).toEqual([]);
   }, 60_000);
 });

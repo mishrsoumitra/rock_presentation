@@ -238,5 +238,5 @@ export function buildSlide(slide: ResolvedSlide, opts: BuildOptions): RenderSlid
   const images = new Set<string>();
   collectImages(slide.background, images);
   const shapes = slide.shapes.map(s => buildShape(slide, s, opts, images));
-  return { part: slide.part, size: slide.size, background: slide.background, shapes, images };
+  return { part: slide.part, ...(slide.kind === 'layout' ? { own: 'layout' as const } : {}), size: slide.size, background: slide.background, shapes, images };
 }

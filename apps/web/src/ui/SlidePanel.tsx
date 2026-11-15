@@ -3,7 +3,7 @@ import { memo, useEffect, useRef, useState, type ClipboardEvent } from 'react';
 import { ANIM_UNDERSTOOD } from '@pptx/anim';
 import { commentCount } from '@pptx/editor-core';
 import { useEditor } from '../state/store.ts';
-import { deleteCurrentSlide, duplicateCurrentSlide, moveCurrentSlide, copyCurrentSlide, cutCurrentSlide, pasteSlideClip } from './actions.ts';
+import { deleteCurrentSlide, duplicateCurrentSlide, masterPages, moveCurrentSlide, copyCurrentSlide, cutCurrentSlide, pasteSlideClip } from './actions.ts';
 
 const THUMB = 168;
 
@@ -84,6 +84,16 @@ const Thumb = memo(function Thumb({ part, index, width = THUMB, prefix = 'thumb'
   );
 });
 
+/** Ctrl/Cmd+Z and Ctrl/Cmd+Y (or Shift+Z) where slides are listed: the editor's undo and redo, as on the slide. True when it was one of them. */
+function undoKeys(e: { key: string; metaKey: boolean; ctrlKey: boolean; shiftKey: boolean; preventDefault(): void }): boolean {
+  if (!(e.metaKey || e.ctrlKey)) return false;
+  const k = e.key.toLowerCase();
+  if (k !== 'z' && k !== 'y') return false;
+  e.preventDefault();
+  if (k === 'y' || e.shiftKey) useEditor.getState().redo(); else useEditor.getState().undo();
+  return true;
+}
+
 /**
  * Ctrl/Cmd+C, X and V where slides are listed (the panel, the grid) copy, cut and paste the current slide; the
  * clipboard carries a mark that names the slide held in memory, so only a paste of that same clipboard brings it back.
@@ -105,6 +115,47 @@ function slideClipboard(parts: string[]) {
       pasteSlideClip();
     },
   };
+}
+
+/** A master or a layout in master view's list: its picture and its name; a click makes it the page being edited. */
+function MasterThumb({ part, kind, name, index }: { part: string; kind: 'master' | 'layout'; name: string; index: number }) {
+  const session = useEditor(s => s.session)!;
+  const current = useEditor(s => s.slide === part);
+  const key = useEditor(s => (s.session ? s.session.scenes.key(part) : ''));
+  const synced = useEditor(s => s.session?.thumbs.synced ?? 0);
+  const ref = useRef<HTMLCanvasElement>(null);
+  const size = session.ed.doc.presentation.slideSize;
+  const width = kind === 'master' ? THUMB : THUMB - 24;
+  useEffect(() => {
+    let live = true;
+    void session.thumbs.get(part, key, Math.round(width * (window.devicePixelRatio || 1))).then(bmp => {
+      const c = ref.current;
+      if (!live || !c || !bmp) return;
+      c.width = bmp.width;
+      c.height = bmp.height;
+      c.getContext('2d')!.drawImage(bmp, 0, 0);
+    });
+    return () => { live = false; };
+  }, [key, part, session, synced, width]);
+  return (
+    <div className={`thumb master-thumb ${kind}${current ? ' current' : ''}`} data-testid={`master-thumb-${index + 1}`} data-kind={kind} title={name}
+      onClick={() => useEditor.getState().setSlide(part)}>
+      <canvas ref={ref} style={{ width, height: Math.round((width * size.cy) / size.cx) }} aria-label={name} />
+      <span className="master-name">{name}</span>
+    </div>
+  );
+}
+
+/** Master view's list: each slide master, and under it its layouts. */
+export function MasterPanel() {
+  const session = useEditor(s => s.session);
+  useEditor(s => (s.session ? s.session.ed.versionOf(s.session.ed.doc.mainPart) : -1));
+  if (!session) return <aside className="slides" />;
+  return (
+    <aside className="slides masters" tabIndex={0} aria-label="Slide masters and layouts" data-testid="master-panel" onKeyDown={e => { undoKeys(e); }}>
+      {masterPages().map((p, i) => <MasterThumb key={p.part} index={i} {...p} />)}
+    </aside>
+  );
 }
 
 /** The thumbnails as wide as grid view shows them. */
@@ -136,6 +187,7 @@ export function SlideGrid() {
       onKeyDown={e => {
         const i = parts.indexOf(useEditor.getState().slide ?? '');
         const go = (to: number) => { e.preventDefault(); const next = parts[Math.max(0, Math.min(parts.length - 1, to))]; if (next) useEditor.getState().setSlide(next); };
+        if (undoKeys(e)) return;
         if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteCurrentSlide(); }
         else if ((e.metaKey || e.ctrlKey) && e.key === 'd') { e.preventDefault(); duplicateCurrentSlide(); }
         else if (e.key === 'Enter' || e.key === 'Escape') { e.preventDefault(); open(); }
@@ -163,6 +215,7 @@ export function SlidePanel() {
     <aside
       className="slides" tabIndex={0} aria-label="Slides" {...slideClipboard(parts)}
       onKeyDown={e => {
+        if (undoKeys(e)) return;
         if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteCurrentSlide(); }
         else if ((e.metaKey || e.ctrlKey) && e.key === 'd') { e.preventDefault(); duplicateCurrentSlide(); }
         else if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Home' || e.key === 'End') {

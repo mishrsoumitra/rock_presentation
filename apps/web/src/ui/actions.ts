@@ -376,7 +376,7 @@ export function selectAllShapes(): void {
   const s = st();
   if (!s.session || !s.slide) return;
   const scene = s.session.scenes.get(s.slide);
-  s.select(scene.slide.shapes.filter(x => x.layer === 'slide' && x.source).map(x => x.source.view.el));
+  s.select(scene.slide.shapes.filter(x => x.layer === (scene.slide.own ?? 'slide') && x.source).map(x => x.source.view.el));
 }
 
 /** Start editing the text of the one selected shape, with the caret at its end (Enter, F2, the menu's Edit Text). */
@@ -534,7 +534,45 @@ export function outlineSelection(line: LineSpec): void {
   if (c?.views.length) c.s.run(setLine(c.ed, c.part, c.views, line));
 }
 
+/**
+ * Slide Master view: the masters and their layouts are edited as slides are. It opens on the layout of the slide
+ * that was showing, and closing it goes back to that slide. While it is open, commands that act on slides (new,
+ * delete, duplicate, hide, layout) do nothing.
+ */
+export function openMasterView(): void {
+  const s = st();
+  const ed = s.session?.ed;
+  if (!ed || s.view === 'master') return;
+  const layout = s.slide ? ed.doc.layoutOf(s.slide) : undefined;
+  const first = ed.doc.masterParts()[0];
+  const part = layout ?? first;
+  if (!part) return;
+  ed.log.seal();
+  s.session!.thumbs.flush();
+  useEditor.setState({ view: 'master', masterReturn: s.slide, slide: part, selection: [], entered: null, text: null, cells: null, cropping: null, pane: s.pane === 'selection' ? 'selection' : 'none' });
+}
+
+export function closeMasterView(): void {
+  const s = st();
+  const ed = s.session?.ed;
+  if (!ed || s.view !== 'master') return;
+  const slides = ed.doc.slideParts();
+  ed.log.seal();
+  useEditor.setState({ view: 'normal', masterReturn: null, slide: s.masterReturn && slides.includes(s.masterReturn) ? s.masterReturn : slides[0] ?? null, selection: [], entered: null, text: null, cells: null, cropping: null });
+}
+
+/** The masters and, under each, its layouts: what master view lists. */
+export function masterPages(): { part: string; kind: 'master' | 'layout'; name: string }[] {
+  const ed = st().session?.ed;
+  if (!ed) return [];
+  return ed.doc.masterParts().flatMap((m, i) => [
+    { part: m, kind: 'master' as const, name: ed.doc.slide(m).name || `Slide Master${i ? ` ${i + 1}` : ''}` },
+    ...ed.doc.layoutsOf(m).map(l => ({ part: l, kind: 'layout' as const, name: ed.doc.slide(l).name || 'Layout' })),
+  ]);
+}
+
 export function newSlide(layout?: string): void {
+  if (st().view === 'master') return;
   const s = st();
   const ed = s.session?.ed;
   if (!ed) return;
@@ -558,6 +596,7 @@ export function newSlide(layout?: string): void {
 }
 
 export function deleteCurrentSlide(): void {
+  if (st().view === 'master') return;
   const s = st();
   const ed = s.session?.ed;
   if (!ed || !s.slide) return;
@@ -569,6 +608,7 @@ export function deleteCurrentSlide(): void {
 }
 
 export function duplicateCurrentSlide(): void {
+  if (st().view === 'master') return;
   const s = st();
   const ed = s.session?.ed;
   if (!ed || !s.slide) return;
@@ -579,6 +619,7 @@ export function duplicateCurrentSlide(): void {
 
 /** Copy the current slide, to paste here or in another deck opened in this tab. Returns the mark for the clipboard. */
 export function copyCurrentSlide(): string | undefined {
+  if (st().view === 'master') return;
   const s = st();
   const ed = s.session?.ed;
   if (!ed || !s.slide) return undefined;
@@ -589,6 +630,7 @@ export function copyCurrentSlide(): string | undefined {
 
 /** Cut the current slide: copied, then deleted. The only slide of a deck stays where it is. */
 export function cutCurrentSlide(): string | undefined {
+  if (st().view === 'master') return;
   const ed = st().session?.ed;
   if (!ed || ed.doc.slideParts().length < 2) return undefined;
   const id = copyCurrentSlide();
@@ -598,6 +640,7 @@ export function cutCurrentSlide(): string | undefined {
 
 /** Paste the copied slide after the current one, and go to it. */
 export function pasteSlideClip(): void {
+  if (st().view === 'master') return;
   const s = st();
   const ed = s.session?.ed;
   if (!ed || !s.slideClip) return;
@@ -608,6 +651,7 @@ export function pasteSlideClip(): void {
 }
 
 export function moveCurrentSlide(to: number, part = st().slide): void {
+  if (st().view === 'master') return;
   const s = st();
   const ed = s.session?.ed;
   if (!ed || !part) return;
@@ -615,6 +659,7 @@ export function moveCurrentSlide(to: number, part = st().slide): void {
 }
 
 export function toggleHidden(): void {
+  if (st().view === 'master') return;
   const s = st();
   const ed = s.session?.ed;
   if (!ed || !s.slide) return;
@@ -622,6 +667,7 @@ export function toggleHidden(): void {
 }
 
 export function layoutCurrentSlide(layout: string): void {
+  if (st().view === 'master') return;
   const s = st();
   const ed = s.session?.ed;
   if (!ed || !s.slide) return;

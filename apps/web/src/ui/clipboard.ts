@@ -45,7 +45,7 @@ export async function shapesPng(els: XmlElement[]): Promise<Blob | undefined> {
   const scene = s.session.scenes.get(s.slide);
   const find = (list: RenderShape[], el: XmlElement): RenderShape | undefined => {
     for (const r of list) {
-      if (r.source?.view.el === el && r.layer === 'slide') return r;
+      if (r.source?.view.el === el && r.layer === (scene.slide.own ?? 'slide')) return r;
       const inner = find(r.children, el);
       if (inner) return inner;
     }

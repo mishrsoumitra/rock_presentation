@@ -57,7 +57,7 @@ export function useShortcuts(): void {
       else if (e.key === 'Tab' && s.slide) {
         handled();
         const scene = s.session.scenes.get(s.slide);
-        const els = scene.slide.shapes.filter(x => x.layer === 'slide' && x.source).map(x => x.source.view.el);
+        const els = scene.slide.shapes.filter(x => x.layer === (scene.slide.own ?? 'slide') && x.source).map(x => x.source.view.el);
         if (!els.length) return;
         const i = els.indexOf(s.selection[0]!);
         s.select([els[(i + (e.shiftKey ? -1 : 1) + els.length) % els.length]!]);
