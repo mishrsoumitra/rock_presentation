@@ -2,8 +2,8 @@
 import {
   addSlide, align, applyLayout, compound, copyShapes, copySlide, pasteSlide, cropPicture, deleteShapes, deleteSlide, distribute, duplicateShapes, duplicateSlide, flip, group, importMasters, replacePicture,
   insertPicture, insertShape, insertTable, insertTextBox, moveBy, ROW_HEIGHT, moveSlide, pasteShapes, prepareImage, prepareSvg, prepareTemplate, rotateQuarter,
-  addSection, applyBackgroundToAll, chartData, chartPartOf, fillColorOf, insertChart, insertMedia, prepareMedia, setChartData, setFill, setSlideBackground, setThemeColors, setThemeFonts, themeOfSlide, themeSchemes, setFillTransparency, setGradientFill, setLine, setPictureFill, setShadow, setSlideHidden, setSlideSize, setTransforms, ungroup, zOrder,
-  type Alignment, type BackgroundSpec, type ChartData, type ChartKind, type ColorScheme, type ColorSpec, type FontScheme, type LineSpec,
+  addSection, applyBackgroundToAll, chartData, chartPartOf, fillColorOf, headerFooter, insertChart, insertMedia, prepareMedia, setChartData, setFill, setHeaderFooter, setHeaderFooterAll, setSlideBackground, setThemeColors, setThemeFonts, themeOfSlide, themeSchemes, setFillTransparency, setGradientFill, setLine, setPictureFill, setShadow, setSlideHidden, setSlideSize, setTransforms, ungroup, zOrder,
+  type Alignment, type BackgroundSpec, type ChartData, type ChartKind, type ColorScheme, type HeaderFooter, type ColorSpec, type FontScheme, type LineSpec,
   type ScaleMode, type ZOrder,
 } from '@pptx/editor-core';
 import { OpcPackage } from '@pptx/opc';
@@ -239,6 +239,26 @@ export function insertTextBoxHere(): void {
   c.s.run(r.command);
   const els = inserted(r.id);
   if (els[0]) useEditor.setState({ selection: els, text: { part: c.part, el: els[0], caret: { p: 0, offset: 0 }, anchor: { p: 0, offset: 0 } } });
+}
+
+/** Today's date as PowerPoint's first date format writes it: month, day, year. */
+export const todayText = (now = new Date()): string => `${now.getMonth() + 1}/${now.getDate()}/${now.getFullYear()}`;
+
+/** What the current slide shows at its foot, for the Header & Footer dialog. */
+export function footerHere(): HeaderFooter | undefined {
+  const c = ctx();
+  return c ? headerFooter(c.ed, c.part) : undefined;
+}
+
+/** Header & Footer's Apply (this slide) and Apply to All (every slide, title slides left bare if asked). */
+export function applyFooter(spec: HeaderFooter, all: boolean, skipTitle: boolean): void {
+  const c = ctx();
+  if (!c) return;
+  useEditor.setState({ text: null });
+  const title = (() => { const l = c.ed.doc.layoutOf(c.part); return !!l && attr(c.ed.doc.root(l), 'type') === 'title'; })();
+  const none: HeaderFooter = { date: null, footer: null, slideNumber: false };
+  c.s.run(all ? setHeaderFooterAll(c.ed, spec, skipTitle) : setHeaderFooter(c.ed, c.part, skipTitle && title ? none : spec));
+  c.s.select([]);
 }
 
 /**

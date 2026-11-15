@@ -286,6 +286,7 @@ export function Ribbon({ extraTabs }: { extraTabs?: Partial<Record<Tab, React.Re
               </FilePicker>
               <Menu icon="outline" label="Shapes">{close => <ShapeGallery onPick={p => { close(); act.startDrawing(p); }} />}</Menu>
               <Btn icon="text" label="Text Box" wide disabled={!session} onClick={act.insertTextBoxHere} testid="text-box" />
+              <Btn icon="footer" label="Header & Footer" wide disabled={!session} onClick={() => useEditor.setState({ footerEditing: true })} testid="header-footer" />
               <Menu icon="symbol" label="Symbol" testid="insert-symbol">{() => (
                 <div className="symbols" data-testid="symbols">
                   {SYMBOL_GROUPS.map(([title, chars]) => (

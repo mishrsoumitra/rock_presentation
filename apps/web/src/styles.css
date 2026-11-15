@@ -252,6 +252,12 @@ select { height: 28px; border: 1px solid var(--line); border-radius: var(--radiu
 .dialog-error { color: var(--danger); margin: 6px 0 0; }
 .dialog-buttons button.plain { margin-right: auto; background: var(--panel); border-color: var(--line); color: var(--danger); }
 .dialog.chart-dialog { width: min(760px, 100%); }
+.footer-dialog label { display: flex; align-items: center; gap: 6px; margin: 6px 0; }
+.footer-dialog input[type="checkbox"], .footer-dialog input[type="radio"] { display: inline-block; width: auto; margin: 0; padding: 0; }
+.footer-dialog .footer-sub { margin-left: 22px; }
+.footer-dialog .footer-title { margin-top: 12px; }
+.footer-dialog .muted { color: var(--muted); }
+.footer-dialog input:disabled { opacity: 0.5; }
 .chart-sheet { max-height: 50vh; overflow: auto; border: 1px solid var(--line); border-radius: var(--radius); }
 .chart-sheet table { border-collapse: collapse; }
 .chart-sheet th, .chart-sheet td { border: 1px solid var(--line); padding: 0; }

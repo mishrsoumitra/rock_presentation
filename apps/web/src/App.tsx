@@ -6,7 +6,7 @@ import { closeMasterView, discardAutosaved, newPresentation, openFile, recoverab
 import { ChartDialog } from './ui/ChartDialog.tsx';
 import { CommentsPane } from './ui/CommentsPane.tsx';
 import { ContextMenu } from './ui/ContextMenu.tsx';
-import { LinkDialog, NewPasswordDialog, OpenPasswordDialog, SlideSizeDialog } from './ui/Dialogs.tsx';
+import { FooterDialog, LinkDialog, NewPasswordDialog, OpenPasswordDialog, SlideSizeDialog } from './ui/Dialogs.tsx';
 import { FindBar } from './ui/FindBar.tsx';
 import { NotesPane } from './ui/NotesPane.tsx';
 import { Presenter } from './ui/Presenter.tsx';
@@ -112,6 +112,7 @@ export function App() {
       <NewPasswordDialog />
       <SlideSizeDialog />
       <LinkDialog />
+      <FooterDialog />
       <ChartDialog />
     </div>
   );

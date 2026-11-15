@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import { useEditor } from '../state/store.ts';
 import type { LinkTarget } from '@pptx/editor-core';
-import { resizeSlides } from './actions.ts';
+import { applyFooter, footerHere, resizeSlides, todayText } from './actions.ts';
 import { applyLink, linkContext, slideChoices } from './linkActions.ts';
 import { normalizeUrl } from './links.ts';
 import { refocusText } from './widgets.tsx';
@@ -176,6 +176,54 @@ function LinkForm() {
           {existing && <button type="button" className="plain" onClick={() => { applyLink(null); close(); }} data-testid="link-remove">Remove Link</button>}
           <button type="button" onClick={close}>Cancel</button>
           <button type="submit" data-testid="link-apply">Apply</button>
+        </div>
+      </form>
+    </Dialog>
+  );
+}
+
+/**
+ * Header & Footer: the date (kept up to date, or fixed text), the slide number and the footer text, for this slide
+ * (Apply) or every slide (Apply to All). It opens showing what the current slide has.
+ */
+export function FooterDialog() {
+  const open = useEditor(s => s.footerEditing);
+  return open ? <FooterForm /> : null;
+}
+
+function FooterForm() {
+  const [now] = useState(() => footerHere() ?? { date: null, footer: null, slideNumber: false });
+  const [date, setDate] = useState(now.date !== null);
+  const [auto, setAuto] = useState(now.date ? now.date.auto : true);
+  const [fixed, setFixed] = useState(now.date && !now.date.auto ? now.date.text : '');
+  const [number, setNumber] = useState(now.slideNumber);
+  const [footer, setFooter] = useState(now.footer !== null);
+  const [text, setText] = useState(now.footer ?? '');
+  const [skipTitle, setSkipTitle] = useState(false);
+  const close = () => useEditor.setState({ footerEditing: false });
+  const apply = (all: boolean) => {
+    applyFooter({ date: date ? { auto, text: auto ? todayText() : fixed } : null, footer: footer ? text : null, slideNumber: number }, all, skipTitle);
+    close();
+  };
+  return (
+    <Dialog title="Header & Footer" onClose={close}>
+      <form className="footer-dialog" data-testid="footer-dialog" onSubmit={e => { e.preventDefault(); apply(false); }}>
+        <label><input type="checkbox" checked={date} onChange={e => setDate(e.target.checked)} data-testid="footer-date" /> Date and time</label>
+        <div className="footer-sub">
+          <label><input type="radio" name="footer-date-kind" disabled={!date} checked={auto} onChange={() => setAuto(true)} data-testid="footer-date-auto" /> Update automatically <span className="muted">({todayText()})</span></label>
+          <label><input type="radio" name="footer-date-kind" disabled={!date} checked={!auto} onChange={() => setAuto(false)} data-testid="footer-date-fixed" /> Fixed</label>
+          <input type="text" aria-label="Fixed date" disabled={!date || auto} value={fixed} onChange={e => setFixed(e.target.value)} data-testid="footer-date-text" />
+        </div>
+        <label><input type="checkbox" checked={number} onChange={e => setNumber(e.target.checked)} data-testid="footer-number" /> Slide number</label>
+        <label><input type="checkbox" checked={footer} onChange={e => setFooter(e.target.checked)} data-testid="footer-footer" /> Footer</label>
+        <div className="footer-sub">
+          <input type="text" aria-label="Footer text" disabled={!footer} value={text} onChange={e => setText(e.target.value)} data-testid="footer-text" />
+        </div>
+        <label className="footer-title"><input type="checkbox" checked={skipTitle} onChange={e => setSkipTitle(e.target.checked)} data-testid="footer-skip-title" /> Don't show on title slide</label>
+        <div className="dialog-buttons">
+          <button type="button" onClick={close}>Cancel</button>
+          <button type="button" onClick={() => apply(true)} data-testid="footer-apply-all">Apply to All</button>
+          <button type="submit" data-testid="footer-apply">Apply</button>
         </div>
       </form>
     </Dialog>

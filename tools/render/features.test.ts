@@ -9,7 +9,7 @@ import { PNG } from 'pngjs';
 import { createServer, type ViteDevServer } from 'vite';
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest';
 import { OpcPackage, readZip } from '@pptx/opc';
-import { cellText, chartData, Editor, notesText, slideComments, tableOf, tableSize } from '../../packages/editor-core/src/index.ts';
+import { cellText, chartData, Editor, headerFooter, notesText, slideComments, tableOf, tableSize } from '../../packages/editor-core/src/index.ts';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 let server: ViteDevServer;
@@ -1936,6 +1936,89 @@ describe('theme colours and fonts', () => {
     expect(xml).toContain('<a:clrScheme name="Violet">');
     expect(xml).toContain('<a:accent1><a:srgbClr val="AD84C6"/></a:accent1>');
     expect(xml).toMatch(/<a:fontScheme name="Georgia and Verdana"><a:majorFont><a:latin typeface="Georgia"/);
+    expect(errors).toEqual([]);
+  }, 60_000);
+});
+
+describe('header and footer', () => {
+  /** What each slide shows at its foot: placeholder type to its text, in slide order. */
+  const feet = () => state<Record<string, string>[]>(`
+    const walk = e => e.children.map(c => (c.kind === 'element' ? walk(c) : c.value ?? '')).join('');
+    return s.session.ed.doc.slideParts().map(part => Object.fromEntries(
+      s.session.ed.doc.slide(part).shapes.filter(sh => sh.placeholder && ['dt', 'ftr', 'sldNum'].includes(sh.placeholder.type)).map(sh => [sh.placeholder.type, walk(sh.txBody)])));`);
+  async function openDialog(): Promise<void> {
+    await page.getByRole('tab', { name: 'Insert' }).click();
+    await page.getByTestId('header-footer').click();
+    await page.getByTestId('footer-dialog').waitFor();
+  }
+  const today = () => { const d = new Date(); return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`; };
+
+  test('Apply puts the slide number and footer text on this slide; the dialog opens again showing them; unticking removes; undo restores', async () => {
+    await openDialog();
+    expect(await page.getByTestId('footer-number').isChecked()).toBe(false);
+    expect(await page.getByTestId('footer-text').isDisabled()).toBe(true);
+    await page.getByTestId('footer-number').check();
+    await page.getByTestId('footer-footer').check();
+    await page.getByTestId('footer-text').fill('Team offsite');
+    await page.getByTestId('footer-apply').click();
+    expect(await page.getByTestId('footer-dialog').count()).toBe(0);
+    expect(await feet()).toEqual([{ ftr: 'Team offsite', sldNum: '‹#›' }]);
+    expect(await state<string>('return s.session.ed.log.undoLabel;')).toBe('Header & Footer');
+
+    await openDialog();
+    expect(await page.getByTestId('footer-number').isChecked()).toBe(true);
+    expect(await page.getByTestId('footer-text').inputValue()).toBe('Team offsite');
+    await page.getByTestId('footer-footer').uncheck();
+    await page.getByTestId('footer-apply').click();
+    expect(await feet()).toEqual([{ sldNum: '‹#›' }]);
+    await page.getByTestId('canvas').click({ position: { x: 5, y: 5 } });
+    await page.keyboard.press('Control+z');
+    expect(await feet()).toEqual([{ ftr: 'Team offsite', sldNum: '‹#›' }]);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('a date kept up to date shows today; a fixed date shows the text typed', async () => {
+    await openDialog();
+    await page.getByTestId('footer-date').check();
+    expect(await page.getByTestId('footer-date-auto').isChecked()).toBe(true);
+    expect(await page.getByTestId('footer-date-text').isDisabled()).toBe(true);
+    await page.getByTestId('footer-apply').click();
+    expect(await feet()).toEqual([{ dt: today() }]);
+    expect(await state<boolean>(`
+      const has = e => e.local === 'fld' && e.attrs.some(a => a.local === 'type' && a.value === 'datetime1') || e.children.some(c => c.kind === 'element' && has(c));
+      return has(s.session.ed.doc.root(s.slide));`)).toBe(true);
+    await openDialog();
+    await page.getByTestId('footer-date-fixed').check();
+    await page.getByTestId('footer-date-text').fill('Autumn term');
+    await page.getByTestId('footer-apply').click();
+    expect(await feet()).toEqual([{ dt: 'Autumn term' }]);
+    await openDialog();
+    expect(await page.getByTestId('footer-date-fixed').isChecked()).toBe(true);
+    expect(await page.getByTestId('footer-date-text').inputValue()).toBe('Autumn term');
+    await page.keyboard.press('Escape');
+    expect(await page.getByTestId('footer-dialog').count()).toBe(0);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('Apply to All reaches every slide in one undo step, leaves the title slide bare when asked, and is in the saved file', async () => {
+    await page.getByTestId('new-slide').click();
+    await page.getByTestId('new-slide').click();
+    await openDialog();
+    await page.getByTestId('footer-number').check();
+    await page.getByTestId('footer-footer').check();
+    await page.getByTestId('footer-text').fill('Confidential');
+    await page.getByTestId('footer-skip-title').check();
+    await page.getByTestId('footer-apply-all').click();
+    expect(await feet()).toEqual([{}, { ftr: 'Confidential', sldNum: '‹#›' }, { ftr: 'Confidential', sldNum: '‹#›' }]);
+    const ed = await saved();
+    expect(ed.doc.slideParts().map(part => headerFooter(ed, part))).toEqual([
+      { date: null, footer: null, slideNumber: false },
+      { date: null, footer: 'Confidential', slideNumber: true },
+      { date: null, footer: 'Confidential', slideNumber: true },
+    ]);
+    await page.getByTestId('canvas').click({ position: { x: 5, y: 5 } });
+    await page.keyboard.press('Control+z');
+    expect(await feet()).toEqual([{}, {}, {}]);
     expect(errors).toEqual([]);
   }, 60_000);
 });

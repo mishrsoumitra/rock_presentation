@@ -79,6 +79,8 @@ export interface EditorState {
   pane: Pane;
   /** The right-click menu, where it was opened (window coordinates) and on what. */
   menu: { x: number; y: number; kind: 'shape' | 'slide' | 'thumb' } | null;
+  /** The Header & Footer dialog is open. */
+  footerEditing: boolean;
   /** The chart data dialog is open, for the selected chart. */
   chartEditing: boolean;
   /** The hyperlink dialog is open. */
@@ -137,7 +139,7 @@ function fitted(s: Session, t: TextEditing | null): TextEditing | null {
 
 export const useEditor = create<EditorState>((set, get) => ({
   session: null, version: 0, edits: 0, savedEdits: 0, slide: null, selection: [], entered: null, text: null, cells: null, pending: null,
-  zoom: 'fit', drawing: null, mode: 'edit', presenterView: false, view: 'normal', folded: [], masterReturn: null, showRuler: false, showGuides: true, guides: { x: [], y: [] }, pane: 'none', finding: false, linking: false, chartEditing: false, menu: null, clipboard: null, clipId: null, slideClip: null, formatClip: null, painting: false, cropping: null, playing: null, message: null, askPassword: null,
+  zoom: 'fit', drawing: null, mode: 'edit', presenterView: false, view: 'normal', folded: [], masterReturn: null, showRuler: false, showGuides: true, guides: { x: [], y: [] }, pane: 'none', finding: false, linking: false, chartEditing: false, footerEditing: false, menu: null, clipboard: null, clipId: null, slideClip: null, formatClip: null, painting: false, cropping: null, playing: null, message: null, askPassword: null,
 
   async open(bytes, name, password) {
     performance.mark('open-start');
