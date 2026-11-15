@@ -56,6 +56,9 @@ select { height: 28px; border: 1px solid var(--line); border-radius: var(--radiu
 .menu-item:hover:not(:disabled) { background: var(--bg); }
 .menu-item:disabled { opacity: 0.4; }
 .menu-item .tick { display: inline-block; width: 16px; color: var(--accent); }
+.menu-item.scheme { display: flex; align-items: center; gap: 8px; }
+.scheme-swatches { display: inline-flex; }
+.scheme-swatches i { width: 12px; height: 14px; display: inline-block; border: 1px solid rgba(0, 0, 0, 0.15); margin-right: -1px; }
 .menu-title { padding: 6px 10px 2px; color: var(--muted); font-size: 11px; }
 .colors { width: 236px; }
 .colors-title { font-size: 11px; color: var(--muted); margin: 6px 2px 4px; }

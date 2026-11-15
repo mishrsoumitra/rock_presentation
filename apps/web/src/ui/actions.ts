@@ -2,8 +2,8 @@
 import {
   addSlide, align, applyLayout, compound, copyShapes, copySlide, pasteSlide, cropPicture, deleteShapes, deleteSlide, distribute, duplicateShapes, duplicateSlide, flip, group, importMasters, replacePicture,
   insertPicture, insertShape, insertTable, insertTextBox, moveBy, ROW_HEIGHT, moveSlide, pasteShapes, prepareImage, prepareSvg, prepareTemplate, rotateQuarter,
-  applyBackgroundToAll, fillColorOf, setFill, setSlideBackground, setFillTransparency, setGradientFill, setLine, setPictureFill, setShadow, setSlideHidden, setSlideSize, setTransforms, ungroup, zOrder,
-  type Alignment, type BackgroundSpec, type ColorSpec, type LineSpec,
+  applyBackgroundToAll, fillColorOf, setFill, setSlideBackground, setThemeColors, setThemeFonts, themeOfSlide, themeSchemes, setFillTransparency, setGradientFill, setLine, setPictureFill, setShadow, setSlideHidden, setSlideSize, setTransforms, ungroup, zOrder,
+  type Alignment, type BackgroundSpec, type ColorScheme, type ColorSpec, type FontScheme, type LineSpec,
   type ScaleMode, type ZOrder,
 } from '@pptx/editor-core';
 import { OpcPackage } from '@pptx/opc';
@@ -626,6 +626,27 @@ export function layoutCurrentSlide(layout: string): void {
   const ed = s.session?.ed;
   if (!ed || !s.slide) return;
   s.run(applyLayout(ed, s.slide, layout), { selection: [] });
+}
+
+/** The colour and font schemes of the theme the current slide uses, by name. */
+export function currentSchemes(): { colors: string; fonts: string } | undefined {
+  const s = st();
+  const theme = s.session && s.slide ? themeOfSlide(s.session.ed, s.slide) : undefined;
+  return theme ? themeSchemes(s.session!.ed, theme) : undefined;
+}
+
+/** Give the current slide's theme another colour scheme: every slide of its master follows. */
+export function chooseThemeColors(scheme: ColorScheme): void {
+  const s = st();
+  const theme = s.session && s.slide ? themeOfSlide(s.session.ed, s.slide) : undefined;
+  if (theme) s.run(setThemeColors(s.session!.ed, theme, scheme));
+}
+
+/** Give the current slide's theme another pair of fonts. */
+export function chooseThemeFonts(pair: FontScheme): void {
+  const s = st();
+  const theme = s.session && s.slide ? themeOfSlide(s.session.ed, s.slide) : undefined;
+  if (theme) s.run(setThemeFonts(s.session!.ed, theme, pair));
 }
 
 /** The current slide's background: a colour, a gradient, or (null) the layout's again. */

@@ -1848,6 +1848,84 @@ describe('spelling', () => {
   }, 60_000);
 });
 
+describe('theme colours and fonts', () => {
+  const theme = async (menu: string, item: RegExp | string) => {
+    await page.getByRole('tab', { name: 'Design' }).click();
+    await page.getByTestId(menu).click();
+    await page.locator('.menu-panel').getByRole('menuitemradio', { name: item }).click();
+    await frames();
+  };
+  const checked = async (menu: string) => {
+    await page.getByRole('tab', { name: 'Design' }).click();
+    await page.getByTestId(menu).click();
+    const t = await page.locator('.menu-panel [aria-checked="true"]').allInnerTexts();
+    await page.getByTestId(menu).click();
+    return t.map(x => x.replace('✓', '').trim());
+  };
+  const pixel = async (x: number, y: number) => {
+    await frames();
+    const p = await slidePoint(x, y);
+    return page.evaluate(([px, py]) => {
+      const c = document.querySelector('[data-testid="canvas"] canvas') as HTMLCanvasElement;
+      const r = c.getBoundingClientRect();
+      const d = c.getContext('2d')!.getImageData(Math.round((px - r.left) * (c.width / r.width)), Math.round((py - r.top) * (c.height / r.height)), 1, 1).data;
+      return [d[0]!, d[1]!, d[2]!];
+    }, [p.x, p.y] as const);
+  };
+  /** The font the resolver gives the first run of the slide's text box. */
+  const fontOfBox = () => state<string>(`
+    const sc = s.session.scenes.get(s.slide);
+    const sh = sc.slide.shapes.find(x => x.layer === 'slide' && x.name.startsWith('TextBox'));
+    return sh.source.text.paragraphs[0].runs[0].props.latin;`);
+
+  test('Design > Colors recolours everything coloured by the theme, here and on other slides, and the colour picker follows', async () => {
+    await drawShape('rect', 1000000, 5400000, 2000000, 1000000);
+    await page.keyboard.press('Escape');
+    expect(await pixel(2000000, 5900000)).toEqual([0x44, 0x72, 0xc4]);
+    expect(await checked('theme-colors')).toEqual(['Office']);
+
+    await theme('theme-colors', 'Green');
+    expect(await pixel(2000000, 5900000)).toEqual([0x54, 0x9e, 0x39]);
+    expect(await checked('theme-colors')).toEqual(['Green']);
+    expect(await state<string>('return s.session.ed.log.undoLabel;')).toBe('Theme Colors');
+    // the picker's Accent 1 is the new colour
+    await page.getByRole('tab', { name: 'Home' }).click();
+    await page.getByTestId('shape-fill').click();
+    expect(await page.locator('.menu-panel .swatch[title="Accent 1"]').first().evaluate(e => getComputedStyle(e).backgroundColor)).toBe('rgb(84, 158, 57)');
+    await page.getByTestId('shape-fill').click();
+    // a shape drawn on another slide is in the new colour too
+    await page.getByTestId('new-slide').click();
+    await drawShape('ellipse', 1000000, 300000, 1500000, 800000);
+    await page.keyboard.press('Escape');
+    expect(await pixel(1750000, 700000)).toEqual([0x54, 0x9e, 0x39]);
+
+    await page.keyboard.press('Control+z');                              // the ellipse
+    await page.keyboard.press('Control+z');                              // the slide
+    await page.keyboard.press('Control+z');                              // the colours
+    expect(await pixel(2000000, 5900000)).toEqual([0x44, 0x72, 0xc4]);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('Design > Fonts changes text that takes its font from the theme; the saved theme has the scheme', async () => {
+    await textBox('Body text');
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape');
+    expect(await fontOfBox()).toBe('Calibri');
+    await theme('theme-fonts', /^Georgia and Verdana/);
+    await expect.poll(fontOfBox).toBe('Verdana');
+    expect(await checked('theme-fonts')).toEqual(['Georgia and Verdana (Georgia / Verdana)']);
+    await theme('theme-colors', 'Violet');
+
+    const ed = await saved();
+    const part = ed.pkg.partNames().find(n => /^\/ppt\/theme\/theme\d+\.xml$/.test(n))!;
+    const xml = new TextDecoder().decode(ed.pkg.getPart(part)!.bytes);
+    expect(xml).toContain('<a:clrScheme name="Violet">');
+    expect(xml).toContain('<a:accent1><a:srgbClr val="AD84C6"/></a:accent1>');
+    expect(xml).toMatch(/<a:fontScheme name="Georgia and Verdana"><a:majorFont><a:latin typeface="Georgia"/);
+    expect(errors).toEqual([]);
+  }, 60_000);
+});
+
 describe('slide backgrounds', () => {
   const pick = async (item: string) => {
     await page.getByRole('tab', { name: 'Design' }).click();

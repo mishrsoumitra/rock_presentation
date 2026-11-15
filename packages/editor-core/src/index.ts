@@ -18,6 +18,9 @@ export {
 export { applyBackgroundToAll, cropAndPlace, cropPicture, pictureCrop, insertPicture, setSlideBackground, type BackgroundSpec, naturalSize, prepareImage, prepareSvg, replacePicture, retarget, setPictureFill, type ImageData, type SvgImage } from './pictures.ts';
 export { addSlide, applyLayout, copySlide, deleteSlide, duplicateSlide, moveSlide, pasteSlide, setBackground, setSlideHidden, type SlideClip } from './slides.ts';
 export { notesText, setNotes } from './notes.ts';
+export {
+  COLOR_SCHEMES, FONT_SCHEMES, setThemeColors, setThemeFonts, THEME_SLOTS, themeOfSlide, themeSchemes, type ColorScheme, type FontScheme, type ThemeSlot,
+} from './theme.ts';
 export { addComment, commentCount, deleteComment, editComment, initialsOf, slideComments, type SlideComment } from './comments.ts';
 export { setShapeLink, setTextLink, shapeLink, textLinkAt, type LinkTarget } from './links.ts';
 export {

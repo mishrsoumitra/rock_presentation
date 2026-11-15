@@ -1,5 +1,6 @@
 // apps/web/src/ui/Ribbon.tsx  -- the commands, in tabs as PowerPoint arranges them
 import { useRef, useState } from 'react';
+import { COLOR_SCHEMES, FONT_SCHEMES } from '@pptx/editor-core';
 import { unsaved, useEditor, type EditorState } from '../state/store.ts';
 import * as act from './actions.ts';
 import { BULLET_STYLES, bulletPatch, NUMBER_STYLES, numberSample } from './bullets.ts';
@@ -277,6 +278,19 @@ export function Ribbon({ extraTabs }: { extraTabs?: Partial<Record<Tab, React.Re
         )}
         {tab === 'Design' && (
           <>
+            <section className="group" aria-label="Theme">
+              <Menu icon="fill" label="Colors" testid="theme-colors">{close => COLOR_SCHEMES.map(sc => (
+                <button key={sc.name} type="button" role="menuitemradio" aria-checked={act.currentSchemes()?.colors === sc.name} className="menu-item scheme" onMouseDown={keepFocus}
+                  onClick={() => { close(); act.chooseThemeColors(sc); }}>
+                  <span className="tick" aria-hidden="true">{act.currentSchemes()?.colors === sc.name ? '✓' : ''}</span>
+                  <span className="scheme-swatches" aria-hidden="true">{(['dk2', 'lt2', 'accent1', 'accent2', 'accent3', 'accent4', 'accent5', 'accent6'] as const).map(k => <i key={k} style={{ background: `#${sc.colors[k]}` }} />)}</span>
+                  {sc.name}
+                </button>
+              ))}</Menu>
+              <Menu icon="text" label="Fonts" testid="theme-fonts">{close => FONT_SCHEMES.map(f => (
+                <MenuItem key={f.name} label={f.major === f.minor ? f.name : `${f.name} (${f.major} / ${f.minor})`} checked={act.currentSchemes()?.fonts === f.name} onClick={() => { close(); act.chooseThemeFonts(f); }} />
+              ))}</Menu>
+            </section>
             <section className="group">
               <Menu icon="size" label="Slide Size">{close => (<>
                 <MenuItem label="Standard (4:3)" onClick={() => { close(); window.dispatchEvent(new CustomEvent('slide-size', { detail: { cx: 9144000, cy: 6858000 } })); }} />
