@@ -45,7 +45,7 @@ function shown(s: EditorState): string {
     run?.latin, run?.size, run?.bold, run?.italic, run?.underline, run?.strike, para?.bullet?.kind, para?.bullet?.char, para?.bullet?.scheme, para?.marL, para?.indent, para?.level, para?.align,
     run?.baseline, run?.spacing, para?.lineSpacing.kind, para?.lineSpacing.val, para?.spaceBefore.val, para?.spaceAfter.val,
     here.body?.anchor, here.body?.numCol, here.body && Object.values(here.body.insets).join(','),
-    s.painting, !!s.cropping, s.view, s.showRuler, s.showGuides, s.guides.x.length + s.guides.y.length, s.cells && [s.cells.anchor.r, s.cells.anchor.c, s.cells.focus.r, s.cells.focus.c].join(','), !!linkContext(), s.text && [s.text.anchor.p, s.text.anchor.offset, s.text.caret.p, s.text.caret.offset].join(','), Object.values(tables.tableAbilities()).join(','),
+    s.painting, !!s.cropping, s.pane, s.view, s.showRuler, s.showGuides, s.guides.x.length + s.guides.y.length, s.cells && [s.cells.anchor.r, s.cells.anchor.c, s.cells.focus.r, s.cells.focus.c].join(','), !!linkContext(), s.text && [s.text.anchor.p, s.text.anchor.offset, s.text.caret.p, s.text.caret.offset].join(','), Object.values(tables.tableAbilities()).join(','),
   ].join('|');
 }
 
@@ -271,6 +271,7 @@ export function Ribbon({ extraTabs }: { extraTabs?: Partial<Record<Tab, React.Re
             </section>
             <section className="group">
               <Btn icon="link" label="Link" wide disabled={!linkContext()} onClick={() => useEditor.setState({ linking: true })} testid="insert-link" />
+              <Btn icon="comment" label="Comment" wide disabled={!session} onClick={act.newComment} testid="insert-comment" />
             </section>
           </>
         )}
@@ -310,6 +311,7 @@ export function Ribbon({ extraTabs }: { extraTabs?: Partial<Record<Tab, React.Re
               <section className="group" aria-label="Show">
                 <Btn icon="size" label="Ruler" wide disabled={!session} active={st.showRuler} onClick={() => useEditor.setState({ showRuler: !st.showRuler })} testid="view-ruler" />
                 <Btn icon="plus" label="Guides" wide disabled={!session} active={st.showGuides} onClick={() => useEditor.setState({ showGuides: !st.showGuides })} testid="view-guides" />
+                <Btn icon="comment" label="Comments" wide disabled={!session} active={st.pane === 'comments'} onClick={() => useEditor.setState({ pane: st.pane === 'comments' ? 'none' : 'comments' })} testid="view-comments" />
               </section>
               <section className="group" aria-label="Guides">
                 <Btn label="Add Vertical Guide" wide disabled={!session} onClick={() => addGuide('x')} testid="add-guide-v" />

@@ -1,6 +1,7 @@
 // apps/web/src/ui/SlidePanel.tsx  -- slide thumbnails, in the side panel and in grid view: pick, reorder, delete, duplicate
 import { memo, useEffect, useRef, useState, type ClipboardEvent } from 'react';
 import { ANIM_UNDERSTOOD } from '@pptx/anim';
+import { commentCount } from '@pptx/editor-core';
 import { useEditor } from '../state/store.ts';
 import { deleteCurrentSlide, duplicateCurrentSlide, moveCurrentSlide, copyCurrentSlide, cutCurrentSlide, pasteSlideClip } from './actions.ts';
 
@@ -16,6 +17,7 @@ const Thumb = memo(function Thumb({ part, index, width = THUMB, prefix = 'thumb'
   const key = useEditor(s => (s.session ? s.session.scenes.key(part) : ''));
   const synced = useEditor(s => s.session?.thumbs.synced ?? 0);
   const generation = useEditor(s => s.session?.thumbs.generation ?? 0);
+  useEditor(s => (s.pane === 'comments' ? s.version : 0));        // comment counts follow while comments are being worked on
   const ref = useRef<HTMLCanvasElement>(null);
   const [visible, setVisible] = useState(false);
   const host = useRef<HTMLDivElement>(null);
@@ -24,6 +26,8 @@ const Thumb = memo(function Thumb({ part, index, width = THUMB, prefix = 'thumb'
   // (a slide just deleted may still be asked before the panel drops its thumbnail)
   const v = session.ed.pkg.getPart(part) ? session.ed.doc.slide(part) : undefined;
   const hidden = v?.hidden ?? false, animated = !!v && (!!v.timing || !!v.transition(ANIM_UNDERSTOOD));
+  // (the presentation's version, which this re-renders on, moves when a slide gets its first comment or loses its last)
+  const comments = v ? commentCount(session.ed, part) : 0;
 
   useEffect(() => {
     const el = host.current;
@@ -73,7 +77,8 @@ const Thumb = memo(function Thumb({ part, index, width = THUMB, prefix = 'thumb'
         useEditor.setState({ menu: { x: e.clientX, y: e.clientY, kind: 'thumb' } });
       }}
     >
-      <span className="thumb-num">{index + 1}{animated && <span className="thumb-anim" title="Animations or a transition">★</span>}</span>
+      <span className="thumb-num">{index + 1}{animated && <span className="thumb-anim" title="Animations or a transition">★</span>}
+        {comments > 0 && <span className="thumb-comments" title={`${comments} comment${comments === 1 ? '' : 's'}`} data-testid={`${prefix}-comments-${index + 1}`}>{comments}</span>}</span>
       <canvas ref={ref} style={{ width, height: h }} aria-label={`Slide ${index + 1}`} />
     </div>
   );

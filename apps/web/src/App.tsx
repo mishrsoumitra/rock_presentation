@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { useEditor } from './state/store.ts';
 import type { Autosaved } from './engine/autosave.ts';
 import { discardAutosaved, newPresentation, openFile, recoverable, restoreAutosaved } from './ui/actions.ts';
+import { CommentsPane } from './ui/CommentsPane.tsx';
 import { ContextMenu } from './ui/ContextMenu.tsx';
 import { LinkDialog, NewPasswordDialog, OpenPasswordDialog, SlideSizeDialog } from './ui/Dialogs.tsx';
 import { FindBar } from './ui/FindBar.tsx';
@@ -98,7 +99,7 @@ export function App() {
       <Ribbon extraTabs={{ Transitions: <TransitionsTab />, Animations: <AnimationsTab /> }} />
       <main className={`workspace${session && view === 'grid' ? ' grid-view' : session && pane !== 'none' ? ' with-pane' : ''}`}>
         {!session ? <Welcome /> : view === 'grid' ? <SlideGrid />
-          : <><SlidePanel /><div className="editing"><SlideCanvas /><NotesPane /><FindBar /></div>{pane === 'animation' && <AnimationPane />}{pane === 'selection' && <SelectionPane />}</>}
+          : <><SlidePanel /><div className="editing"><SlideCanvas /><NotesPane /><FindBar /></div>{pane === 'animation' && <AnimationPane />}{pane === 'selection' && <SelectionPane />}{pane === 'comments' && <CommentsPane />}</>}
       </main>
       <StatusBar />
       <ContextMenu />

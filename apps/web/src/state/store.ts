@@ -22,7 +22,7 @@ export interface TextEditing { part: string; el: XmlElement; caret: TextPos; anc
  */
 export interface Cells { el: XmlElement; anchor: CellRef; focus: CellRef; editing: boolean; seed?: string; }
 
-export type Pane = 'none' | 'animation' | 'selection';
+export type Pane = 'none' | 'animation' | 'selection' | 'comments';
 
 export interface Session {
   ed: Editor;

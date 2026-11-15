@@ -39,7 +39,7 @@ export function menuEntries(s: EditorState): MenuEntry[] {
   }
   const paste: MenuEntry = { label: 'Paste', run: () => void act.paste(), disabled: !s.clipboard, keys: 'Ctrl+V', testid: 'menu-paste' };
   if (menu.kind === 'slide') {
-    return [paste, { label: 'Select All', run: act.selectAllShapes, keys: 'Ctrl+A', testid: 'menu-select-all' }, 'separator', ...slideEntries];
+    return [paste, { label: 'Select All', run: act.selectAllShapes, keys: 'Ctrl+A', testid: 'menu-select-all' }, { label: 'New Comment', run: act.newComment, testid: 'menu-comment' }, 'separator', ...slideEntries];
   }
   const n = s.selection.length;
   const views = s.selection.map(el => new ShapeView(el, ed.doc.owner(s.slide!)));

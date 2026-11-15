@@ -137,6 +137,23 @@ select { height: 28px; border: 1px solid var(--line); border-radius: var(--radiu
 .alt-text { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 8px; display: grid; gap: 4px; }
 .alt-text textarea { width: 100%; height: 84px; resize: vertical; border: 1px solid var(--line); border-radius: var(--radius); padding: 6px; background: var(--panel); }
 
+/* the comments pane */
+.comments-pane ol { display: grid; gap: 10px; }
+.comments-pane li.comment { display: block; padding: 8px; border: 1px solid var(--line); border-radius: 6px; cursor: default; }
+.comments-pane li.comment:hover { background: none; }
+.comment-head { display: flex; align-items: baseline; gap: 6px; }
+.comment-initials { display: inline-grid; place-items: center; min-width: 22px; height: 22px; padding: 0 4px; border-radius: 11px; background: var(--accent-soft); color: var(--accent); font-size: 11px; font-weight: 600; }
+.comment-when { margin-left: auto; color: var(--muted); font-size: 11px; }
+.comment-text { margin: 6px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.comment-tools { display: flex; gap: 8px; }
+.comment-tools button { border: 0; background: none; padding: 0; color: var(--focus); cursor: pointer; font-size: 12px; }
+.comments-pane textarea, .comments-pane input[type="text"] { width: 100%; border: 1px solid var(--line); border-radius: var(--radius); padding: 6px; background: var(--panel); }
+.comments-pane textarea { min-height: 64px; resize: vertical; }
+.comment-new { display: grid; gap: 6px; margin-top: 12px; border-top: 1px solid var(--line); padding-top: 10px; }
+.comment-new button { justify-self: end; border: 1px solid var(--accent); background: var(--accent); color: #fff; border-radius: var(--radius); padding: 5px 14px; cursor: pointer; }
+.comment-new button:disabled { opacity: 0.4; cursor: default; }
+.thumb-comments { margin-top: 2px; min-width: 14px; padding: 0 3px; border-radius: 7px; background: var(--accent-soft); color: var(--accent); font-size: 10px; text-align: center; }
+
 /* the right-click menu */
 .context-menu { position: fixed; z-index: 60; min-width: 220px; padding: 4px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 10px 28px rgba(0, 0, 0, 0.22); }
 .context-menu hr { border: 0; border-top: 1px solid var(--line); margin: 4px 0; }

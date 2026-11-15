@@ -9,7 +9,7 @@ import { PNG } from 'pngjs';
 import { createServer, type ViteDevServer } from 'vite';
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest';
 import { OpcPackage, readZip } from '@pptx/opc';
-import { cellText, Editor, notesText, tableOf, tableSize } from '../../packages/editor-core/src/index.ts';
+import { cellText, Editor, notesText, slideComments, tableOf, tableSize } from '../../packages/editor-core/src/index.ts';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 let server: ViteDevServer;
@@ -1685,6 +1685,90 @@ describe('export', () => {
   }, 60_000);
 });
 
+describe('comments', () => {
+  const pane = () => page.getByTestId('comments-pane');
+  /** The comments shown: "author: text" each. */
+  const shown = () => pane().getByTestId('comment').evaluateAll(els => els.map(e => `${e.querySelector('strong')!.textContent}: ${e.querySelector('.comment-text')?.textContent ?? '(editing)'}`));
+  const openPane = async () => { await page.getByRole('tab', { name: 'Insert' }).click(); await page.getByTestId('insert-comment').click(); await pane().waitFor(); };
+  const add = async (text: string) => { await page.getByTestId('comment-new').fill(text); await page.getByTestId('comment-add').click(); };
+
+  test('Insert > Comment opens the pane with the keyboard in the new comment; a name is asked for once, and the comment is on the slide', async () => {
+    await page.evaluate(() => localStorage.removeItem('presentations.commentName'));
+    await openPane();
+    await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('data-testid'))).toBe('comment-new');
+    expect(await pane().innerText()).toContain('No comments on this slide.');
+    await page.keyboard.type('Is this the final number?');
+    expect(await page.getByTestId('comment-add').isDisabled()).toBe(true);       // no name yet
+    await page.getByTestId('comment-name').fill('Asha Rao');
+    await page.getByTestId('comment-add').click();
+    expect(await shown()).toEqual(['Asha Rao: Is this the final number?']);
+    expect(await page.getByTestId('comment-new').inputValue()).toBe('');
+    expect(await state<string>('return s.session.ed.log.undoLabel;')).toBe('New Comment');
+    // the name is kept: the next comment needs only its text, and Ctrl+Enter sends it
+    await page.getByTestId('comment-new').fill('And the source?');
+    await page.getByTestId('comment-new').press('Control+Enter');
+    expect(await shown()).toEqual(['Asha Rao: Is this the final number?', 'Asha Rao: And the source?']);
+    expect(await page.evaluate(() => localStorage.getItem('presentations.commentName'))).toBe('Asha Rao');
+    // typing a comment never types on the slide or runs a slide shortcut
+    expect(await state<number>('return s.session.ed.doc.slide(s.slide).shapes.length;')).toBe(2);
+    // the slide's thumbnail says how many
+    expect(await page.getByTestId('thumb-comments-1').innerText()).toBe('2');
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('comments belong to their slide; they are changed and deleted in the pane, and undo covers each', async () => {
+    await page.evaluate(() => localStorage.setItem('presentations.commentName', 'Ravi'));
+    await openPane();
+    await add('first');
+    await add('second');
+    await page.getByRole('tab', { name: 'Home' }).click();
+    await page.getByTestId('new-slide').click();
+    expect(await shown()).toEqual([]);                                   // the new slide has none
+    await add('on slide two');
+    await page.getByTestId('thumb-1').click();
+    expect(await shown()).toEqual(['Ravi: first', 'Ravi: second']);
+
+    await pane().getByTestId('comment').nth(1).getByTestId('comment-edit-btn').click();
+    await page.getByTestId('comment-edit').fill('second, reworded');
+    await page.getByTestId('comment-save').click();
+    expect(await shown()).toEqual(['Ravi: first', 'Ravi: second, reworded']);
+    // Escape while editing gives the change up
+    await pane().getByTestId('comment').nth(0).getByTestId('comment-edit-btn').click();
+    await page.getByTestId('comment-edit').fill('thrown away');
+    await page.getByTestId('comment-edit').press('Escape');
+    expect(await shown()).toEqual(['Ravi: first', 'Ravi: second, reworded']);
+
+    await pane().getByTestId('comment').nth(0).getByTestId('comment-delete').click();
+    expect(await shown()).toEqual(['Ravi: second, reworded']);
+    expect(await state<string>('return s.session.ed.log.undoLabel;')).toBe('Delete Comment');
+    await page.evaluate(() => (globalThis as unknown as { __editor: { getState(): { undo(): void } } }).__editor.getState().undo());
+    expect(await shown()).toEqual(['Ravi: first', 'Ravi: second, reworded']);
+    await page.evaluate(() => (globalThis as unknown as { __editor: { getState(): { undo(): void } } }).__editor.getState().undo());
+    expect(await shown()).toEqual(['Ravi: first', 'Ravi: second']);
+
+    await pane().getByRole('button', { name: 'Close' }).click();
+    expect(await pane().count()).toBe(0);
+    await page.getByRole('tab', { name: 'View' }).click();
+    await page.getByTestId('view-comments').click();
+    expect(await pane().count()).toBe(1);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('comments are in the saved file, where PowerPoint reads them: who wrote each, when, and what it says', async () => {
+    await page.evaluate(() => localStorage.setItem('presentations.commentName', 'Asha Rao'));
+    await openPane();
+    await add('Please check: 4 < 5 & "quoted"');
+    const ed = await saved();
+    const part = ed.doc.slideParts()[0]!;
+    const comments = slideComments(ed, part);
+    expect(comments.length).toBe(1);
+    expect(comments[0]).toMatchObject({ author: 'Asha Rao', initials: 'AR', index: 1, text: 'Please check: 4 < 5 & "quoted"' });
+    expect(Math.abs(new Date(`${comments[0]!.date}Z`).getTime() - Date.now())).toBeLessThan(120_000);
+    expect(ed.pkg.getPart('/ppt/commentAuthors.xml')).toBeDefined();
+    expect(errors).toEqual([]);
+  }, 60_000);
+});
+
 describe('bullet and number styles', () => {
   test('pick a bullet character and a numbering scheme; the menus tick the one in force; text in a box gets a hanging indent', async () => {
     await textBox('one\ntwo');
@@ -1954,7 +2038,7 @@ describe('the right-click menu', () => {
     await rightClick(...EMPTY);
     expect(await selected()).toBe(0);
     expect(await menu().getAttribute('data-kind')).toBe('slide');
-    expect(await labels()).toEqual(['Paste', 'Select All', 'New Slide', 'Duplicate Slide', 'Delete Slide', 'Hide Slide']);
+    expect(await labels()).toEqual(['Paste', 'Select All', 'New Comment', 'New Slide', 'Duplicate Slide', 'Delete Slide', 'Hide Slide']);
     expect(await disabled()).toEqual(['Paste', 'Delete Slide']);         // the only slide cannot be deleted
     await page.getByTestId('menu-select-all').click();
     expect(await selected()).toBe(4);                                    // two placeholders and the two rectangles

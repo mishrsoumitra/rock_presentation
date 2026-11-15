@@ -365,6 +365,12 @@ export function editAltText(): void {
   setTimeout(() => window.dispatchEvent(new CustomEvent('focus-alt-text')), 0);
 }
 
+/** Open the comments pane with the keyboard in its box for a new comment. */
+export function newComment(): void {
+  useEditor.setState({ pane: 'comments' });
+  setTimeout(() => window.dispatchEvent(new CustomEvent('focus-new-comment')), 0);
+}
+
 /** Select every shape of the slide itself (not the layout's or master's), as Ctrl+A does. */
 export function selectAllShapes(): void {
   const s = st();
