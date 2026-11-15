@@ -57,6 +57,8 @@ export interface EditorState {
   /** The find and replace panel is open. */
   finding: boolean;
   clipboard: ShapeClip | null;
+  /** The mark the copied shapes carry on the system clipboard, so a paste of that clipboard brings them back whole. */
+  clipId: string | null;
   message: { kind: 'info' | 'error'; text: string } | null;
   askPassword: { name: string; bytes: Uint8Array; retry: boolean } | null;
 
@@ -96,7 +98,7 @@ function fitted(s: Session, t: TextEditing | null): TextEditing | null {
 
 export const useEditor = create<EditorState>((set, get) => ({
   session: null, version: 0, slide: null, selection: [], entered: null, text: null, cells: null, pending: null,
-  zoom: 'fit', drawing: null, mode: 'edit', pane: 'none', finding: false, menu: null, clipboard: null, message: null, askPassword: null,
+  zoom: 'fit', drawing: null, mode: 'edit', pane: 'none', finding: false, menu: null, clipboard: null, clipId: null, message: null, askPassword: null,
 
   async open(bytes, name, password) {
     performance.mark('open-start');

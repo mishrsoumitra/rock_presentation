@@ -195,10 +195,22 @@ export function duplicateSelection(): void {
   c.s.select(r.ids.flatMap(inserted));
 }
 
+/**
+ * Copy (or cut) from a button or a menu: through the browser's own copy command, so the system clipboard gets the
+ * shapes as Ctrl/Cmd+C would put them there; where the browser refuses that, they are kept in memory for pasting
+ * here.
+ */
 export function copySelection(cut = false): void {
   const c = ctx();
   if (!c || !c.views.length) return;
-  useEditor.setState({ clipboard: copyShapes(c.ed, c.part, c.views) });
+  const before = st().clipId;
+  let done = false;
+  try {
+    done = document.execCommand('copy') && st().clipId !== before;
+  } catch {
+    done = false;
+  }
+  if (!done) useEditor.setState({ clipboard: copyShapes(c.ed, c.part, c.views), clipId: null });
   if (cut) deleteSelection();
 }
 

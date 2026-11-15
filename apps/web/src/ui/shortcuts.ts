@@ -32,9 +32,7 @@ export function useShortcuts(): void {
       }
       if (mod && k === 'z') { handled(); if (e.shiftKey) s.redo(); else s.undo(); }
       else if (mod && k === 'y') { handled(); s.redo(); }
-      else if (mod && k === 'c') { handled(); act.copySelection(); }
-      else if (mod && k === 'x') { handled(); act.copySelection(true); }
-      else if (mod && k === 'v') { handled(); void act.paste(); }
+      // (copy, cut and paste are the browser's clipboard events: see clipboard.ts)
       else if (mod && k === 'd') { handled(); act.duplicateSelection(); }
       else if (mod && k === 'g') { handled(); if (e.shiftKey) act.ungroupSelection(); else act.groupSelection(); }
       else if (mod && k === 'm') { handled(); act.newSlide(); }

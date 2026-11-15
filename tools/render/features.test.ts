@@ -294,6 +294,150 @@ describe('the clipboard in text', () => {
   }, 60_000);
 });
 
+describe('the clipboard on the slide', () => {
+  /** Names of the shapes drawn on the slide that are not placeholders, and the text of each. */
+  const drawn = () => state<string[]>(`
+    const textOf = el => { const out = []; const walk = e => { if (e.local === 't') out.push(e.children.map(c => c.value ?? '').join('')); for (const c of e.children) if (c.kind === 'element') walk(c); }; walk(el); return out.join(''); };
+    return s.session.ed.doc.slide(s.slide).shapes.filter(sh => !sh.placeholder).map(sh => sh.name.replace(/ \\d+$/, '') + (textOf(sh.el) ? ':' + textOf(sh.el) : ''));`);
+  /** A rectangle under the placeholders with "Hi" in it, selected (not being typed in). */
+  async function rectWithText(): Promise<void> {
+    await drawShape('rect', 1000000, 5500000, 1500000, 800000);
+    await page.keyboard.type('Hi');
+    await page.keyboard.press('Escape');
+    await frames();
+  }
+  /** A paste of a picture file, as a screenshot tool or an image editor puts one on the clipboard. */
+  const pastePicture = () => page.evaluate(`(async () => {
+    const canvas = new OffscreenCanvas(40, 30);
+    const c = canvas.getContext('2d');
+    c.fillStyle = '#c00';
+    c.fillRect(0, 0, 40, 30);
+    const dt = new DataTransfer();
+    dt.items.add(new File([await canvas.convertToBlob({ type: 'image/png' })], 'shot.png', { type: 'image/png' }));
+    const e = new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true });
+    document.body.dispatchEvent(e);
+    return e.defaultPrevented;
+  })()`) as Promise<boolean>;
+
+  test('copy puts the shapes on the clipboard with their text; pasting that clipboard brings them back whole, here and on another slide', async () => {
+    await rectWithText();
+    const copied = await clipboardEvent('copy');
+    expect(copied.handled).toBe(true);
+    expect(copied.plain).toBe('Hi');
+    expect(copied.html).toMatch(/^<div data-pptx-clip="[a-z0-9-]+"><p>Hi<\/p><\/div>$/);
+
+    await clipboardEvent('paste', { 'text/plain': copied.plain, 'text/html': copied.html });
+    await expect.poll(drawn).toEqual(['Rectangle:Hi', 'Rectangle:Hi']);
+    // the copy is a shape with the fill and place of the first (set a little off it), not a text box
+    const xs = await state<number[]>(`return s.session.ed.doc.slide(s.slide).shapes.filter(sh => !sh.placeholder).map(sh => sh.xfrm.x);`);
+    expect(xs[1]! - xs[0]!).toBe(152400);
+    expect(await state<string>('return s.session.ed.log.undoLabel;')).toBe('Paste');
+    expect(await state<number>('return s.selection.length;')).toBe(1);
+
+    await page.getByTestId('new-slide').click();
+    await clipboardEvent('paste', { 'text/plain': copied.plain, 'text/html': copied.html });
+    await expect.poll(drawn).toEqual(['Rectangle:Hi']);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('cut takes the shapes off the slide and paste puts them back; with nothing selected copy and cut are left alone', async () => {
+    expect((await clipboardEvent('copy')).handled).toBe(false);
+    expect((await clipboardEvent('cut')).handled).toBe(false);
+    await rectWithText();
+    const cut = await clipboardEvent('cut');
+    expect(cut.handled).toBe(true);
+    expect(await drawn()).toEqual([]);
+    expect(await state<string>('return s.session.ed.log.undoLabel;')).toMatch(/Delete/);
+    await clipboardEvent('paste', { 'text/plain': cut.plain, 'text/html': cut.html });
+    await expect.poll(drawn).toEqual(['Rectangle:Hi']);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('text from another app becomes a text box, with its bold and its paragraphs; a picture becomes a picture', async () => {
+    await clipboardEvent('paste', { 'text/plain': 'From a note' });
+    await expect.poll(drawn).toEqual(['TextBox:From a note']);
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape');
+
+    await clipboardEvent('paste', { 'text/plain': 'Title\nbody', 'text/html': '<h1>Title</h1><p>body <i>slanted</i></p>' });
+    await expect.poll(async () => (await drawn()).length).toBe(2);
+    expect(await shapeXml()).toMatch(/<a:rPr[^>]*b="1"[^>]*><\/rPr><a:t>Title<\/t>/);
+    expect(await shapeXml()).toMatch(/<a:rPr[^>]*i="1"[^>]*><\/rPr><a:t>slanted<\/t>/);
+    expect((await shapeXml()).match(/<a:p>/g)?.length).toBe(2);
+    // one undo takes the pasted text away, the next the box
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Control+z');
+    await page.keyboard.press('Control+z');
+    expect(await drawn()).toEqual(['TextBox:From a note']);
+
+    expect(await pastePicture()).toBe(true);
+    await expect.poll(drawn, { timeout: 10_000 }).toEqual(['TextBox:From a note', 'Picture']);
+    expect(await state<string>('return s.selection[0].local;')).toBe('pic');
+    // empty text pastes nothing
+    await clipboardEvent('paste', { 'text/plain': '   ' });
+    await clipboardEvent('paste', { 'text/plain': '' });
+    expect((await drawn()).length).toBe(2);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('a clipboard from an earlier copy, or from another window, is pasted as what it says, not as the shapes in memory', async () => {
+    await rectWithText();
+    await clipboardEvent('copy');
+    await page.keyboard.press('Escape');
+    await clipboardEvent('paste', { 'text/plain': 'Other', 'text/html': '<div data-pptx-clip="someone-else"><p>Other</p></div>' });
+    await expect.poll(drawn).toEqual(['Rectangle:Hi', 'TextBox:Other']);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('the notes box and other text fields keep their own copy and paste', async () => {
+    await rectWithText();
+    await page.getByTestId('notes').click();
+    await page.keyboard.type('note');
+    expect((await clipboardEvent('copy')).handled).toBe(false);
+    expect((await clipboardEvent('paste', { 'text/plain': 'x' })).handled).toBe(false);
+    expect(await drawn()).toEqual(['Rectangle:Hi']);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('the Copy and Paste buttons and the right-click menu use the same clipboard', async () => {
+    await rectWithText();
+    await page.getByRole('button', { name: 'Copy', exact: true }).click();
+    expect(await state<boolean>('return !!s.clipboard;')).toBe(true);
+    await page.getByRole('button', { name: 'Paste', exact: true }).click();
+    await expect.poll(drawn).toEqual(['Rectangle:Hi', 'Rectangle:Hi']);
+    await page.getByRole('button', { name: 'Cut', exact: true }).click();
+    expect(await drawn()).toEqual(['Rectangle:Hi']);
+    await page.getByRole('button', { name: 'Paste', exact: true }).click();
+    await expect.poll(async () => (await drawn()).length).toBe(2);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('a picture of the selected shapes can be made for other apps: a PNG cropped to them, with their colours', async () => {
+    await drawShape('rect', 1000000, 5500000, 1500000, 800000);
+    // (the app's own module, loaded in the page as the app loads it)
+    const png = await page.evaluate(`(async () => {
+      const m = await import('/src/ui/clipboard.ts');
+      const blob = await m.shapesPng(globalThis.__editor.getState().selection);
+      if (!blob) return null;
+      const bmp = await createImageBitmap(blob);
+      const c = new OffscreenCanvas(bmp.width, bmp.height);
+      const ctx = c.getContext('2d');
+      ctx.drawImage(bmp, 0, 0);
+      const mid = ctx.getImageData(bmp.width >> 1, bmp.height >> 1, 1, 1).data;
+      const corner = ctx.getImageData(0, 0, 1, 1).data;
+      return { type: blob.type, w: bmp.width, h: bmp.height, mid: [mid[0], mid[1], mid[2], mid[3]], corner: corner[3] };
+    })()`) as { type: string; w: number; h: number; mid: number[]; corner: number } | null;
+    expect(png).not.toBeNull();
+    expect(png!.type).toBe('image/png');
+    // 1.5M by 0.8M EMU at two pixels per 9525 EMU, to within the drag's pixel
+    expect(Math.abs(png!.w - 315)).toBeLessThan(6);
+    expect(Math.abs(png!.h - 168)).toBeLessThan(6);
+    expect(png!.mid).toEqual([0x44, 0x72, 0xc4, 255]);                   // the rectangle's accent fill
+    expect(errors).toEqual([]);
+  }, 60_000);
+});
+
 describe('bullet and number styles', () => {
   test('pick a bullet character and a numbering scheme; the menus tick the one in force; text in a box gets a hanging indent', async () => {
     await textBox('one\ntwo');
@@ -1155,6 +1299,35 @@ describe('tables', () => {
     expect(await cellTexts()).toEqual([['red', 'blue'], ['green', 'dark pink']]);
     await page.getByTestId('replace-all').click();
     expect(await cellTexts()).toEqual([['pink', 'blue'], ['green', 'dark pink']]);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('picked cells copy as rows of tab-separated text, and such text pastes into cells from the picked one, as with a spreadsheet', async () => {
+    await insertTable(3, 3);
+    for (const [r, c, t] of [[0, 0, 'a'], [0, 1, 'b'], [1, 0, 'c'], [1, 1, 'd']] as const) {
+      await clickCell(r, c);
+      await page.keyboard.type(t);
+      await page.keyboard.press('Escape');
+    }
+    await clickCell(0, 0);
+    await clickCell(1, 1, { modifiers: ['Shift'] });
+    const copied = await clipboardEvent('copy');
+    expect(copied).toEqual({ plain: 'a\tb\nc\td', html: '<table><tr><td>a</td><td>b</td></tr><tr><td>c</td><td>d</td></tr></table>', handled: true });
+
+    // from a spreadsheet: two rows of three, pasted at the middle cell; what does not fit in the table is left out
+    await clickCell(1, 1);
+    await clipboardEvent('paste', { 'text/plain': '1\t2\t3\n4\t5\t6\n7\t8\t9\n' });
+    expect(await cellTexts()).toEqual([['a', 'b', ''], ['c', '1', '2'], ['', '4', '5']]);
+    expect(await state<string>('return s.session.ed.log.undoLabel;')).toBe('Paste');
+    await page.keyboard.press('Control+z');                              // one step
+    expect(await cellTexts()).toEqual([['a', 'b', ''], ['c', 'd', ''], ['', '', '']]);
+
+    // cut empties the picked cells and keeps the table
+    await clickCell(0, 0);
+    await clickCell(0, 1, { modifiers: ['Shift'] });
+    expect((await clipboardEvent('cut')).plain).toBe('a\tb');
+    expect(await cellTexts()).toEqual([['', '', ''], ['c', 'd', ''], ['', '', '']]);
+    expect(await state<number>('return s.session.ed.doc.slide(s.slide).shapes.filter(sh => sh.kind === "graphicFrame").length;')).toBe(1);
     expect(errors).toEqual([]);
   }, 60_000);
 

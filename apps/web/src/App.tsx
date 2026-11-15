@@ -12,6 +12,7 @@ import { Ribbon } from './ui/Ribbon.tsx';
 import { SelectionPane } from './ui/SelectionPane.tsx';
 import { SlideCanvas } from './ui/SlideCanvas.tsx';
 import { SlidePanel } from './ui/SlidePanel.tsx';
+import { useClipboard } from './ui/clipboard.ts';
 import { useShortcuts } from './ui/shortcuts.ts';
 
 function StatusBar() {
@@ -62,6 +63,7 @@ export function App() {
   const mode = useEditor(s => s.mode);
   const pane = useEditor(s => s.pane);
   useShortcuts();
+  useClipboard();
   useEffect(() => {
     // a file dropped anywhere opens it
     const prevent = (e: DragEvent) => { if (e.dataTransfer?.types.includes('Files')) e.preventDefault(); };
