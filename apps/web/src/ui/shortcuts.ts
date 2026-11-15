@@ -16,7 +16,7 @@ export function useShortcuts(): void {
       const s = useEditor.getState();
       const target = e.target as HTMLElement | null;
       if (!s.session || s.mode !== 'edit' || s.text || s.menu) return;
-      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.closest('.slides'))) return;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.closest('.slides') || target.closest('.slide-grid'))) return;
       const mod = e.metaKey || e.ctrlKey;
       const k = e.key.toLowerCase();
       const handled = () => { e.preventDefault(); e.stopPropagation(); };

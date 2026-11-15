@@ -1145,6 +1145,111 @@ describe('connectors attached to shapes', () => {
   }, 60_000);
 });
 
+describe('grid view', () => {
+  const marks = () => state<string[]>(`
+    const textOf = el => { const out = []; const walk = e => { if (e.local === 't') out.push(e.children.map(c => c.value ?? '').join('')); for (const c of e.children) if (c.kind === 'element') walk(c); }; walk(el); return out.join(''); };
+    return s.session.ed.doc.slideParts().map(p => s.session.ed.doc.slide(p).shapes.filter(sh => sh.name.startsWith('TextBox')).map(sh => textOf(sh.el)).join('+'));`);
+  const current = () => state<number>('return s.session.ed.doc.slideParts().indexOf(s.slide) + 1;');
+  const grid = () => page.getByTestId('slide-grid');
+  /** Five slides marked "one" to "five", shown in grid view. */
+  async function fiveInGrid(): Promise<void> {
+    for (const [i, mark] of ['one', 'two', 'three', 'four', 'five'].entries()) {
+      if (i) await page.getByTestId('new-slide').click();
+      await textBox(mark);
+      await page.keyboard.press('Escape');
+      await page.keyboard.press('Escape');
+    }
+    await page.getByTestId('view-grid').click();
+    await grid().waitFor();
+  }
+
+  test('every slide is shown as a drawn thumbnail; the slide itself and the side panel give way; the button and Escape go back', async () => {
+    await fiveInGrid();
+    expect(await grid().locator('.thumb').count()).toBe(5);
+    expect(await page.getByTestId('canvas').count()).toBe(0);
+    expect(await page.locator('aside.slides').count()).toBe(0);
+    expect(await page.getByTestId('view-grid').getAttribute('aria-pressed')).toBe('true');
+    expect(await page.getByTestId('grid-thumb-5').getAttribute('class')).toContain('current');
+    // the thumbnails are drawn: each is a white slide with the (small, grey-edged) marks of its text on it
+    await expect.poll(() => page.evaluate(() => [...document.querySelectorAll('[data-testid="slide-grid"] canvas')].map(c => {
+      const cv = c as HTMLCanvasElement;
+      if (!cv.width) return 'empty';
+      const d = cv.getContext('2d')!.getImageData(0, 0, cv.width, cv.height).data;
+      let white = 0, marks = 0;
+      for (let i = 0; i < d.length; i += 4) { if (d[i]! > 250 && d[i + 1]! > 250 && d[i + 2]! > 250 && d[i + 3]! === 255) white++; else if (d[i + 3]! > 0 && d[i]! < 235) marks++; }
+      return white > d.length / 8 && marks > 3 ? 'drawn' : `white ${white} marks ${marks}`;
+    })), { timeout: 15_000 }).toEqual(['drawn', 'drawn', 'drawn', 'drawn', 'drawn']);
+    // wider than the side panel's
+    expect(await page.getByTestId('grid-thumb-1').locator('canvas').evaluate(c => (c as HTMLElement).getBoundingClientRect().width)).toBe(240);
+
+    await page.keyboard.press('Escape');
+    expect(await grid().count()).toBe(0);
+    expect(await page.getByTestId('canvas').count()).toBe(1);
+    await page.getByTestId('view-grid').click();
+    await page.getByTestId('view-grid').click();
+    expect(await grid().count()).toBe(0);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('a click picks a slide, the arrow keys move in all four directions, and Enter or a double click opens the slide', async () => {
+    await fiveInGrid();
+    await page.setViewportSize({ width: 1000, height: 860 });            // three thumbnails to a row
+    await page.getByTestId('grid-thumb-1').click();
+    expect(await current()).toBe(1);
+    await grid().focus();
+    await page.keyboard.press('ArrowRight');
+    expect(await current()).toBe(2);
+    await page.keyboard.press('ArrowDown');                              // a row down
+    expect(await current()).toBe(5);
+    await page.keyboard.press('ArrowUp');
+    expect(await current()).toBe(2);
+    await page.keyboard.press('ArrowLeft');
+    await page.keyboard.press('ArrowLeft');                              // no slide before the first
+    expect(await current()).toBe(1);
+    await page.keyboard.press('End');
+    expect(await current()).toBe(5);
+    await page.keyboard.press('Home');
+    await page.keyboard.press('ArrowRight');
+    await page.keyboard.press('ArrowRight');
+    await page.keyboard.press('Enter');
+    expect(await grid().count()).toBe(0);
+    expect(await current()).toBe(3);
+    expect(await page.getByTestId('canvas').count()).toBe(1);
+
+    await page.getByTestId('view-grid').click();
+    await page.getByTestId('grid-thumb-4').dblclick();
+    expect(await grid().count()).toBe(0);
+    expect(await current()).toBe(4);
+    await page.setViewportSize({ width: 1400, height: 860 });
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('slides are reordered by dragging, deleted, duplicated, and copied and pasted in the grid', async () => {
+    await fiveInGrid();
+    await page.getByTestId('grid-thumb-5').dragTo(page.getByTestId('grid-thumb-2'));
+    expect(await marks()).toEqual(['one', 'five', 'two', 'three', 'four']);
+    await page.getByTestId('grid-thumb-1').click();
+    await grid().focus();
+    await page.keyboard.press('Delete');
+    expect(await marks()).toEqual(['five', 'two', 'three', 'four']);
+    await page.keyboard.press('Control+d');
+    expect(await marks()).toEqual(['five', 'five', 'two', 'three', 'four']);
+    const copied = await clipboardEvent('copy');
+    expect(copied.html).toContain('data-pptx-slide');
+    await page.keyboard.press('End');
+    await clipboardEvent('paste', { 'text/plain': copied.plain, 'text/html': copied.html });
+    expect(await marks()).toEqual(['five', 'five', 'two', 'three', 'four', 'five']);
+    // the right-click menu of a thumbnail works here too
+    await page.getByTestId('grid-thumb-3').click({ button: 'right' });
+    await page.getByTestId('menu-delete-slide').click();
+    expect(await marks()).toEqual(['five', 'five', 'three', 'four', 'five']);
+    // the ribbon's New Slide adds after the current slide and the grid shows it
+    await page.getByTestId('new-slide').click();
+    expect(await grid().locator('.thumb').count()).toBe(6);
+    expect(errors).toEqual([]);
+  }, 60_000);
+});
+
 describe('bullet and number styles', () => {
   test('pick a bullet character and a numbering scheme; the menus tick the one in force; text in a box gets a hanging indent', async () => {
     await textBox('one\ntwo');

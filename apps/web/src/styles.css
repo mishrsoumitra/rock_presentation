@@ -90,6 +90,13 @@ select { height: 28px; border: 1px solid var(--line); border-radius: var(--radiu
   background: var(--panel); color: var(--ink); font-family: Carlito, Calibri, sans-serif; line-height: 1.2; field-sizing: content; }
 .text-input { position: absolute; width: 2px; padding: 0; border: 0; margin: 0; opacity: 0; resize: none; overflow: hidden; white-space: pre; pointer-events: none; }
 
+/* grid view: every slide, in rows */
+.workspace.grid-view { grid-template-columns: 1fr; }
+.slide-grid { display: flex; flex-wrap: wrap; align-content: flex-start; gap: 14px 10px; padding: 18px; overflow-y: auto; background: var(--canvas); min-height: 0; }
+.slide-grid:focus-visible { outline-offset: -2px; }
+.slide-grid .thumb { padding: 6px; }
+.status .zoom .view-toggle { margin-right: 10px; }
+
 /* the slide with its speaker notes under it */
 .editing { display: grid; grid-template-rows: minmax(0, 1fr) auto; min-width: 0; min-height: 0; }
 .notes { border-top: 1px solid var(--line); background: var(--panel); }

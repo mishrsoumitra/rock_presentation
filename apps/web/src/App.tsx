@@ -11,7 +11,7 @@ import { AnimationPane, AnimationsTab, TransitionsTab } from './ui/AnimationTabs
 import { Ribbon } from './ui/Ribbon.tsx';
 import { SelectionPane } from './ui/SelectionPane.tsx';
 import { SlideCanvas } from './ui/SlideCanvas.tsx';
-import { SlidePanel } from './ui/SlidePanel.tsx';
+import { SlideGrid, SlidePanel } from './ui/SlidePanel.tsx';
 import { useClipboard } from './ui/clipboard.ts';
 import { useShortcuts } from './ui/shortcuts.ts';
 
@@ -19,6 +19,7 @@ function StatusBar() {
   const session = useEditor(s => s.session);
   const zoom = useEditor(s => s.zoom);
   const message = useEditor(s => s.message);
+  const view = useEditor(s => s.view);
   // "Slide n of m" changes with the presentation part (the list of slides) and the current slide, not with typing
   const place = useEditor(s => {
     if (!s.session) return '';
@@ -34,6 +35,8 @@ function StatusBar() {
       {message && <span className={`message ${message.kind}`} role={message.kind === 'error' ? 'alert' : 'status'}>{message.text}
         <button type="button" aria-label="Dismiss" onClick={() => useEditor.setState({ message: null })}>×</button></span>}
       <span className="zoom">
+        {session && <button type="button" className="view-toggle" aria-pressed={view === 'grid'} title="Grid view: every slide at once" data-testid="view-grid"
+          onClick={() => useEditor.setState({ view: view === 'grid' ? 'normal' : 'grid', text: null, selection: [], cells: null, cropping: null })}>Grid view</button>}
         <button type="button" onClick={() => setZoom('fit')} aria-pressed={zoom === 'fit'}>Fit</button>
         {[0.5, 0.75, 1, 1.5, 2].map(z => <button key={z} type="button" aria-pressed={current !== undefined && Math.abs(current - z) < 0.01} onClick={() => setZoom((z * 96) / 914400)}>{z * 100}%</button>)}
       </span>
@@ -62,6 +65,7 @@ export function App() {
   const session = useEditor(s => s.session);
   const mode = useEditor(s => s.mode);
   const pane = useEditor(s => s.pane);
+  const view = useEditor(s => s.view);
   useShortcuts();
   useClipboard();
   useEffect(() => {
@@ -81,8 +85,9 @@ export function App() {
   return (
     <div className="app">
       <Ribbon extraTabs={{ Transitions: <TransitionsTab />, Animations: <AnimationsTab /> }} />
-      <main className={`workspace${session && pane !== 'none' ? ' with-pane' : ''}`}>
-        {session ? <><SlidePanel /><div className="editing"><SlideCanvas /><NotesPane /><FindBar /></div>{pane === 'animation' && <AnimationPane />}{pane === 'selection' && <SelectionPane />}</> : <Welcome />}
+      <main className={`workspace${session && view === 'grid' ? ' grid-view' : session && pane !== 'none' ? ' with-pane' : ''}`}>
+        {!session ? <Welcome /> : view === 'grid' ? <SlideGrid />
+          : <><SlidePanel /><div className="editing"><SlideCanvas /><NotesPane /><FindBar /></div>{pane === 'animation' && <AnimationPane />}{pane === 'selection' && <SelectionPane />}</>}
       </main>
       <StatusBar />
       <ContextMenu />

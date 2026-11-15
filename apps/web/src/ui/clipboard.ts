@@ -155,7 +155,7 @@ function forSlide(e: Event): boolean {
   const s = useEditor.getState();
   const t = e.target as HTMLElement | null;
   if (!s.session || s.mode !== 'edit' || s.text || s.cells?.editing) return false;
-  return !(t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable || t.closest?.('.slides')));
+  return !(t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable || t.closest?.('.slides') || t.closest?.('.slide-grid')));
 }
 
 /**
