@@ -4,6 +4,7 @@ import { paragraphLength, paragraphs } from '@pptx/editor-core';
 import { ShapeView } from '@pptx/model';
 import { useEditor } from '../state/store.ts';
 import * as act from './actions.ts';
+import { activeCells, clearSelectedCells, editCell, moveCell, tabCell } from './tables.ts';
 import { typeChars } from './textActions.ts';
 
 const NUDGE = 76200;          // 1/12 inch, PowerPoint's arrow-key step
@@ -19,6 +20,16 @@ export function useShortcuts(): void {
       const mod = e.metaKey || e.ctrlKey;
       const k = e.key.toLowerCase();
       const handled = () => { e.preventDefault(); e.stopPropagation(); };
+      // with cells picked in a table, the keys that would act on the shape act on the cells
+      const cells = activeCells(s);
+      if (cells && !mod && !e.altKey) {
+        if (e.key.startsWith('Arrow')) { handled(); moveCell(e.key === 'ArrowUp' ? -1 : e.key === 'ArrowDown' ? 1 : 0, e.key === 'ArrowLeft' ? -1 : e.key === 'ArrowRight' ? 1 : 0, e.shiftKey); return; }
+        if (e.key === 'Tab') { handled(); tabCell(e.shiftKey, false); return; }
+        if (e.key === 'Enter' || e.key === 'F2') { handled(); editCell(); return; }
+        if (e.key === 'Delete' || e.key === 'Backspace') { handled(); clearSelectedCells(); return; }
+        if (e.key === 'Escape') { handled(); s.setState({ cells: null }); return; }
+        if (e.key.length === 1) { handled(); editCell(e.key); return; }
+      }
       if (mod && k === 'z') { handled(); if (e.shiftKey) s.redo(); else s.undo(); }
       else if (mod && k === 'y') { handled(); s.redo(); }
       else if (mod && k === 'c') { handled(); act.copySelection(); }

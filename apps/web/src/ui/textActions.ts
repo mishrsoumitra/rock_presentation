@@ -8,7 +8,9 @@ import type { ResolvedBodyProps, ResolvedParagraph, ResolvedRunProps } from '@pp
 import type { XmlElement } from '@pptx/xml';
 import { refit } from '../engine/textfit.ts';
 import { session, useEditor } from '../state/store.ts';
+import { tableOf, regionOf } from '@pptx/editor-core';
 import { keyOf } from './SlideCanvas.tsx';
+import { activeCells, tableBodies } from './tables.ts';
 
 const ordered = (a: TextPos, b: TextPos): TextRange => (a.p < b.p || (a.p === b.p && a.offset <= b.offset) ? { start: a, end: b } : { start: b, end: a });
 
@@ -105,6 +107,8 @@ function targets(): { part: string; el: XmlElement; body: XmlElement; range: Tex
     return body ? [{ part: st.text.part, el: st.text.el, body, range: ordered(st.text.anchor, st.text.caret) }] : [];
   }
   return st.selection.flatMap(el => {
+    // a table: the cells picked in it, or all of its cells
+    if (tableOf(el)) return tableBodies(el, st.cells?.el === el ? activeCells(st) : null).map(body => ({ part: st.slide!, el, body, range: wholeBody(body) }));
     const body = new ShapeView(el, s.ed.doc.owner(st.slide!)).txBody;
     return body ? [{ part: st.slide!, el, body, range: wholeBody(body) }] : [];
   });
@@ -168,7 +172,14 @@ export function formattingHere(): { run?: ResolvedRunProps; para?: ResolvedParag
   const scene = s.scenes.get(st.slide);
   const walk = (list: typeof scene.slide.shapes): { paragraphs: ResolvedParagraph[]; body: ResolvedBodyProps } | undefined => {
     for (const r of list) {
-      if (r.source?.view.el === el) return r.source.text ?? undefined;
+      if (r.source?.view.el === el) {
+        const g = r.source.graphic;
+        if (g?.kind !== 'table') return r.source.text ?? undefined;
+        // a table shows the formatting of the cell picked (its first cell when none is)
+        const cells = activeCells(st);
+        const at = cells ? regionOf(tableOf(el)!, cells.anchor.r, cells.anchor.c) : { r0: 0, c0: 0 };
+        return g.table.cells.find(c => c.row === at.r0 && c.col === at.c0)?.text ?? undefined;
+      }
       const inner = walk(r.children);
       if (inner) return inner;
     }

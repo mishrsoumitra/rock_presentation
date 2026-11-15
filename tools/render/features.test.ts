@@ -777,6 +777,272 @@ describe('tables', () => {
     return { rows: tbl.children.filter(c => c.local === 'tr').length, cols: find(tbl, 'tblGrid').children.filter(c => c.local === 'gridCol').length,
       x: num(off, 'x'), y: num(off, 'y'), cx: num(ext, 'cx'), cy: num(ext, 'cy'), name: find(find(el, 'nvGraphicFramePr'), 'cNvPr').attrs.find(a => a.local === 'name').value };`);
 
+  /** The text of every cell, row by row; a cell covered by a merge reads "<" (from the left) or "^" (from above). */
+  const cellTexts = () => state<string[][]>(`
+    const find = (e, n) => e.children.find(c => c.kind === 'element' && c.local === n);
+    const el = s.session.ed.doc.slide(s.slide).shapes.find(sh => sh.kind === 'graphicFrame').el;
+    const tbl = find(find(find(el, 'graphic'), 'graphicData'), 'tbl');
+    const textOf = e => { const out = []; const ps = find(e, 'txBody').children.filter(c => c.local === 'p'); for (const p of ps) { let t = ''; const walk = x => { if (x.local === 't') t += x.children.map(c => c.value ?? '').join(''); for (const c of x.children) if (c.kind === 'element') walk(c); }; walk(p); out.push(t); } return out.join('/'); };
+    const flag = (tc, n) => tc.attrs.some(a => a.local === n && a.value === '1');
+    return tbl.children.filter(c => c.local === 'tr').map(tr => tr.children.filter(c => c.local === 'tc').map(tc => flag(tc, 'hMerge') ? '<' : flag(tc, 'vMerge') ? '^' : textOf(tc)));`);
+  /** The middle of a cell on the page (rows at their file heights, which one line of text does not grow). */
+  const cellPoint = async (r: number, c: number) => {
+    const at = await state<{ x: number; y: number }>(`
+      const find = (e, n) => e.children.find(c => c.kind === 'element' && c.local === n);
+      const el = s.session.ed.doc.slide(s.slide).shapes.find(sh => sh.kind === 'graphicFrame').el;
+      const tbl = find(find(find(el, 'graphic'), 'graphicData'), 'tbl');
+      const num = (e, n) => Number(e.attrs.find(a => a.local === n).value);
+      const off = find(find(el, 'xfrm'), 'off');
+      const ws = find(tbl, 'tblGrid').children.filter(c => c.local === 'gridCol').map(c => num(c, 'w'));
+      const hs = tbl.children.filter(c => c.local === 'tr').map(t => num(t, 'h'));
+      const sum = (a, n) => a.slice(0, n).reduce((x, y) => x + y, 0);
+      return { x: num(off, 'x') + sum(ws, ${c}) + ws[${c}] / 2, y: num(off, 'y') + sum(hs, ${r}) + hs[${r}] / 2 };`);
+    return slidePoint(at.x, at.y);
+  };
+  const clickCell = async (r: number, c: number, options: { modifiers?: ('Shift')[]; button?: 'right'; double?: boolean } = {}) => {
+    await frames();
+    const p = await cellPoint(r, c);
+    for (const m of options.modifiers ?? []) await page.keyboard.down(m);
+    if (options.double) await page.mouse.dblclick(p.x, p.y);
+    else await page.mouse.click(p.x, p.y, options.button ? { button: options.button } : {});
+    for (const m of options.modifiers ?? []) await page.keyboard.up(m);
+  };
+  /** The cells picked: "r,c" for one cell, "r,c:r,c" for a block from the anchor to the far corner. */
+  const picked = () => state<string | null>(`
+    const c = s.cells; if (!c) return null;
+    const a = c.anchor.r + ',' + c.anchor.c, f = c.focus.r + ',' + c.focus.c;
+    return (a === f ? a : a + ':' + f) + (c.editing ? ' editing' : '');`);
+  const tableMenu = async (item: string) => {
+    await page.getByTestId('table-menu').click();
+    await page.locator('.menu-panel').getByRole('menuitem', { name: item, exact: true }).click();
+  };
+  const tableMenuDisabled = async () => {
+    await page.getByTestId('table-menu').click();
+    const off = await page.locator('.menu-panel button:disabled').allInnerTexts();
+    await page.getByTestId('table-menu').click();
+    return off;
+  };
+
+  test('typing in cells: a click picks a cell, typing fills it, Tab moves on and adds a row at the end, Escape and a click elsewhere keep the text', async () => {
+    await insertTable(2, 2);
+    await clickCell(0, 0);
+    expect(await picked()).toBe('0,0');
+    await page.keyboard.type('Name');
+    expect(await picked()).toBe('0,0 editing');
+    expect(await page.getByTestId('cell-editor').inputValue()).toBe('Name');
+    await page.keyboard.press('Tab');
+    expect(await cellTexts()).toEqual([['Name', ''], ['', '']]);
+    expect(await picked()).toBe('0,1 editing');
+    await page.keyboard.type('Score');
+    await page.keyboard.press('Tab');
+    await page.keyboard.type('Asha');
+    await page.keyboard.press('Tab');
+    await page.keyboard.type('91');
+    await page.keyboard.press('Tab');                                   // from the last cell: a new row
+    expect(await cellTexts()).toEqual([['Name', 'Score'], ['Asha', '91'], ['', '']]);
+    expect(await picked()).toBe('2,0 editing');
+    await page.keyboard.type('Ravi');
+    await page.keyboard.press('Shift+Tab');                             // back to the cell before
+    expect(await picked()).toBe('1,1 editing');
+    expect(await page.getByTestId('cell-editor').inputValue()).toBe('91');
+    await page.keyboard.press('Escape');
+    expect(await picked()).toBe('1,1');
+    expect(await page.getByTestId('cell-editor').count()).toBe(0);
+    expect(await cellTexts()).toEqual([['Name', 'Score'], ['Asha', '91'], ['Ravi', '']]);
+    expect(await state<string>('return s.session.ed.log.undoLabel;')).toBe('Typing');
+
+    // a double click opens the cell with its text; Enter is a new line; a click on another cell keeps what was typed
+    await clickCell(2, 1, { double: true });
+    expect(await picked()).toBe('2,1 editing');
+    await page.keyboard.type('78');
+    await page.keyboard.press('Enter');
+    await page.keyboard.type('(retake)');
+    await clickCell(0, 0);
+    expect(await cellTexts()).toEqual([['Name', 'Score'], ['Asha', '91'], ['Ravi', '78/(retake)']]);
+    expect(await picked()).toBe('0,0');
+
+    // Enter opens the picked cell with the text it has; leaving it unchanged adds no undo step
+    const undo = await state<string>('return s.session.ed.log.undoLabel;');
+    await page.keyboard.press('Enter');
+    expect(await page.getByTestId('cell-editor').inputValue()).toBe('Name');
+    await page.keyboard.press('Escape');
+    expect(await state<string>('return s.session.ed.log.undoLabel;')).toBe(undo);
+    await page.keyboard.press('Control+z');
+    expect(await cellTexts()).toEqual([['Name', 'Score'], ['Asha', '91'], ['Ravi', '']]);
+
+    // typing is never lost: a click on another shape, or on the empty slide, while a cell is being typed in keeps it
+    await clickCell(2, 1);
+    await page.keyboard.type('55');
+    const away = await slidePoint(600000, 600000);
+    await page.mouse.click(away.x, away.y);
+    expect(await cellTexts()).toEqual([['Name', 'Score'], ['Asha', '91'], ['Ravi', '55']]);
+    expect(await state<number>('return s.selection.length;')).toBe(0);
+    expect(await page.getByTestId('cell-editor').count()).toBe(0);
+
+    const ed = await saved();
+    const tbl = tableOf(ed.doc.slide(ed.doc.slideParts()[0]!).shapes.find(sh => sh.kind === 'graphicFrame')!)!;
+    expect([cellText(tbl, 0, 0), cellText(tbl, 1, 1), cellText(tbl, 2, 0)]).toEqual(['Name', '91', 'Ravi']);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('the arrow keys move between cells, Shift picks a block, Delete empties cells; without cells picked Delete removes the table', async () => {
+    await insertTable(3, 2);
+    for (const [r, c, t] of [[0, 0, 'a'], [0, 1, 'b'], [0, 2, 'c'], [1, 0, 'd'], [1, 1, 'e'], [1, 2, 'f']] as const) {
+      await clickCell(r, c);
+      await page.keyboard.type(t);
+      await page.keyboard.press('Escape');
+    }
+    await clickCell(0, 0);
+    await page.keyboard.press('ArrowRight');
+    await page.keyboard.press('ArrowDown');
+    expect(await picked()).toBe('1,1');
+    await page.keyboard.press('ArrowDown');                              // no row below: it stays
+    expect(await picked()).toBe('1,1');
+    await page.keyboard.press('Shift+ArrowRight');
+    await page.keyboard.press('Shift+ArrowUp');
+    expect(await picked()).toBe('1,1:0,2');
+    const x0 = await state<number>(`const el = s.selection[0]; return Number(el.children.find(c => c.local === 'xfrm').children[0].attrs[0].value);`);
+    await page.keyboard.press('Delete');
+    expect(await cellTexts()).toEqual([['a', '', ''], ['d', '', '']]);
+    expect(await state<string>('return s.session.ed.log.undoLabel;')).toBe('Clear Cells');
+    await page.keyboard.press('Control+z');
+    expect(await cellTexts()).toEqual([['a', 'b', 'c'], ['d', 'e', 'f']]);
+    // the arrows moved cells, not the table
+    expect(await state<number>(`const el = s.selection[0]; return Number(el.children.find(c => c.local === 'xfrm').children[0].attrs[0].value);`)).toBe(x0);
+
+    // Shift+click picks from the cell picked to the cell clicked
+    await clickCell(0, 0);
+    await clickCell(1, 1, { modifiers: ['Shift'] });
+    expect(await picked()).toBe('0,0:1,1');
+
+    // Escape lets go of the cells; the table is still selected, and Delete now removes it
+    await page.keyboard.press('Escape');
+    expect(await picked()).toBeNull();
+    expect(await state<number>('return s.selection.length;')).toBe(1);
+    await page.keyboard.press('Delete');
+    expect(await state<number>('return s.session.ed.doc.slide(s.slide).shapes.filter(sh => sh.kind === "graphicFrame").length;')).toBe(0);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('Rows & Columns: insert beside the picked cell, delete, merge a block and split it; the menu offers only what can be done', async () => {
+    await insertTable(2, 2);
+    for (const [r, c, t] of [[0, 0, 'a'], [0, 1, 'b'], [1, 0, 'c'], [1, 1, 'd']] as const) {
+      await clickCell(r, c);
+      await page.keyboard.type(t);
+      await page.keyboard.press('Escape');
+    }
+    // nothing picked: the table is selected but the cell commands are off
+    await page.keyboard.press('Escape');
+    expect((await tableMenuDisabled()).length).toBe(8);
+
+    await clickCell(0, 0);
+    expect(await tableMenuDisabled()).toEqual(['Merge Cells', 'Split Cell']);
+    await tableMenu('Insert Row Above');
+    expect(await cellTexts()).toEqual([['', ''], ['a', 'b'], ['c', 'd']]);
+    expect(await picked()).toBe('1,0');                                  // still on "a"
+    await tableMenu('Insert Row Below');
+    expect(await cellTexts()).toEqual([['', ''], ['a', 'b'], ['', ''], ['c', 'd']]);
+    await tableMenu('Insert Column Left');
+    expect(await cellTexts()).toEqual([['', '', ''], ['', 'a', 'b'], ['', '', ''], ['', 'c', 'd']]);
+    expect(await picked()).toBe('1,1');
+    await tableMenu('Insert Column Right');
+    expect(await cellTexts()).toEqual([['', '', '', ''], ['', 'a', '', 'b'], ['', '', '', ''], ['', 'c', '', 'd']]);
+    expect(await state<string>('return s.session.ed.log.undoLabel;')).toBe('Insert Column');
+
+    await tableMenu('Delete Row');
+    expect(await cellTexts()).toEqual([['', '', '', ''], ['', '', '', ''], ['', 'c', '', 'd']]);
+    await tableMenu('Delete Column');
+    expect(await cellTexts()).toEqual([['', '', ''], ['', '', ''], ['', '', 'd']]);
+    await page.keyboard.press('Control+z');
+    await page.keyboard.press('Control+z');
+    expect(await cellTexts()).toEqual([['', '', '', ''], ['', 'a', '', 'b'], ['', '', '', ''], ['', 'c', '', 'd']]);
+
+    // merge "a" with the cell right of it and the two under them, then split it again
+    await clickCell(1, 1);
+    await clickCell(2, 2, { modifiers: ['Shift'] });
+    expect(await tableMenuDisabled()).toEqual(['Split Cell']);
+    await tableMenu('Merge Cells');
+    expect(await cellTexts()).toEqual([['', '', '', ''], ['', 'a', '<', 'b'], ['', '^', '<', ''], ['', 'c', '', 'd']]);
+    expect(await picked()).toBe('1,1');
+    expect(await tableMenuDisabled()).toEqual(['Merge Cells']);
+    // a click anywhere in the merged cell picks it, and the arrow keys step over all of it
+    await clickCell(2, 2);
+    await page.keyboard.press('ArrowRight');
+    expect(await picked()).toBe('2,3');
+    await page.keyboard.press('ArrowLeft');
+    await tableMenu('Split Cell');
+    expect(await cellTexts()).toEqual([['', '', '', ''], ['', 'a', '', 'b'], ['', '', '', ''], ['', 'c', '', 'd']]);
+
+    // picking every row leaves no row to keep: Delete Row is off; the same for columns
+    await clickCell(0, 0);
+    await clickCell(3, 0, { modifiers: ['Shift'] });
+    expect(await tableMenuDisabled()).toEqual(['Delete Row', 'Split Cell']);
+    await clickCell(0, 0);
+    for (let i = 0; i < 3; i++) await page.keyboard.press('Shift+ArrowRight');      // the table is now wider than the slide: by keyboard
+    expect(await picked()).toBe('0,0:0,3');
+    expect(await tableMenuDisabled()).toEqual(['Delete Column', 'Split Cell']);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('the right-click menu on a table has the row, column and merge commands, for the cell clicked or the block picked', async () => {
+    await insertTable(2, 2);
+    await clickCell(1, 1, { button: 'right' });
+    expect(await picked()).toBe('1,1');
+    const labels = (await page.getByTestId('context-menu').getByRole('menuitem').allInnerTexts()).map(t => t.split('\n')[0]);
+    expect(labels).toEqual(expect.arrayContaining(['Insert Row Above', 'Insert Row Below', 'Insert Column Left', 'Insert Column Right', 'Delete Row', 'Delete Column', 'Merge Cells', 'Split Cell', 'Cut', 'Bring to Front']));
+    await page.getByTestId('menu-row-below').click();
+    expect((await cellTexts()).length).toBe(3);
+
+    // a right click inside a picked block keeps the block, so Merge is for all of it
+    await clickCell(0, 0);
+    await clickCell(1, 1, { modifiers: ['Shift'] });
+    await clickCell(1, 0, { button: 'right' });
+    expect(await picked()).toBe('0,0:1,1');
+    await page.getByTestId('menu-merge').click();
+    expect(await cellTexts()).toEqual([['', '<'], ['^', '<'], ['', '']]);
+    // outside the block, the right click picks the cell it is on
+    await clickCell(2, 1, { button: 'right' });
+    expect(await picked()).toBe('2,1');
+    await page.keyboard.press('Escape');
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('formatting from the ribbon applies to the cells picked, or to the whole table when none is', async () => {
+    await insertTable(2, 2);
+    for (const [r, c, t] of [[0, 0, 'a'], [0, 1, 'b'], [1, 0, 'c'], [1, 1, 'd']] as const) {
+      await clickCell(r, c);
+      await page.keyboard.type(t);
+      await page.keyboard.press('Escape');
+    }
+    /** Which cells' text is bold, row by row. */
+    const bold = () => state<boolean[][]>(`
+      const find = (e, n) => e.children.find(c => c.kind === 'element' && c.local === n);
+      const el = s.session.ed.doc.slide(s.slide).shapes.find(sh => sh.kind === 'graphicFrame').el;
+      const tbl = find(find(find(el, 'graphic'), 'graphicData'), 'tbl');
+      const isBold = tc => { let b = false; const walk = x => { if (x.local === 'rPr' && x.attrs.some(a => a.local === 'b' && a.value === '1')) b = true; for (const c of x.children) if (c.kind === 'element') walk(c); }; walk(tc); return b; };
+      return tbl.children.filter(c => c.local === 'tr').map(tr => tr.children.filter(c => c.local === 'tc').map(isBold));`);
+    await clickCell(1, 0);
+    await page.getByTestId('bold').click();
+    expect(await bold()).toEqual([[false, false], [true, false]]);
+    expect(await pressed('bold')).toBe('true');                         // the button shows the picked cell
+    await clickCell(1, 1);
+    expect(await pressed('bold')).toBe('false');
+    await clickCell(0, 0);
+    await clickCell(0, 1, { modifiers: ['Shift'] });
+    await page.getByTestId('center').click();
+    expect(await state<number>(`
+      const el = s.selection[0]; let n = 0; const walk = x => { if (x.local === 'pPr' && x.attrs.some(a => a.local === 'algn' && a.value === 'ctr')) n++; for (const c of x.children) if (c.kind === 'element') walk(c); }; walk(el); return n;`)).toBe(2);
+    // no cells picked: the whole table. Its first cell is in the header row, which the table style makes bold, so
+    // the first press takes bold off everywhere and the second puts it on everywhere
+    await page.keyboard.press('Escape');
+    expect(await pressed('bold')).toBe('true');
+    await page.getByTestId('bold').click();
+    expect(await bold()).toEqual([[false, false], [false, false]]);
+    await page.getByTestId('bold').click();
+    expect(await bold()).toEqual([[true, true], [true, true]]);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
   test('Insert > Table: the grid says the size under the pointer, a click inserts that table in the middle of the slide', async () => {
     await page.getByRole('tab', { name: 'Insert' }).click();
     await page.getByTestId('insert-table').click();

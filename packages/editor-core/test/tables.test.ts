@@ -6,7 +6,7 @@ import { resolveSlide } from '@pptx/resolve';
 import { describe, expect, test } from 'vitest';
 import { deckBytes } from '../../resolve/test/deck.ts';
 import {
-  cellAt, cellText, DEFAULT_TABLE_STYLE, deleteColumns, deleteRows, insertColumn, insertRow, insertTable, isMerged, mergeCells, regionOf, ROW_HEIGHT,
+  cellAt, cellBody, cellText, DEFAULT_TABLE_STYLE, formatParagraphs, formatRuns, deleteColumns, deleteRows, insertColumn, insertRow, insertTable, isMerged, mergeCells, regionOf, ROW_HEIGHT,
   moveBy, setCellText, setTransforms, splitCell, tableOf, tableSize, wholeRegions, type Editor,
 } from '../src/index.ts';
 import { cycle, openEditor } from './helpers.ts';
@@ -278,6 +278,27 @@ describe('rows and columns through merged cells', () => {
     ed.run(deleteRows(ed, SLIDE, frame(ed, id), 1, 2));
     expect(dump(ed, id)).toEqual(['a1 b1 c1 d1', 'a4 b4 c4 d4']);
     expect(drawn(ed, id).length).toBe(8);
+  });
+});
+
+describe('formatting cell text', () => {
+  test('character and paragraph formatting work in a cell as in a shape, in schema order, and undo exactly', () => {
+    const { ed, id } = withTable(2, 2);
+    const body = () => cellBody(tbl(ed, id), 1, 0)!;
+    const all = { start: { p: 0, offset: 0 }, end: { p: 0, offset: 2 } };
+    expect(cycle(ed, () => formatParagraphs(ed, SLIDE, body(), all, { algn: 'ctr', lnSpc: { pct: 150000 }, bullet: { kind: 'char', char: '•' } }))).toEqual([]);
+    ed.run(formatParagraphs(ed, SLIDE, body(), all, { algn: 'ctr', lnSpc: { pct: 150000 }, bullet: { kind: 'char', char: '•' } }));
+    expect(cycle(ed, () => formatRuns(ed, SLIDE, body(), all, { b: true, fill: { kind: 'srgb', hex: 'FF0000' }, latin: 'Georgia' }))).toEqual([]);
+    ed.run(formatRuns(ed, SLIDE, body(), all, { b: true, fill: { kind: 'srgb', hex: 'FF0000' }, latin: 'Georgia' }));
+    expect(checkOrder(ed.doc.root(SLIDE))).toEqual([]);
+    const g = resolveSlide(ed.doc, SLIDE).shapes.find(s => s.id === id && s.layer === 'slide')!.graphic!;
+    if (g.kind !== 'table') throw new Error('not a table');
+    const cell = g.table.cells.find(c => c.row === 1 && c.col === 0)!.text!.paragraphs[0]!;
+    expect(cell.props.align).toBe('ctr');
+    expect(cell.props.bullet?.char).toBe('•');
+    expect(cell.runs[0]!.props).toMatchObject({ bold: true, latin: 'Georgia' });
+    // the cell beside it is untouched
+    expect(g.table.cells.find(c => c.row === 1 && c.col === 1)!.text!.paragraphs[0]!.props.align).not.toBe('ctr');
   });
 });
 

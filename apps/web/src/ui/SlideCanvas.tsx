@@ -13,6 +13,8 @@ import { boundsOf, drawBase, parentOf, placementOf, restMatrix, xfrmFor, type Pl
 import { promptOf } from './prompts.ts';
 import { selectAll } from './textActions.ts';
 import { TextInput } from './TextInput.tsx';
+import { CellEditor } from './CellEditor.tsx';
+import { activeCells, cellAtPoint, cellCorners, editCell, rangeOf } from './tables.ts';
 import * as act from './actions.ts';
 
 const ids = new WeakMap<XmlElement, string>();
@@ -138,6 +140,7 @@ interface Press {
 
 export function SlideCanvas() {
   const sess = useEditor(s => s.session);
+  const cellState = useEditor(s => s.cells);
   const part = useEditor(s => s.slide);
   useEditor(s => s.version);
   const selection = useEditor(s => s.selection);
@@ -386,6 +389,46 @@ export function SlideCanvas() {
     beginPress({ kind: 'click', el, rs, node, down: evt, at, edit: text });
   };
 
+  /**
+   * Shift and the mouse down on the table whose cells are picked: the block from the cell picked before to the cell
+   * under the mouse (rather than taking the table out of the selection, as Shift+click does to a shape). True when
+   * it did that, and the press is over.
+   */
+  const extendCells = (rs: RenderShape, e: Konva.KonvaEventObject<MouseEvent>): boolean => {
+    const st = useEditor.getState();
+    const cur = activeCells(st);
+    if (!cur || cur.el !== rs.source.view.el || st.drawing || e.evt.button !== 0 || !e.evt.shiftKey) return false;
+    const cell = cellAtPoint(rs, sess.fonts, pointer());
+    if (!cell) return false;
+    e.cancelBubble = true;
+    set({ cells: { el: cur.el, anchor: cur.anchor, focus: cell, editing: false } });
+    return true;
+  };
+
+  /**
+   * The mouse went down on a table that is (now) the one selected shape: the cell under it is picked. A right click
+   * inside the picked block keeps the block, for the menu.
+   */
+  const onTableDown = (rs: RenderShape, e: Konva.KonvaEventObject<MouseEvent>) => {
+    const st = useEditor.getState();
+    const el = rs.source.view.el;
+    if (st.drawing || rs.source.graphic?.kind !== 'table' || st.selection.length !== 1 || st.selection[0] !== el) return;
+    const cell = cellAtPoint(rs, sess.fonts, pointer());
+    if (!cell) { set({ cells: null }); return; }
+    const cur = activeCells(st);
+    if (e.evt.button !== 0 && cur) {
+      const g = rangeOf(cur);
+      if (cell.r >= g.r0 && cell.r <= g.r1 && cell.c >= g.c0 && cell.c <= g.c1) return;
+    }
+    set({ cells: { el, anchor: cell, focus: cell, editing: false } });
+    // the second press of a double click (the browser's count, as for text) types in the cell; the default is
+    // stopped so the box laid over the cell keeps the focus it takes
+    if (e.evt.button === 0 && e.evt.detail === 2) {
+      e.evt.preventDefault();
+      editCell();
+    }
+  };
+
   /** The mouse moves over a shape: the cursor says what a click there would do (nothing changes mid-press or drag). */
   const onShapeMove = (rs: RenderShape, p: Placement, e: Konva.KonvaEventObject<MouseEvent>) => {
     const st = useEditor.getState();
@@ -537,6 +580,10 @@ export function SlideCanvas() {
   };
 
   const tv = text ? textViewOf(findRendered(slide, text.el)) : undefined;
+  // the cells picked in the selected table: outlined, and typed in through the box laid over the cell
+  const cells = activeCells({ cells: cellState, selection, text });
+  const cellRs = cells ? findRendered(slide, cells.el) : undefined;
+  const cellOutline = cells && cellRs ? cellCorners(cellRs, sess.fonts, rangeOf(cells)) : undefined;
 
   return (
     <div
@@ -625,7 +672,7 @@ export function SlideCanvas() {
                     ctx.strokeShape(shape);
                   }
                 }}
-                onMouseDown={e => onShapeDown(rs, p, e)}
+                onMouseDown={e => { if (extendCells(rs, e)) return; onShapeDown(rs, p, e); onTableDown(rs, e); }}
                 onMouseEnter={() => { hovered.current = el; showHover(); }}
                 onMouseLeave={() => {
                   if (hovered.current === el) { hovered.current = null; showHover(); }
@@ -640,6 +687,7 @@ export function SlideCanvas() {
                   // (and only the left button double-clicks: two right clicks open the menu twice)
                   if (e.evt.detail !== 2 || e.evt.button !== 0) return;
                   if (rs.source.kind === 'grpSp') { set({ entered: el, selection: [] }); return; }
+                  if (rs.source.graphic?.kind === 'table') return;                      // a table takes its double click on the press (onTableDown)
                   const at = pointer();
                   const v = textViewOf(rs);
                   if (!v) return;
@@ -674,11 +722,13 @@ export function SlideCanvas() {
           {guides.map((g, i) => g.x !== undefined
             ? <Line key={`g${i}`} points={[g.x, -cy, g.x, 2 * cy]} stroke="#e53e3e" strokeWidth={1 / zoom} dash={[4 / zoom, 4 / zoom]} listening={false} />
             : <Line key={`g${i}`} points={[-cx, g.y!, 2 * cx, g.y!]} stroke="#e53e3e" strokeWidth={1 / zoom} dash={[4 / zoom, 4 / zoom]} listening={false} />)}
+          {cellOutline && <Line points={cellOutline} closed stroke="#2b6cb0" strokeWidth={2 / zoom} fill="rgba(43,108,176,0.12)" listening={false} name="cell-outline" />}
           {marquee && <Rect x={Math.min(marquee.x0, marquee.x1)} y={Math.min(marquee.y0, marquee.y1)} width={Math.abs(marquee.x1 - marquee.x0)} height={Math.abs(marquee.y1 - marquee.y0)}
             fill="rgba(43,108,176,0.08)" stroke="#2b6cb0" strokeWidth={1 / zoom} listening={false} />}
         </Layer>
       </Stage>
       {tv && text && <TextInput view={tv} stage={stageRef} zoom={zoom} />}
+      {cells?.editing && cellRs && <CellEditor key={`${keyOf(cells.el)}:${cells.anchor.r},${cells.anchor.c}`} rs={cellRs} stage={stageRef} zoom={zoom} fonts={sess.fonts} />}
       {scene?.error && <div className="slide-error" role="alert">This slide cannot be shown: {scene.error}</div>}
     </div>
   );

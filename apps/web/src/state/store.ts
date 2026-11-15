@@ -1,7 +1,7 @@
 // apps/web/src/state/store.ts  -- the editor's state: the open deck, the slide on screen, selection, text editing
 import { create } from 'zustand';
 import { isEncryptedPackage, OfficeCryptoError } from '@pptx/crypto';
-import { Editor, paragraphLength, paragraphs, prepareForSave, type Command, type ShapeClip, type RunPatch, type TextPos } from '@pptx/editor-core';
+import { Editor, paragraphLength, paragraphs, prepareForSave, type CellRef, type Command, type ShapeClip, type RunPatch, type TextPos } from '@pptx/editor-core';
 import { ShapeView } from '@pptx/model';
 import { OpcError, OpcPackage } from '@pptx/opc';
 import type { FontRegistry } from '@pptx/text';
@@ -14,6 +14,12 @@ import { decryptInWorker } from '../engine/workers.ts';
 
 /** What text editing knows: the shape, the caret and the other end of the selection, in file offsets. */
 export interface TextEditing { part: string; el: XmlElement; caret: TextPos; anchor: TextPos; }
+
+/**
+ * The cells picked in the selected table: a block from `anchor` to `focus`. `editing` is typing in the anchor cell
+ * (in the box laid over it); `seed` is a character typed to start that, added after the cell's text.
+ */
+export interface Cells { el: XmlElement; anchor: CellRef; focus: CellRef; editing: boolean; seed?: string; }
 
 export type Pane = 'none' | 'animation' | 'selection';
 
@@ -37,6 +43,8 @@ export interface EditorState {
   /** The group being edited inside (double-click on a group), or null at the top of the slide. */
   entered: XmlElement | null;
   text: TextEditing | null;
+  /** Table cells picked in the selected table (see `activeCells`, which checks they still hold). */
+  cells: Cells | null;
   /** Formatting to apply to the next typed text (Ctrl+B with a caret but no selection). */
   pending: RunPatch | null;
   zoom: number | 'fit';
@@ -87,7 +95,7 @@ function fitted(s: Session, t: TextEditing | null): TextEditing | null {
 }
 
 export const useEditor = create<EditorState>((set, get) => ({
-  session: null, version: 0, slide: null, selection: [], entered: null, text: null, pending: null,
+  session: null, version: 0, slide: null, selection: [], entered: null, text: null, cells: null, pending: null,
   zoom: 'fit', drawing: null, mode: 'edit', pane: 'none', finding: false, menu: null, clipboard: null, message: null, askPassword: null,
 
   async open(bytes, name, password) {
@@ -115,7 +123,7 @@ export const useEditor = create<EditorState>((set, get) => ({
         set(s => ({ version: s.version + 1 }));
       });
       set({
-        session, slide: ed.doc.slideParts()[0] ?? null, selection: [], entered: null, text: null, pending: null, askPassword: null,
+        session, slide: ed.doc.slideParts()[0] ?? null, selection: [], entered: null, text: null, cells: null, pending: null, askPassword: null,
         version: get().version + 1,
         message: ed.mainKind === 'template' ? { kind: 'info', text: 'Opened a template: saving writes a presentation (.pptx).' }
           : ed.mainKind === 'macro' || pkg.partNames().some(n => /vbaProject\.bin$/i.test(n))
@@ -165,12 +173,12 @@ export const useEditor = create<EditorState>((set, get) => ({
     const s = get().session;
     s?.ed.log.seal();
     s?.thumbs.flush();
-    set({ slide: part, selection: [], entered: null, text: null });
+    set({ slide: part, selection: [], entered: null, text: null, cells: null });
   },
 
   select(els) {
     get().session?.ed.log.seal();
-    set({ selection: els, text: null });
+    set({ selection: els, text: null, cells: null });
   },
 
   setState(patch) { set(patch); },

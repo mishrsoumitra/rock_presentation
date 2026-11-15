@@ -3,6 +3,7 @@ import { useRef, useState } from 'react';
 import { useEditor, type EditorState } from '../state/store.ts';
 import * as act from './actions.ts';
 import { BULLET_STYLES, bulletPatch, NUMBER_STYLES, numberSample } from './bullets.ts';
+import * as tables from './tables.ts';
 import { clearFormatting, formatPara, formatText, formatTextBox, formattingHere } from './textActions.ts';
 import { Btn, ColorGrid, keepFocus, Menu, MenuItem, refocusText, ShapeGallery, TableGrid } from './widgets.tsx';
 
@@ -42,6 +43,7 @@ function shown(s: EditorState): string {
     run?.latin, run?.size, run?.bold, run?.italic, run?.underline, run?.strike, para?.bullet?.kind, para?.bullet?.char, para?.bullet?.scheme, para?.marL, para?.indent, para?.level, para?.align,
     run?.baseline, run?.spacing, para?.lineSpacing.kind, para?.lineSpacing.val, para?.spaceBefore.val, para?.spaceAfter.val,
     here.body?.anchor, here.body?.numCol, here.body && Object.values(here.body.insets).join(','),
+    s.cells && [s.cells.anchor.r, s.cells.anchor.c, s.cells.focus.r, s.cells.focus.c].join(','), Object.values(tables.tableAbilities()).join(','),
   ].join('|');
 }
 
@@ -58,6 +60,7 @@ export function Ribbon({ extraTabs }: { extraTabs?: Partial<Record<Tab, React.Re
   const lineIs = (m: number) => para?.lineSpacing.kind === 'pct' && Math.abs(para.lineSpacing.val - m) < 0.001;
   const marginsAre = (l: number, t: number) => !!body && body.insets.l === l && body.insets.r === l && body.insets.t === t && body.insets.b === t;
   const hasSel = selection.length > 0;
+  const table = tables.tableAbilities();
   const isPicture = selection.length === 1 && selection[0]!.local === 'pic';
   const tabs: Tab[] = ['File', 'Home', 'Insert', 'Design', 'Transitions', 'Animations', 'Slide Show'];
 
@@ -170,6 +173,22 @@ export function Ribbon({ extraTabs }: { extraTabs?: Partial<Record<Tab, React.Re
                 <FilePicker accept="image/png,image/jpeg,image/gif,image/bmp,image/webp,.emf,.wmf" onFile={f => void act.changePicture(f)}>
                   {open => <Btn icon="image" label="Change Picture" wide onClick={open} />}
                 </FilePicker>
+              </section>
+            )}
+            {table.table && (
+              <section className="group" aria-label="Table">
+                <Menu icon="table" label="Rows & Columns" testid="table-menu">{close => (<>
+                  <MenuItem label="Insert Row Above" disabled={!table.cells} onClick={() => { close(); tables.insertRowBeside('above'); }} />
+                  <MenuItem label="Insert Row Below" disabled={!table.cells} onClick={() => { close(); tables.insertRowBeside('below'); }} />
+                  <MenuItem label="Insert Column Left" disabled={!table.cells} onClick={() => { close(); tables.insertColumnBeside('left'); }} />
+                  <MenuItem label="Insert Column Right" disabled={!table.cells} onClick={() => { close(); tables.insertColumnBeside('right'); }} />
+                  <hr />
+                  <MenuItem label="Delete Row" disabled={!table.deleteRow} onClick={() => { close(); tables.deleteSelectedRows(); }} />
+                  <MenuItem label="Delete Column" disabled={!table.deleteColumn} onClick={() => { close(); tables.deleteSelectedColumns(); }} />
+                  <hr />
+                  <MenuItem label="Merge Cells" disabled={!table.merge} onClick={() => { close(); tables.mergeSelectedCells(); }} />
+                  <MenuItem label="Split Cell" disabled={!table.split} onClick={() => { close(); tables.splitSelectedCell(); }} />
+                </>)}</Menu>
               </section>
             )}
             <section className="group" aria-label="Drawing">

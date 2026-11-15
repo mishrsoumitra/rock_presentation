@@ -3,6 +3,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ShapeView } from '@pptx/model';
 import { useEditor, type EditorState } from '../state/store.ts';
 import * as act from './actions.ts';
+import * as tables from './tables.ts';
 import { refocusText } from './widgets.tsx';
 
 export type MenuEntry = { label: string; run: () => void; disabled?: boolean; keys?: string; testid?: string } | 'separator';
@@ -40,6 +41,18 @@ export function menuEntries(s: EditorState): MenuEntry[] {
   const views = s.selection.map(el => new ShapeView(el, ed.doc.owner(s.slide!)));
   const hasText = n === 1 && !!views[0]!.txBody;
   const hasGroup = views.some(v => v.kind === 'grpSp');
+  const table = tables.tableAbilities();
+  const tableEntries: MenuEntry[] = table.cells ? [
+    { label: 'Insert Row Above', run: () => tables.insertRowBeside('above'), testid: 'menu-row-above' },
+    { label: 'Insert Row Below', run: () => tables.insertRowBeside('below'), testid: 'menu-row-below' },
+    { label: 'Insert Column Left', run: () => tables.insertColumnBeside('left'), testid: 'menu-col-left' },
+    { label: 'Insert Column Right', run: () => tables.insertColumnBeside('right'), testid: 'menu-col-right' },
+    { label: 'Delete Row', run: tables.deleteSelectedRows, disabled: !table.deleteRow, testid: 'menu-delete-row' },
+    { label: 'Delete Column', run: tables.deleteSelectedColumns, disabled: !table.deleteColumn, testid: 'menu-delete-col' },
+    { label: 'Merge Cells', run: tables.mergeSelectedCells, disabled: !table.merge, testid: 'menu-merge' },
+    { label: 'Split Cell', run: tables.splitSelectedCell, disabled: !table.split, testid: 'menu-split' },
+    'separator',
+  ] : [];
   return [
     { label: 'Cut', run: () => act.copySelection(true), keys: 'Ctrl+X', testid: 'menu-cut' },
     { label: 'Copy', run: () => act.copySelection(), keys: 'Ctrl+C', testid: 'menu-copy' },
@@ -47,6 +60,7 @@ export function menuEntries(s: EditorState): MenuEntry[] {
     { label: 'Duplicate', run: act.duplicateSelection, keys: 'Ctrl+D', testid: 'menu-duplicate' },
     { label: 'Delete', run: act.deleteSelection, keys: 'Delete', testid: 'menu-delete' },
     'separator',
+    ...tableEntries,
     ...(hasText ? [{ label: 'Edit Text', run: act.editSelectedText, keys: 'Enter', testid: 'menu-edit-text' } satisfies MenuEntry, 'separator' as const] : []),
     { label: 'Bring to Front', run: () => act.order('front'), testid: 'menu-front' },
     { label: 'Bring Forward', run: () => act.order('forward'), testid: 'menu-forward' },

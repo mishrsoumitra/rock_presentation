@@ -85,6 +85,8 @@ select { height: 28px; border: 1px solid var(--line); border-radius: var(--radiu
 .canvas-host.drawing { cursor: crosshair; }
 .slide-error { position: absolute; left: 50%; top: 16px; transform: translateX(-50%); background: var(--panel); color: var(--danger);
   border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; max-width: 80%; }
+.cell-editor { position: absolute; z-index: 5; margin: 0; padding: 2px 6px; border: 2px solid var(--select); border-radius: 0; resize: none; overflow: hidden;
+  background: var(--panel); color: var(--ink); font-family: Carlito, Calibri, sans-serif; line-height: 1.2; field-sizing: content; }
 .text-input { position: absolute; width: 2px; padding: 0; border: 0; margin: 0; opacity: 0; resize: none; overflow: hidden; white-space: pre; pointer-events: none; }
 
 /* the slide with its speaker notes under it */
