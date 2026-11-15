@@ -86,6 +86,8 @@ export interface EditorState {
   /** The find and replace panel is open. */
   finding: boolean;
   clipboard: ShapeClip | null;
+  /** The video or sound playing in the editor, where its picture is (it is the one selected shape while it plays). */
+  playing: XmlElement | null;
   /** The picture being cropped with handles (it is the one selected shape while that lasts). */
   cropping: XmlElement | null;
   /** The look the format painter picked up last (kept for Ctrl+Alt+V after the painter has been used). */
@@ -135,7 +137,7 @@ function fitted(s: Session, t: TextEditing | null): TextEditing | null {
 
 export const useEditor = create<EditorState>((set, get) => ({
   session: null, version: 0, edits: 0, savedEdits: 0, slide: null, selection: [], entered: null, text: null, cells: null, pending: null,
-  zoom: 'fit', drawing: null, mode: 'edit', presenterView: false, view: 'normal', folded: [], masterReturn: null, showRuler: false, showGuides: true, guides: { x: [], y: [] }, pane: 'none', finding: false, linking: false, chartEditing: false, menu: null, clipboard: null, clipId: null, slideClip: null, formatClip: null, painting: false, cropping: null, message: null, askPassword: null,
+  zoom: 'fit', drawing: null, mode: 'edit', presenterView: false, view: 'normal', folded: [], masterReturn: null, showRuler: false, showGuides: true, guides: { x: [], y: [] }, pane: 'none', finding: false, linking: false, chartEditing: false, menu: null, clipboard: null, clipId: null, slideClip: null, formatClip: null, painting: false, cropping: null, playing: null, message: null, askPassword: null,
 
   async open(bytes, name, password) {
     performance.mark('open-start');
@@ -213,12 +215,12 @@ export const useEditor = create<EditorState>((set, get) => ({
     const s = get().session;
     s?.ed.log.seal();
     s?.thumbs.flush();
-    set({ slide: part, selection: [], entered: null, text: null, cells: null, cropping: null });
+    set({ slide: part, selection: [], entered: null, text: null, cells: null, cropping: null, playing: null });
   },
 
   select(els) {
     get().session?.ed.log.seal();
-    set({ selection: els, text: null, cells: null, ...(get().cropping && !els.includes(get().cropping!) ? { cropping: null } : {}) });
+    set({ selection: els, text: null, cells: null, ...(get().cropping && !els.includes(get().cropping!) ? { cropping: null } : {}), ...(get().playing && !els.includes(get().playing!) ? { playing: null } : {}) });
   },
 
   setState(patch) { set(patch); },

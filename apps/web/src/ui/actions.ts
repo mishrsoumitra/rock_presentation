@@ -2,7 +2,7 @@
 import {
   addSlide, align, applyLayout, compound, copyShapes, copySlide, pasteSlide, cropPicture, deleteShapes, deleteSlide, distribute, duplicateShapes, duplicateSlide, flip, group, importMasters, replacePicture,
   insertPicture, insertShape, insertTable, insertTextBox, moveBy, ROW_HEIGHT, moveSlide, pasteShapes, prepareImage, prepareSvg, prepareTemplate, rotateQuarter,
-  addSection, applyBackgroundToAll, chartData, chartPartOf, fillColorOf, insertChart, setChartData, setFill, setSlideBackground, setThemeColors, setThemeFonts, themeOfSlide, themeSchemes, setFillTransparency, setGradientFill, setLine, setPictureFill, setShadow, setSlideHidden, setSlideSize, setTransforms, ungroup, zOrder,
+  addSection, applyBackgroundToAll, chartData, chartPartOf, fillColorOf, insertChart, insertMedia, prepareMedia, setChartData, setFill, setSlideBackground, setThemeColors, setThemeFonts, themeOfSlide, themeSchemes, setFillTransparency, setGradientFill, setLine, setPictureFill, setShadow, setSlideHidden, setSlideSize, setTransforms, ungroup, zOrder,
   type Alignment, type BackgroundSpec, type ChartData, type ChartKind, type ColorScheme, type ColorSpec, type FontScheme, type LineSpec,
   type ScaleMode, type ZOrder,
 } from '@pptx/editor-core';
@@ -17,6 +17,7 @@ import { blankPresentation } from '../engine/blank.ts';
 import { decodeImage } from '../engine/images.ts';
 import { autosave, type Autosaved } from '../engine/autosave.ts';
 import { deckPdf, slidePng, slidesZip } from '../engine/export.ts';
+import { audioIcon, mediaTypeOf, videoPoster } from '../engine/media.ts';
 import { markSaved, useEditor, type FileHandle } from '../state/store.ts';
 
 const st = () => useEditor.getState();
@@ -252,6 +253,44 @@ export function insertTableHere(rows: number, cols: number): void {
   useEditor.setState({ text: null });
   c.s.run(r.command);
   c.s.select(inserted(r.id));
+}
+
+/**
+ * Insert a video or a sound from a file. A video comes in at its own size (fitted to the slide) with a frame of
+ * it as its picture; a sound as a small speaker. A file whose type is not one PowerPoint plays is refused.
+ */
+export async function insertMediaFile(file: File): Promise<void> {
+  const c = ctx();
+  if (!c) return;
+  const what = mediaTypeOf(file.name);
+  if (!what) { c.s.notify('error', `${file.name} is not a video or sound this editor can insert.`); return; }
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const poster = what.kind === 'video' ? await videoPoster(bytes, what.type) : await audioIcon();
+  const media = await prepareMedia(c.ed, { bytes, contentType: what.type, ext: what.ext });
+  const image = await prepareImage(c.ed, { bytes: poster.bytes, contentType: 'image/png', ext: 'png', width: poster.width, height: poster.height });
+  const size = c.ed.doc.presentation.slideSize;
+  const box = what.kind === 'audio' ? { x: (size.cx - 609600) / 2, y: (size.cy - 609600) / 2, w: 609600, h: 609600 } : undefined;
+  const r = insertMedia(c.ed, c.part, what.kind, media, image, box, file.name);
+  c.s.run(r.command);
+  c.s.select(inserted(r.id));
+}
+
+/** The media the one selected shape plays, if it plays any that is stored in the deck. */
+export function selectedMedia(): { el: XmlElement; kind: 'video' | 'audio'; part: string } | undefined {
+  const c = ctx();
+  const v = c?.views.length === 1 ? c.views[0] : undefined;
+  const m = v?.media;
+  const rId = m ? m.embed ?? m.link : undefined;
+  const part = c && rId ? c.ed.doc.target(c.part, rId) : undefined;
+  return v && m && part && c!.ed.pkg.getPart(part) ? { el: v.el, kind: m.kind, part } : undefined;
+}
+
+/** Play the selected video or sound where it is, or stop it. */
+export function togglePlaying(): void {
+  const s = st();
+  if (s.playing) { useEditor.setState({ playing: null }); return; }
+  const m = selectedMedia();
+  if (m) useEditor.setState({ playing: m.el, text: null });
 }
 
 /** Insert a chart of a kind in the middle of the slide, with PowerPoint's sample data, and open its data to change. */

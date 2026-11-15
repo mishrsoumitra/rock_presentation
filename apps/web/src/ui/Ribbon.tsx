@@ -46,7 +46,7 @@ function shown(s: EditorState): string {
     run?.latin, run?.size, run?.bold, run?.italic, run?.underline, run?.strike, para?.bullet?.kind, para?.bullet?.char, para?.bullet?.scheme, para?.marL, para?.indent, para?.level, para?.align,
     run?.baseline, run?.spacing, para?.lineSpacing.kind, para?.lineSpacing.val, para?.spaceBefore.val, para?.spaceAfter.val,
     here.body?.anchor, here.body?.numCol, here.body && Object.values(here.body.insets).join(','),
-    s.painting, !!s.cropping, act.chartSelected(), s.pane, s.view, s.showRuler, s.showGuides, s.guides.x.length + s.guides.y.length, s.cells && [s.cells.anchor.r, s.cells.anchor.c, s.cells.focus.r, s.cells.focus.c].join(','), !!linkContext(), s.text && [s.text.anchor.p, s.text.anchor.offset, s.text.caret.p, s.text.caret.offset].join(','), Object.values(tables.tableAbilities()).join(','),
+    s.painting, !!s.cropping, act.chartSelected(), !!act.selectedMedia(), !!s.playing, s.pane, s.view, s.showRuler, s.showGuides, s.guides.x.length + s.guides.y.length, s.cells && [s.cells.anchor.r, s.cells.anchor.c, s.cells.focus.r, s.cells.focus.c].join(','), !!linkContext(), s.text && [s.text.anchor.p, s.text.anchor.offset, s.text.caret.p, s.text.caret.offset].join(','), Object.values(tables.tableAbilities()).join(','),
   ].join('|');
 }
 
@@ -67,6 +67,8 @@ export function Ribbon({ extraTabs }: { extraTabs?: Partial<Record<Tab, React.Re
   const table = tables.tableAbilities();
   const painting = useEditor.getState().painting;
   const chart = act.chartSelected();
+  const media = !!act.selectedMedia();
+  const playing = !!useEditor.getState().playing;
   const cropping = !!useEditor.getState().cropping;
   const isPicture = selection.length === 1 && selection[0]!.local === 'pic';
   const tabs: Tab[] = ['File', 'Home', 'Insert', 'Design', 'Transitions', 'Animations', 'Slide Show', 'View'];
@@ -194,6 +196,11 @@ export function Ribbon({ extraTabs }: { extraTabs?: Partial<Record<Tab, React.Re
                 </FilePicker>
               </section>
             )}
+            {media && (
+              <section className="group" aria-label="Media">
+                <Btn icon="play" label={playing ? 'Stop' : 'Play'} wide active={playing} onClick={act.togglePlaying} testid="media-play" />
+              </section>
+            )}
             {chart && (
               <section className="group" aria-label="Chart">
                 <Btn icon="chart" label="Edit Data" wide onClick={() => useEditor.setState({ chartEditing: true })} testid="chart-edit-data" />
@@ -278,6 +285,10 @@ export function Ribbon({ extraTabs }: { extraTabs?: Partial<Record<Tab, React.Re
               </FilePicker>
               <Menu icon="outline" label="Shapes">{close => <ShapeGallery onPick={p => { close(); act.startDrawing(p); }} />}</Menu>
               <Btn icon="text" label="Text Box" wide disabled={!session} onClick={act.insertTextBoxHere} testid="text-box" />
+            </section>
+            <section className="group" aria-label="Media">
+              <Btn icon="play" label="Video" wide disabled={!session} onClick={() => void pickFile('video/mp4,video/webm,video/quicktime,.mp4,.m4v,.mov,.webm,.wmv,.avi').then(f => (f ? act.insertMediaFile(f) : undefined))} testid="insert-video" />
+              <Btn icon="play" label="Audio" wide disabled={!session} onClick={() => void pickFile('audio/*,.mp3,.m4a,.wav,.ogg,.wma,.aac').then(f => (f ? act.insertMediaFile(f) : undefined))} testid="insert-audio" />
             </section>
             <section className="group">
               <Btn icon="link" label="Link" wide disabled={!linkContext()} onClick={() => useEditor.setState({ linking: true })} testid="insert-link" />

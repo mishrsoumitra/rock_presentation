@@ -3,6 +3,8 @@ import { useEffect, useRef, useState } from 'react';
 import { notesText } from '@pptx/editor-core';
 import { useEditor } from '../state/store.ts';
 import { clock } from './clock.ts';
+import { MediaPlayer, type PlayerBox } from './MediaPlayer.tsx';
+import { boundsOf } from './placement.ts';
 import { Show } from './show.ts';
 
 /** The next slide, small: the same picture the slide panel shows of it. */
@@ -42,6 +44,8 @@ export function Presenter() {
   const [dot, setDot] = useState<{ x: number; y: number } | null>(null);
   const [started, setStarted] = useState(() => Date.now());
   const [now, setNow] = useState(() => Date.now());
+  /** The video or sound playing in the show: its file, and where its picture is on the page. */
+  const [media, setMedia] = useState<{ part: string; kind: 'video' | 'audio'; box: PlayerBox } | null>(null);
 
   useEffect(() => {
     const canvas = ref.current, box = stage.current;
@@ -63,7 +67,7 @@ export function Presenter() {
     };
     size();
     const s = new Show(session, canvas, parts, Math.max(0, parts.indexOf(useEditor.getState().slide ?? '')), exit);
-    s.onSlide = part => { if (part) last = part; setIndex(s.index); };
+    s.onSlide = part => { if (part) last = part; setIndex(s.index); setMedia(null); };
     show.current = s;
     // pictures arrive after the first frames: draw again when they do
     const unsubscribe = useEditor.subscribe((st, prev) => { if (st.version !== prev.version) s.start(); });
@@ -97,14 +101,40 @@ export function Presenter() {
     return () => clearInterval(t);
   }, [withNotes]);
 
+  /** The media under a point of the page, if the slide showing has a video or sound there: topmost first. */
+  const mediaAt = (x: number, y: number) => {
+    const canvas = ref.current, part = parts[index];
+    if (!canvas || !part) return undefined;
+    const r = canvas.getBoundingClientRect();
+    const scale = r.width / session.ed.doc.presentation.slideSize.cx;
+    const shapes = session.scenes.get(part).slide.shapes;
+    for (let i = shapes.length - 1; i >= 0; i--) {
+      const m = shapes[i]!.source?.media;
+      if (!m?.part || !session.ed.pkg.getPart(m.part)) continue;
+      const b = boundsOf(shapes[i]!);
+      const box = { left: r.left + b.x * scale, top: r.top + b.y * scale, width: b.w * scale, height: b.h * scale };
+      if (x >= box.left && x <= box.left + box.width && y >= box.top && y <= box.top + box.height) return { part: m.part, kind: m.kind, box };
+    }
+    return undefined;
+  };
   const slideProps = {
     ref: stage,
-    onClick: (e: React.MouseEvent) => { if (!laser) show.current?.click(e.clientX, e.clientY); },
+    onClick: (e: React.MouseEvent) => {
+      if (laser) return;
+      // a click on a video or a sound plays it there; anywhere else it goes on with the show (and stops what plays)
+      const hit = mediaAt(e.clientX, e.clientY);
+      if (hit) { setMedia(hit); return; }
+      setMedia(null);
+      show.current?.click(e.clientX, e.clientY);
+    },
     onContextMenu: (e: React.MouseEvent) => { e.preventDefault(); if (!laser) show.current?.previous(); },
     onMouseMove: (e: React.MouseEvent) => { if (laser) setDot({ x: e.clientX, y: e.clientY }); },
     onMouseLeave: () => setDot(null),
   };
-  const pointer = laser && dot && <div className="laser" data-testid="laser" style={{ left: dot.x, top: dot.y }} />;
+  const pointer = <>
+    {laser && dot && <div className="laser" data-testid="laser" style={{ left: dot.x, top: dot.y }} />}
+    {media && <MediaPlayer session={session} part={media.part} kind={media.kind} box={media.box} fixed />}
+  </>;
 
   if (!withNotes) {
     return (

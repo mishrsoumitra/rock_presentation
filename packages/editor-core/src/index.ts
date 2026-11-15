@@ -15,7 +15,7 @@ export {
   type BodyPatch, type BulletSpec, type ColorSpec, type ParaPatch, type RunPatch, type SpacingSpec, type TextEdit, type TextOptions, type TextPos,
   type TextRange,
 } from './text.ts';
-export { applyBackgroundToAll, cropAndPlace, cropPicture, pictureCrop, insertPicture, setSlideBackground, type BackgroundSpec, naturalSize, prepareImage, prepareSvg, replacePicture, retarget, setPictureFill, type ImageData, type SvgImage } from './pictures.ts';
+export { applyBackgroundToAll, cropAndPlace, cropPicture, pictureCrop, insertMedia, insertPicture, prepareMedia, setSlideBackground, type BackgroundSpec, type MediaData, naturalSize, prepareImage, prepareSvg, replacePicture, retarget, setPictureFill, type ImageData, type SvgImage } from './pictures.ts';
 export { addSlide, applyLayout, copySlide, deleteSlide, duplicateSlide, moveSlide, pasteSlide, setBackground, setSlideHidden, type SlideClip } from './slides.ts';
 export { notesText, setNotes } from './notes.ts';
 export { chartData, chartPartOf, insertChart, SAMPLE_DATA, setChartData, type ChartData, type ChartKind } from './charts.ts';

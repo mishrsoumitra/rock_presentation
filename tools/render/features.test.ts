@@ -1940,6 +1940,139 @@ describe('theme colours and fonts', () => {
   }, 60_000);
 });
 
+describe('video and audio', () => {
+  /** A real sound file: a third of a second of a 440 Hz tone, 8 kHz mono 16-bit WAV. */
+  function wavFile(): string {
+    const rate = 8000, n = Math.round(rate * 0.33);
+    const data = Buffer.alloc(n * 2);
+    for (let i = 0; i < n; i++) data.writeInt16LE(Math.round(Math.sin((i / rate) * 2 * Math.PI * 440) * 12000), i * 2);
+    const head = Buffer.alloc(44);
+    head.write('RIFF', 0); head.writeUInt32LE(36 + data.length, 4); head.write('WAVEfmt ', 8); head.writeUInt32LE(16, 16); head.writeUInt16LE(1, 20); head.writeUInt16LE(1, 22);
+    head.writeUInt32LE(rate, 24); head.writeUInt32LE(rate * 2, 28); head.writeUInt16LE(2, 32); head.writeUInt16LE(16, 34); head.write('data', 36); head.writeUInt32LE(data.length, 40);
+    const file = join(mkdtempSync(join(tmpdir(), 'media-')), 'tone.wav');
+    writeFileSync(file, Buffer.concat([head, data]));
+    return file;
+  }
+  /** Record half a second of a green 160 by 90 canvas as a WebM video, in the page, and insert it as a file named clip.webm. */
+  const insertRecordedVideo = () => page.evaluate(`(async () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 160; canvas.height = 90;
+    const g = canvas.getContext('2d');
+    const paint = () => { g.fillStyle = '#00a040'; g.fillRect(0, 0, 160, 90); };
+    paint();
+    const stream = canvas.captureStream(30);
+    const rec = new MediaRecorder(stream, { mimeType: 'video/webm' });
+    const chunks = [];
+    rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+    const done = new Promise(r => { rec.onstop = r; });
+    rec.start();
+    const timer = setInterval(paint, 30);
+    await new Promise(r => setTimeout(r, 600));
+    clearInterval(timer);
+    rec.stop();
+    await done;
+    const file = new File([new Blob(chunks, { type: 'video/webm' })], 'clip.webm', { type: 'video/webm' });
+    const actions = await import('/src/ui/actions.ts');
+    await actions.insertMediaFile(file);
+    return file.size;
+  })()`) as Promise<number>;
+  const player = () => page.getByTestId('media-player');
+  /** The selected shape as media: its kind, the type of the file it plays, and its name. */
+  const selected = () => state<{ kind: string; type: string; name: string; local: string } | null>(`
+    const el = s.selection[0]; if (!el) return null;
+    const v = s.session.ed.view(s.slide, el); const m = v.media; if (!m) return null;
+    const part = s.session.ed.doc.target(s.slide, m.embed ?? m.link);
+    return { kind: m.kind, type: s.session.ed.pkg.getPart(part).contentType, name: v.name, local: el.local };`);
+
+  test('Insert > Audio puts a sound on the slide as a speaker; Play plays it there and Escape stops it; the saved file has the sound', async () => {
+    await page.getByRole('tab', { name: 'Insert' }).click();
+    const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.getByTestId('insert-audio').click()]);
+    await chooser.setFiles(wavFile());
+    await expect.poll(selected, { timeout: 10_000 }).toEqual({ kind: 'audio', type: 'audio/wav', name: 'tone.wav', local: 'pic' });
+    expect(await state<string>('return s.session.ed.log.undoLabel;')).toBe('Insert Audio');
+    const box = await state<{ cx: number; cy: number }>(`const x = s.session.ed.view(s.slide, s.selection[0]).xfrm; return { cx: x.cx, cy: x.cy };`);
+    expect(box).toEqual({ cx: 609600, cy: 609600 });
+
+    await page.getByRole('tab', { name: 'Home' }).click();
+    expect(await player().count()).toBe(0);
+    await page.getByTestId('media-play').click();
+    await player().waitFor();
+    expect(await player().evaluate(e => e.tagName)).toBe('AUDIO');
+    // the browser really has the sound: it knows how long it is
+    await expect.poll(() => player().evaluate(e => (e as HTMLAudioElement).duration), { timeout: 10_000 }).toBeCloseTo(0.33, 1);
+    expect(await page.getByTestId('media-play').getAttribute('aria-pressed')).toBe('true');
+    await page.keyboard.press('Escape');
+    expect(await player().count()).toBe(0);
+    expect(await state<number>('return s.selection.length;')).toBe(1);   // Escape stopped the sound, not the selection
+
+    const ed = await saved();
+    const part = ed.doc.slideParts()[0]!;
+    expect(ed.pkg.relationships(part).filter(r => r.type.endsWith('/audio') || r.type.endsWith('/relationships/media')).length).toBe(2);
+    expect(ed.pkg.partNames().some(n => /^\/ppt\/media\/media\d+\.wav$/.test(n))).toBe(true);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('a video comes in at its own size with a frame of it as its picture, and a double click plays it over that picture', async () => {
+    const size = await insertRecordedVideo();
+    expect(size).toBeGreaterThan(200);
+    await expect.poll(selected, { timeout: 15_000 }).toEqual({ kind: 'video', type: 'video/webm', name: 'clip.webm', local: 'pic' });
+    const box = await state<{ x: number; y: number; cx: number; cy: number }>(`const x = s.session.ed.view(s.slide, s.selection[0]).xfrm; return { x: x.x, y: x.y, cx: x.cx, cy: x.cy };`);
+    expect([box.cx, box.cy]).toEqual([160 * 9525, 90 * 9525]);           // 160 by 90 pixels
+    // its picture on the slide is the video's own green
+    await page.keyboard.press('Escape');
+    await frames();
+    const mid = await slidePoint(box.x + box.cx / 2, box.y + box.cy / 2);
+    await expect.poll(() => page.evaluate(([x, y]) => {
+      const c = document.querySelector('[data-testid="canvas"] canvas') as HTMLCanvasElement;
+      const r = c.getBoundingClientRect();
+      const d = c.getContext('2d')!.getImageData(Math.round((x - r.left) * (c.width / r.width)), Math.round((y - r.top) * (c.height / r.height)), 1, 1).data;
+      return d[1]! > 120 && d[0]! < 60 && d[2]! < 110;
+    }, [mid.x, mid.y] as const), { timeout: 10_000 }).toBe(true);
+
+    await page.mouse.click(mid.x, mid.y);
+    await page.mouse.dblclick(mid.x, mid.y);
+    await player().waitFor();
+    expect(await player().evaluate(e => e.tagName)).toBe('VIDEO');
+    await expect.poll(() => player().evaluate(e => (e as HTMLVideoElement).videoWidth), { timeout: 10_000 }).toBe(160);
+    const p = (await player().boundingBox())!;
+    expect(Math.abs(p.x + p.width / 2 - mid.x)).toBeLessThan(2);         // over its picture
+    expect(Math.abs(p.y + p.height / 2 - mid.y)).toBeLessThan(2);
+    // selecting something else stops it
+    const empty = await slidePoint(600000, 600000);
+    await page.mouse.click(empty.x, empty.y);
+    expect(await player().count()).toBe(0);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('in the slide show a click on the video plays it there, and a click elsewhere goes on with the show', async () => {
+    await insertRecordedVideo();
+    await expect.poll(selected, { timeout: 15_000 }).not.toBeNull();
+    await page.getByRole('tab', { name: 'Home' }).click();
+    await page.getByTestId('new-slide').click();
+    await state('s.setSlide(s.session.ed.doc.slideParts()[0]);');
+    await page.getByRole('tab', { name: 'Slide Show' }).click();
+    await page.getByTestId('presenter-view').click();
+    await page.getByTestId('presenter-slide').waitFor();
+    const slide = (await page.getByTestId('presenter-slide').locator('canvas').boundingBox())!;
+    await page.mouse.click(slide.x + slide.width / 2, slide.y + slide.height / 2);       // the video is in the middle
+    await player().waitFor();
+    expect(await page.getByTestId('presenter-count').innerText()).toBe('Slide 1 of 2');  // playing, not advancing
+    await expect.poll(() => player().evaluate(e => (e as HTMLVideoElement).videoWidth), { timeout: 10_000 }).toBe(160);
+    await page.mouse.click(slide.x + 20, slide.y + 20);
+    await expect.poll(() => page.getByTestId('presenter-count').innerText()).toBe('Slide 2 of 2');
+    expect(await player().count()).toBe(0);
+    await page.keyboard.press('Escape');
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('a file that is not a video or sound is refused with a message, and nothing is inserted', async () => {
+    await page.evaluate(`import('/src/ui/actions.ts').then(a => a.insertMediaFile(new File([new Uint8Array(10)], 'notes.txt', { type: 'text/plain' })))`);
+    await expect.poll(() => page.locator('.status .message.error').innerText()).toContain('notes.txt is not a video or sound');
+    expect(await state<number>('return s.session.ed.doc.slide(s.slide).shapes.length;')).toBe(2);
+    expect(errors).toEqual([]);
+  }, 60_000);
+});
+
 describe('charts', () => {
   const dialog = () => page.getByTestId('chart-dialog');
   /** Insert a chart of a kind from the Insert tab; its data dialog opens. */

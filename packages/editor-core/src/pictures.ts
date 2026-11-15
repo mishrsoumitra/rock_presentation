@@ -286,3 +286,46 @@ export function applyBackgroundToAll(ed: Editor, from: string): Command {
   });
 }
 
+/** A video or audio file to insert: its bytes, type, extension, and hash (from `prepareMedia`). */
+export interface MediaData { bytes: Uint8Array; contentType: string; ext: string; hash: string; }
+
+/** Hash a media file (and the package's media, once), so an identical file already in the deck is reused. */
+export async function prepareMedia(ed: Editor, media: Omit<MediaData, 'hash'>): Promise<MediaData> {
+  return { ...media, hash: await hashMedia(ed, media.bytes) };
+}
+
+const MEDIA_EXT = '{DAA4B4D4-6D71-4841-9C94-3DE7FCFB9230}';
+const MEDIA_REL = 'http://schemas.microsoft.com/office/2007/relationships/media';
+
+/**
+ * Insert a video or a sound as PowerPoint stores one: the media file as a part, and a picture (the poster: a frame
+ * of the video, or an icon for a sound) that carries two relationships to it, the one every version reads
+ * (a:videoFile or a:audioFile) and the one newer versions play from (p14:media). The picture is what is seen on
+ * the slide and moved about; the media plays in its place.
+ */
+export function insertMedia(ed: Editor, part: string, kind: 'video' | 'audio', media: MediaData, poster: ImageData, box?: Rect, name?: string): { command: Command; id: number } {
+  const root = ed.doc.root(part);
+  const tree = ed.spTree(part);
+  const id = nextShapeId(root);
+  const size = naturalSize(ed, poster);
+  const slide = ed.doc.presentation.slideSize;
+  const b = box ?? { x: (slide.cx - size.cx) / 2, y: (slide.cy - size.cy) / 2, w: size.cx, h: size.cy };
+  const r = Math.round;
+  const command = ed.edit({
+    label: kind === 'video' ? 'Insert Video' : 'Insert Audio', parts: [part], structural: true, scope: () => [tree],
+    apply: () => {
+      const file = mediaPart(ed.pkg, media.bytes, media.ext, media.contentType, media.hash, 'media');
+      const link = ed.pkg.addRelationship(part, relType(kind, ed.strict), file);
+      const embed = ed.pkg.addRelationship(part, MEDIA_REL, file);
+      const xml = `<p:pic><p:nvPicPr><p:cNvPr id="${id}" name="${esc(name ?? (kind === 'video' ? `Video ${id - 1}` : `Audio ${id - 1}`))}"/><p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr>`
+        + `<p:nvPr><a:${kind}File r:link="${link}"/><p:extLst><p:ext uri="${MEDIA_EXT}"><p14:media r:embed="${embed}"/></p:ext></p:extLst></p:nvPr></p:nvPicPr>`
+        + `<p:blipFill>${blipXml(ed, part, poster)}<a:stretch><a:fillRect/></a:stretch></p:blipFill>`
+        + `<p:spPr><a:xfrm><a:off x="${r(b.x)}" y="${r(b.y)}"/><a:ext cx="${r(b.w)}" cy="${r(b.h)}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>`;
+      const units = unitsIn(tree);
+      const last = units[units.length - 1];
+      insertAt(tree, last ? tree.children.indexOf(last) + 1 : tree.children.length, element(tree, xml, ed.strict));
+    },
+  });
+  return { command, id };
+}
+

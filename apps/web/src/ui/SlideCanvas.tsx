@@ -14,6 +14,7 @@ import { promptOf } from './prompts.ts';
 import { selectAll } from './textActions.ts';
 import { TextInput } from './TextInput.tsx';
 import { CellEditor } from './CellEditor.tsx';
+import { MediaPlayer } from './MediaPlayer.tsx';
 import { Rulers } from './Rulers.tsx';
 import { connectionSites, connectorEnds, cropAndPlace, isConnector, nearestSite, pictureCrop, setConnectorEnds, type Point } from '@pptx/editor-core';
 import { attachable, paintFormat } from './actions.ts';
@@ -164,6 +165,7 @@ export function SlideCanvas() {
   const drawing = useEditor(s => s.drawing);
   const painting = useEditor(s => s.painting);
   const cropEl = useEditor(s => s.cropping);
+  const playingEl = useEditor(s => s.playing);
   const showRuler = useEditor(s => s.showRuler);
   const showGuides = useEditor(s => s.showGuides);
   const userGuides = useEditor(s => s.guides);
@@ -442,6 +444,9 @@ export function SlideCanvas() {
     window.addEventListener('mouseup', up);
   };
 
+  /** A box of the slide (EMU) on the page, in the scrolling slide area's own coordinates: where an overlay goes. */
+  const pageBox = (b: { x: number; y: number; w: number; h: number }) => ({ left: ox + b.x * zoom, top: oy + b.y * zoom, width: b.w * zoom, height: b.h * zoom });
+
   /** How near (in slide units) an end must be let go to a connection point to attach to it: fourteen screen pixels. */
   const reach = () => 14 / zoom;
   /** The connection points worth showing for an end at a point: those of every shape that has one within a few reaches. */
@@ -564,6 +569,11 @@ export function SlideCanvas() {
   const onTableDown = (rs: RenderShape, e: Konva.KonvaEventObject<MouseEvent>) => {
     const st = useEditor.getState();
     const el = rs.source.view.el;
+    // a double click on a video or a sound plays it where it is
+    if (!st.drawing && rs.source.media?.part && e.evt.button === 0 && e.evt.detail === 2 && st.selection.length === 1 && st.selection[0] === el) {
+      set({ playing: el });
+      return;
+    }
     // a double click on a chart (the browser's count, on the press) opens its data
     if (!st.drawing && rs.source.graphic?.kind === 'chart' && e.evt.button === 0 && e.evt.detail === 2 && st.selection.length === 1 && st.selection[0] === el) {
       set({ chartEditing: true });
@@ -747,6 +757,9 @@ export function SlideCanvas() {
   };
 
   const tv = text ? textViewOf(findRendered(slide, text.el)) : undefined;
+  // the video or sound playing: the browser's player over its picture
+  const playingRs = playingEl && selection.length === 1 && selection[0] === playingEl ? findRendered(slide, playingEl) : undefined;
+  const playBox = playingRs ? pageBox(boundsOf(playingRs)) : undefined;
   // a connector selected alone: a handle on each end
   const lineEl = lineOf({ selection, text, cropping: cropEl });
   const lineEnds = lineEl ? connectorEnds(ed.view(part, lineEl)) : undefined;
@@ -919,6 +932,7 @@ export function SlideCanvas() {
         </Layer>
       </Stage>
       {tv && text && <TextInput view={tv} stage={stageRef} zoom={zoom} />}
+      {playBox && playingRs?.source.media?.part && <MediaPlayer session={sess} part={playingRs.source.media.part} kind={playingRs.source.media.kind} box={playBox} />}
       {cells?.editing && cellRs && <CellEditor key={`${keyOf(cells.el)}:${cells.anchor.r},${cells.anchor.c}`} rs={cellRs} stage={stageRef} zoom={zoom} fonts={sess.fonts} />}
       {scene?.error && <div className="slide-error" role="alert">This slide cannot be shown: {scene.error}</div>}
     </div>
