@@ -142,11 +142,11 @@ function rPrFrom(parent: XmlElement, source: XmlElement | undefined): XmlElement
 const clean = (s: string) => [...s].filter(ch => !FORBIDDEN_CHAR.test(ch) || ch === '\u000b').join('');
 
 /** Insert text without paragraph breaks into one paragraph; "\v" becomes a line break. Returns the new offset. */
-function insertInParagraph(ed: Editor, p: XmlElement, offset: number, text: string, patch?: RunPatch): number {
+function insertInParagraph(ed: Editor, p: XmlElement, offset: number, text: string, patch?: RunPatch, like?: XmlElement): number {
   if (!text) return offset;
   const pieces = text.split('\u000b');
   // the simple, common case: typing into a text run, with no formatting change
-  if (!patch && pieces.length === 1) {
+  if (!patch && !like && pieces.length === 1) {
     let at = 0;
     for (const r of runsOf(p)) {
       const len = runLength(r);
@@ -158,7 +158,7 @@ function insertInParagraph(ed: Editor, p: XmlElement, offset: number, text: stri
       at += len;
     }
   }
-  const props = propsAt(p, offset);
+  const props = like ?? propsAt(p, offset);
   let idx = boundaryAt(p, offset);
   pieces.forEach((piece, i) => {
     if (i > 0) {
@@ -178,6 +178,22 @@ function insertInParagraph(ed: Editor, p: XmlElement, offset: number, text: stri
     insertAt(p, idx++, run);
   });
   return offset + text.length;
+}
+
+/** Put text into the text run that holds the character at `offset`, before that character. False when a field or break is there. */
+function insertInRun(p: XmlElement, offset: number, text: string): boolean {
+  let at = 0;
+  for (const r of runsOf(p)) {
+    const len = runLength(r);
+    if (offset >= at && offset < at + len) {
+      const t = r.kind === 'r' ? child(r.el, 'a:t') : undefined;
+      if (!t) return false;
+      setText(t, r.text.slice(0, offset - at) + text + r.text.slice(offset - at));
+      return true;
+    }
+    at += len;
+  }
+  return false;
 }
 
 /** Split paragraph `p` at an offset: the new paragraph after it gets the runs after the offset and the same pPr. */
@@ -281,14 +297,35 @@ export interface TextOptions { coalesceKey?: string; scope?: XmlElement; after?:
  * Type text at a caret or over a selection. "\n" starts a new paragraph, "\v" is a line break. Consecutive typing
  * in one text body coalesces into one undo step (the UI passes the same `coalesceKey` and seals on caret moves).
  */
-export function typeText(ed: Editor, part: string, txBody: XmlElement, at: TextPos | TextRange, text: string, options: TextOptions & { patch?: RunPatch } = {}): TextEdit {
+export function typeText(
+  ed: Editor, part: string, txBody: XmlElement, at: TextPos | TextRange, text: string,
+  options: TextOptions & { patch?: RunPatch; /** New text looks like the first character it replaces (Replace), not like the text before it (typing). */ likeReplaced?: boolean } = {},
+): TextEdit {
   const range = 'start' in at ? sorted(at) : { start: at, end: at };
   let caret = range.start;
   const command = ed.edit({
     label: options.label ?? 'Typing', parts: [part], scope: () => [options.scope ?? txBody], ...(options.coalesceKey ? { coalesceKey: options.coalesceKey } : {}),
     apply: () => {
       ensureParagraph(ed, txBody);
-      if (order(range.start, range.end) < 0) deleteRange(txBody, range);
+      let like: XmlElement | undefined;
+      if (order(range.start, range.end) < 0) {
+        const first = paragraphs(txBody)[range.start.p];
+        const one = clean(text);
+        // Replace, the usual case: the new text goes into the run of the first character replaced (so it looks
+        // like it and the run is not split), then what it replaces goes
+        if (options.likeReplaced && first && !/[\r\n\u000b]/.test(one) && insertInRun(first, range.start.offset, one)) {
+          const n = one.length;
+          const end = range.end.p === range.start.p ? { p: range.end.p, offset: range.end.offset + n } : range.end;
+          deleteRange(txBody, { start: { p: range.start.p, offset: range.start.offset + n }, end });
+          caret = { p: range.start.p, offset: range.start.offset + n };
+          options.after?.();
+          return;
+        }
+        // the properties of the first character replaced, copied before it goes
+        const src = options.likeReplaced && first && range.start.offset < paragraphLength(first) ? propsAt(first, range.start.offset + 1) : undefined;
+        if (src) like = clone(src, src.parent!);
+        deleteRange(txBody, range);
+      }
       const lines = clean(text).split(/\r\n|\r|\n/);
       let pos = range.start;
       lines.forEach((line, i) => {
@@ -299,7 +336,7 @@ export function typeText(ed: Editor, part: string, txBody: XmlElement, at: TextP
         }
         const p = paragraphs(txBody)[pos.p];
         if (!p) return;
-        pos = { p: pos.p, offset: insertInParagraph(ed, p, pos.offset, line, options.patch) };
+        pos = { p: pos.p, offset: insertInParagraph(ed, p, pos.offset, line, options.patch, like) };
       });
       caret = pos;
       options.after?.();

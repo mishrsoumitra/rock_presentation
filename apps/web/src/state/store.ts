@@ -44,6 +44,8 @@ export interface EditorState {
   drawing: string | null;
   mode: 'edit' | 'present';
   pane: Pane;
+  /** The find and replace panel is open. */
+  finding: boolean;
   clipboard: ShapeClip | null;
   message: { kind: 'info' | 'error'; text: string } | null;
   askPassword: { name: string; bytes: Uint8Array; retry: boolean } | null;
@@ -84,7 +86,7 @@ function fitted(s: Session, t: TextEditing | null): TextEditing | null {
 
 export const useEditor = create<EditorState>((set, get) => ({
   session: null, version: 0, slide: null, selection: [], entered: null, text: null, pending: null,
-  zoom: 'fit', drawing: null, mode: 'edit', pane: 'none', clipboard: null, message: null, askPassword: null,
+  zoom: 'fit', drawing: null, mode: 'edit', pane: 'none', finding: false, clipboard: null, message: null, askPassword: null,
 
   async open(bytes, name, password) {
     performance.mark('open-start');

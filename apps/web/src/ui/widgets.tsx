@@ -21,6 +21,7 @@ const PATHS: Record<string, string> = {
   highlight: 'M14 4l6 6-9 9H5v-6zM3 22h18', clear: 'M6 5h12M12 5l-3 14M4 21h8M15 14l6 6M21 14l-6 6',
   spacing: 'M4 8l4 8 4-8M14 8l3 8 3-8M3 21h18M3 19v4M21 19v4', lines: 'M10 5h11M10 12h11M10 19h11M5 4v16M3 6l2-2 2 2M3 18l2 2 2-2',
   anchor: 'M3 3h18M3 21h18M7 10h10M7 14h10', columns: 'M3 5h7M3 10h7M3 15h7M3 20h7M14 5h7M14 10h7M14 15h7M14 20h7',
+  search: 'M10.5 17a6.5 6.5 0 1 1 0-13 6.5 6.5 0 0 1 0 13zM15.5 15.5L21 21',
   lock: 'M6 11h12v10H6zM8 11V7a4 4 0 0 1 8 0v4', anim: 'M4 12h4l3-7 3 14 3-7h3', layout: 'M3 4h18v16H3zM3 9h18M9 9v11',
 };
 

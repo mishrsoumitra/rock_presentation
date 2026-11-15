@@ -88,6 +88,9 @@ export function Ribbon({ extraTabs }: { extraTabs?: Partial<Record<Tab, React.Re
               <Btn icon="cut" label="Cut" disabled={!hasSel} onClick={() => act.copySelection(true)} />
               <Btn icon="copy" label="Copy" disabled={!hasSel} onClick={() => act.copySelection()} />
             </section>
+            <section className="group" aria-label="Editing">
+              <Btn icon="search" label="Find and Replace" disabled={!session} onClick={() => useEditor.setState({ finding: !useEditor.getState().finding })} testid="find" />
+            </section>
             <section className="group" aria-label="Slides">
               <Btn icon="plus" label="New Slide" wide disabled={!session} onClick={() => act.newSlide()} testid="new-slide" />
               <LayoutMenu icon="layout" label="Layout" onPick={act.layoutCurrentSlide} />

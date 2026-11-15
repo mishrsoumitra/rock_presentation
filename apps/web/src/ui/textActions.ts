@@ -1,7 +1,7 @@
 // apps/web/src/ui/textActions.ts  -- typing and formatting, for the keyboard and the ribbon alike
 import {
-  clearRunFormatting, deleteText, formatBody, formatParagraphs, formatRuns, paragraphLength, paragraphs, typeText, type BodyPatch, type Command,
-  type ParaPatch, type RunPatch, type TextPos, type TextRange,
+  clearRunFormatting, deleteText, formatBody, formatParagraphs, formatRuns, paragraphLength, paragraphs, replaceAll, replaceMatch, typeText,
+  type BodyPatch, type Command, type FindOptions, type ParaPatch, type RunPatch, type TextMatch, type TextPos, type TextRange,
 } from '@pptx/editor-core';
 import { ShapeView } from '@pptx/model';
 import type { ResolvedBodyProps, ResolvedParagraph, ResolvedRunProps } from '@pptx/resolve';
@@ -73,6 +73,26 @@ export function deleteChars(direction: 'back' | 'forward'): void {
   const edit = deleteText(s.ed, t.part, body, at, direction, opts(t.part, t.el, `type:${keyOf(t.el)}`));
   runOn(t.part, t.el, edit.command);
   useEditor.setState({ text: { ...t, caret: edit.caret, anchor: edit.caret } });
+}
+
+/** Replace one found match; autofit text is refitted in the same undo step, as when typing. */
+export function replaceOne(m: TextMatch, replacement: string): void {
+  const s = session();
+  if (s) runOn(m.part, m.shape, replaceMatch(s.ed, m, replacement, opts(m.part, m.shape, undefined)));
+}
+
+/** Replace every match in the deck as one undo step; returns how many there were. Text editing ends first. */
+export function replaceEverywhere(query: string, replacement: string, find: FindOptions): number {
+  const st = useEditor.getState();
+  const s = st.session;
+  if (!s) return 0;
+  const r = replaceAll(s.ed, query, replacement, find, m => opts(m.part, m.shape, undefined));
+  if (!r.count) return 0;
+  useEditor.setState({ text: null, pending: null });
+  s.ed.log.seal();
+  st.run(r.command);
+  s.ed.log.seal();
+  return r.count;
 }
 
 /** The bodies a formatting command applies to: the text selection, or all text of each selected shape. */

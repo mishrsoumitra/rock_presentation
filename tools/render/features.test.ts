@@ -225,3 +225,120 @@ describe('speaker notes', () => {
     expect(errors).toEqual([]);
   }, 60_000);
 });
+
+describe('find and replace', () => {
+  /** The text of every text box (not placeholder) of each slide, in order. */
+  const boxTexts = () => state<string[][]>(`
+    const textOf = el => { const out = []; const walk = e => { if (e.local === 't') out.push(e.children.map(c => c.value ?? '').join('')); for (const c of e.children) if (c.kind === 'element') walk(c); }; walk(el); return out.join(''); };
+    return s.session.ed.doc.slideParts().map(p => s.session.ed.doc.slide(p).shapes.filter(sh => sh.name.startsWith('TextBox')).map(sh => textOf(sh.el)));`);
+  const count = () => page.getByTestId('find-count').innerText();
+  const found = () => state<{ slide: number; from: number; to: number } | null>(`
+    if (!s.text) return null;
+    return { slide: s.session.ed.doc.slideParts().indexOf(s.slide) + 1, from: Math.min(s.text.anchor.offset, s.text.caret.offset), to: Math.max(s.text.anchor.offset, s.text.caret.offset) };`);
+  const focused = () => page.evaluate(() => document.activeElement?.getAttribute('data-testid'));
+
+  /** Two slides: "alpha beta alpha" on the first, "Alpha on two" on the second; the first slide on screen. */
+  async function twoSlides(): Promise<void> {
+    await textBox('alpha beta alpha');
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape');
+    await page.getByTestId('new-slide').click();
+    await textBox('Alpha on two');
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape');
+    await state('s.setSlide(s.session.ed.doc.slideParts()[0]);');
+  }
+
+  test('Ctrl+F finds through the deck: Enter goes on, round the end to the start; Shift+Enter goes back; the found text is selected', async () => {
+    await twoSlides();
+    await page.keyboard.press('Control+f');
+    await expect.poll(focused).toBe('find-input');
+    await page.keyboard.type('alpha');
+    expect(await count()).toBe('3 found');
+    expect(await found()).toBeNull();                                   // typing the query moves nothing
+
+    await page.keyboard.press('Enter');
+    expect(await count()).toBe('1 of 3');
+    expect(await found()).toEqual({ slide: 1, from: 0, to: 5 });
+    expect(await focused()).toBe('find-input');                         // the panel keeps the keyboard
+    await page.keyboard.press('Enter');
+    expect([await count(), await found()]).toEqual(['2 of 3', { slide: 1, from: 11, to: 16 }]);
+    await page.keyboard.press('Enter');
+    expect([await count(), await found()]).toEqual(['3 of 3', { slide: 2, from: 0, to: 5 }]);
+    await page.keyboard.press('Enter');
+    expect([await count(), await found()]).toEqual(['1 of 3', { slide: 1, from: 0, to: 5 }]);
+    await page.keyboard.press('Shift+Enter');
+    expect([await count(), await found()]).toEqual(['3 of 3', { slide: 2, from: 0, to: 5 }]);
+    await page.getByTestId('find-prev').click();
+    expect(await count()).toBe('2 of 3');
+    await page.getByTestId('find-next').click();
+    expect(await count()).toBe('3 of 3');
+
+    // options narrow the search; nothing found says so and disables the buttons
+    await page.getByTestId('find-case').check();
+    expect(await count()).toBe('2 found');
+    await page.getByTestId('find-case').uncheck();
+    await page.getByTestId('find-input').fill('alph');
+    expect(await count()).toBe('3 found');
+    await page.getByTestId('find-words').check();
+    expect(await count()).toBe('No results');
+    expect(await page.getByTestId('find-next').isDisabled()).toBe(true);
+    expect(await page.getByTestId('replace-all').isDisabled()).toBe(true);
+
+    // Escape closes the panel; the ribbon's button opens and closes it too
+    await page.getByTestId('find-input').press('Escape');
+    expect(await page.getByTestId('find-bar').count()).toBe(0);
+    await page.getByTestId('find').click();
+    expect(await page.getByTestId('find-bar').count()).toBe(1);
+    await page.getByTestId('find').click();
+    expect(await page.getByTestId('find-bar').count()).toBe(0);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('Replace changes the match shown and moves to the next; undo brings the word back', async () => {
+    await twoSlides();
+    await page.keyboard.press('Control+h');
+    await expect.poll(focused).toBe('replace-input');
+    await page.getByTestId('find-input').fill('alpha');
+    await page.getByTestId('replace-input').fill('omega');
+    await page.getByTestId('replace-one').click();                      // nothing shown yet: the first press finds
+    expect([await count(), await boxTexts()]).toEqual(['1 of 3', [['alpha beta alpha'], ['Alpha on two']]]);
+    await page.getByTestId('replace-one').click();
+    expect(await boxTexts()).toEqual([['omega beta alpha'], ['Alpha on two']]);
+    expect([await count(), await found()]).toEqual(['1 of 2', { slide: 1, from: 11, to: 16 }]);
+    await page.getByTestId('replace-one').click();
+    expect(await boxTexts()).toEqual([['omega beta omega'], ['Alpha on two']]);
+    expect([await count(), await found()]).toEqual(['1 of 1', { slide: 2, from: 0, to: 5 }]);
+    expect(await state<string>('return s.session.ed.log.undoLabel;')).toBe('Replace');
+
+    await page.getByTestId('replace-input').press('Control+z');
+    expect(await boxTexts()).toEqual([['omega beta alpha'], ['Alpha on two']]);
+    expect(await count()).toMatch(/2/);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('Replace All changes every slide in one undo step, says how many, and the saved file has the new text', async () => {
+    await twoSlides();
+    await page.getByTestId('find').click();
+    await page.getByTestId('find-input').fill('ALPHA');
+    await page.getByTestId('replace-input').fill('gamma');
+    await page.getByTestId('replace-all').click();
+    expect(await boxTexts()).toEqual([['gamma beta gamma'], ['gamma on two']]);
+    await expect.poll(() => page.locator('.status .message').innerText()).toContain('Replaced 3 occurrences.');
+    expect(await count()).toBe('No results');
+    expect(await state<string>('return s.session.ed.log.undoLabel;')).toBe('Replace All');
+
+    await page.getByTestId('find-input').press('Control+z');
+    expect(await boxTexts()).toEqual([['alpha beta alpha'], ['Alpha on two']]);
+    expect(await count()).toBe('3 found');
+    await page.getByTestId('find-input').press('Control+Shift+z');
+    expect(await boxTexts()).toEqual([['gamma beta gamma'], ['gamma on two']]);
+
+    await page.getByTestId('find-close').click();
+    const ed = await saved();
+    const texts = ed.doc.slideParts().map(part => ed.doc.slide(part).shapes.filter(sh => sh.name.startsWith('TextBox')).map(sh => sh.txBody ? sh.txBody.children.length : 0));
+    expect(texts.map(t => t.length)).toEqual([1, 1]);
+    expect(new TextDecoder().decode(ed.pkg.getPart(ed.doc.slideParts()[0]!)!.bytes)).toContain('gamma beta gamma');
+    expect(errors).toEqual([]);
+  }, 60_000);
+});

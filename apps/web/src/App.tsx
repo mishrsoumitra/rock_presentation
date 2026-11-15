@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { useEditor } from './state/store.ts';
 import { newPresentation, openFile } from './ui/actions.ts';
 import { NewPasswordDialog, OpenPasswordDialog, SlideSizeDialog } from './ui/Dialogs.tsx';
+import { FindBar } from './ui/FindBar.tsx';
 import { NotesPane } from './ui/NotesPane.tsx';
 import { Presenter } from './ui/Presenter.tsx';
 import { AnimationPane, AnimationsTab, TransitionsTab } from './ui/AnimationTabs.tsx';
@@ -77,7 +78,7 @@ export function App() {
     <div className="app">
       <Ribbon extraTabs={{ Transitions: <TransitionsTab />, Animations: <AnimationsTab /> }} />
       <main className={`workspace${session && pane === 'animation' ? ' with-pane' : ''}`}>
-        {session ? <><SlidePanel /><div className="editing"><SlideCanvas /><NotesPane /></div>{pane === 'animation' && <AnimationPane />}</> : <Welcome />}
+        {session ? <><SlidePanel /><div className="editing"><SlideCanvas /><NotesPane /><FindBar /></div>{pane === 'animation' && <AnimationPane />}</> : <Welcome />}
       </main>
       <StatusBar />
       <OpenPasswordDialog />

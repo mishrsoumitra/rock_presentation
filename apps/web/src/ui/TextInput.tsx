@@ -17,7 +17,8 @@ export function TextInput({ view, stage, zoom }: { view: TextView & { transform:
   const composing = useRef(false);
 
   // focused as soon as it is in the page, before the browser paints: keys typed right after the click land here
-  useLayoutEffect(() => { ref.current?.focus({ preventScroll: true }); }, [text.el]);
+  // (not while the find panel has the focus: it selects what it finds, and Enter there finds the next)
+  useLayoutEffect(() => { if (!document.activeElement?.closest('.find-bar')) ref.current?.focus({ preventScroll: true }); }, [text.el]);
 
   // keep the textarea under the caret, so the IME's candidate window opens there
   const r = caretRect(view, text.caret);
