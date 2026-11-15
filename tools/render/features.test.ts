@@ -48,6 +48,132 @@ async function saved(): Promise<Editor> {
   return new Editor(OpcPackage.open(new Uint8Array(readFileSync((await d.path())!))));
 }
 
+/** The XML of the shape being edited or selected, written compactly (no namespace declarations), for toContain checks. */
+const shapeXml = () => state<string>(`
+  const el = s.text?.el ?? s.selection[0]; if (!el) return '';
+  const ser = e => '<' + (e.prefix ? e.prefix + ':' : '') + e.local + e.attrs.filter(a => a.prefix !== 'xmlns').map(a => ' ' + a.local + '="' + a.value + '"').join('') + '>'
+    + e.children.map(c => (c.kind === 'element' ? ser(c) : c.value ?? '')).join('') + '</' + e.local + '>';
+  return ser(el);`);
+
+/** Insert a text box, type into it, and stay in it with the Home tab showing. */
+async function textBox(text: string): Promise<void> {
+  await page.getByRole('tab', { name: 'Insert' }).click();
+  await page.getByTestId('text-box').click();
+  for (const [i, line] of text.split('\n').entries()) {
+    if (i) await page.keyboard.press('Enter');
+    await page.keyboard.type(line);
+  }
+  await page.getByRole('tab', { name: 'Home' }).click();
+}
+
+/** Open a ribbon menu and choose an item of it by its label. */
+async function choose(menu: string, item: string): Promise<void> {
+  await page.getByTestId(menu).click();
+  await page.locator('.menu-panel').getByRole('menuitemradio', { name: item, exact: true }).click();
+}
+const pressed = (testid: string) => page.getByTestId(testid).getAttribute('aria-pressed');
+/** The ticked item of a ribbon menu (opened to look, then closed). */
+async function ticked(menu: string): Promise<string[]> {
+  await page.getByTestId(menu).click();
+  const labels = await page.locator('.menu-panel [aria-checked="true"]').allInnerTexts();
+  await page.getByTestId(menu).click();
+  return labels.map(l => l.replace('✓', '').trim());
+}
+
+describe('text formatting from the ribbon', () => {
+  test('superscript and subscript toggle and replace each other; the buttons show which is on', async () => {
+    await textBox('Hello world');
+    await page.keyboard.press('Control+a');
+    await page.getByTestId('superscript').click();
+    expect(await shapeXml()).toContain('baseline="30000"');
+    expect([await pressed('superscript'), await pressed('subscript')]).toEqual(['true', 'false']);
+    await page.getByTestId('subscript').click();
+    expect(await shapeXml()).toContain('baseline="-25000"');
+    expect([await pressed('superscript'), await pressed('subscript')]).toEqual(['false', 'true']);
+    await page.getByTestId('subscript').click();
+    expect(await shapeXml()).toContain('baseline="0"');
+    expect([await pressed('superscript'), await pressed('subscript')]).toEqual(['false', 'false']);
+    await page.keyboard.press('Control+z');
+    expect(await shapeXml()).toContain('baseline="-25000"');
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('superscript with only a caret applies to what is typed next', async () => {
+    await textBox('x');
+    await page.getByTestId('superscript').click();
+    expect(await pressed('superscript')).toBe('true');
+    await page.keyboard.type('2');
+    const xml = await shapeXml();
+    expect(xml).toMatch(/<a:r><a:rPr[^>]*><\/rPr><a:t>x<\/t><\/r><a:r><a:rPr[^>]*baseline="30000"[^>]*><\/rPr><a:t>2<\/t><\/r>/);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('highlight colour, character spacing, and Clear All Formatting, which keeps the text and typing going', async () => {
+    await textBox('Hello world');
+    await page.keyboard.press('Control+a');
+    await page.getByTestId('highlight').click();
+    await page.locator('.menu-panel .swatch[title="Yellow"]').click();
+    expect(await shapeXml()).toContain('<a:highlight><a:srgbClr val="FFFF00"></srgbClr></highlight>');
+    await choose('char-spacing', 'Loose');
+    expect(await shapeXml()).toContain('spc="300"');
+    expect(await ticked('char-spacing')).toEqual(['Loose']);
+    await page.getByTestId('bold').click();
+    expect(await shapeXml()).toContain('b="1"');
+
+    await page.getByTestId('clear-formatting').click();
+    const cleared = await shapeXml();
+    expect(cleared).not.toContain('highlight');
+    expect(cleared).not.toContain('spc=');
+    expect(cleared).not.toContain('b="1"');
+    expect(cleared).toContain('<a:t>Hello world</t>');
+    expect(await state<string>('return s.session.ed.log.undoLabel;')).toBe('Clear Formatting');
+    expect(await ticked('char-spacing')).toEqual(['Normal']);
+    // still editing: typing replaces the selection, as before
+    await page.keyboard.type('Bye');
+    expect(await shapeXml()).toContain('<a:t>Bye</t>');
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('line spacing and space before and after apply to the paragraph of the caret only', async () => {
+    await textBox('First\nSecond');
+    await choose('line-spacing', '1.5');
+    await choose('line-spacing', 'Before: 6 pt');
+    await choose('line-spacing', 'After: 12 pt');
+    const xml = await shapeXml();
+    expect(xml.match(/<a:lnSpc>/g)?.length).toBe(1);
+    expect(xml).toContain('<a:pPr><a:lnSpc><a:spcPct val="150000"></spcPct></lnSpc><a:spcBef><a:spcPts val="600"></spcPts></spcBef><a:spcAft><a:spcPts val="1200"></spcPts></spcAft></pPr>');
+    expect(xml.indexOf('<a:lnSpc>')).toBeGreaterThan(xml.indexOf('First'));          // the second paragraph, where the caret is
+    expect(await ticked('line-spacing')).toEqual(['1.5', 'Before: 6 pt', 'After: 12 pt']);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('align text, margins and columns apply to a selected shape as well as to the box being edited', async () => {
+    await textBox('Some text');
+    await choose('align-text', 'Middle');
+    await choose('columns', 'Two Columns');
+    expect(await shapeXml()).toMatch(/<a:bodyPr[^>]*anchor="ctr"[^>]*>/);
+    expect(await shapeXml()).toMatch(/<a:bodyPr[^>]*numCol="2"[^>]*>/);
+    expect(await ticked('align-text')).toContain('Middle');
+    expect(await ticked('columns')).toEqual(['Two Columns']);
+    // leave the text: the box stays selected, and the menus still act on it
+    await page.keyboard.press('Escape');
+    expect(await state<boolean>('return !!s.text;')).toBe(false);
+    expect(await state<number>('return s.selection.length;')).toBe(1);
+    await choose('align-text', 'Margins: Wide');
+    await choose('columns', 'One Column');
+    const xml = await shapeXml();
+    expect(xml).toMatch(/<a:bodyPr[^>]*lIns="182880"[^>]*tIns="91440"[^>]*>|<a:bodyPr[^>]*tIns="91440"[^>]*lIns="182880"[^>]*>/);
+    expect(xml).not.toContain('numCol');
+    expect(await ticked('align-text')).toEqual(['Middle', 'Margins: Wide']);
+
+    const ed = await saved();
+    const slide = ed.doc.slideParts()[0]!;
+    const box = ed.doc.slide(slide).shapes.find(sh => sh.name.startsWith('TextBox'))!;
+    expect(box.txBody!.children.find(c => c.kind === 'element' && c.local === 'bodyPr')).toMatchObject({ local: 'bodyPr' });
+    expect(errors).toEqual([]);
+  }, 60_000);
+});
+
 describe('speaker notes', () => {
   test('type notes under the slide, undo and redo them, keep them per slide, and find them in the saved file', async () => {
     const notes = page.getByTestId('notes');

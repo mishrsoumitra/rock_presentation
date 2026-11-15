@@ -448,6 +448,32 @@ export function formatRuns(ed: Editor, part: string, txBody: XmlElement, range: 
   });
 }
 
+/** Run properties that are not formatting: the language, and a link (clearing formatting keeps text a link). */
+const KEPT_ATTRS = new Set(['lang', 'altLang']);
+const KEPT_CHILDREN = ['a:hlinkClick', 'a:hlinkMouseOver', 'a:extLst'];
+
+/**
+ * Clear character formatting over a range, as Clear All Formatting does: every run in it (and the paragraph marks
+ * it covers) drops its own bold, size, colour, font and the rest, so the text looks as its placeholder or the
+ * deck's defaults say again. Paragraph formatting stays.
+ */
+export function clearRunFormatting(ed: Editor, part: string, txBody: XmlElement, range: TextRange, options: TextOptions = {}): Command {
+  return ed.edit({
+    label: options.label ?? 'Clear Formatting', parts: [part], scope: () => [options.scope ?? txBody], ...(options.coalesceKey ? { coalesceKey: options.coalesceKey } : {}),
+    apply: () => {
+      ensureParagraph(ed, txBody);
+      const { runs, marks } = runsIn(txBody, range);
+      const props = [...runs.map(r => child(r, 'a:rPr')), ...marks.map(p => child(p, 'a:endParaRPr'))].filter((x): x is XmlElement => !!x);
+      for (const rPr of props) {
+        rPr.attrs = rPr.attrs.filter(a => a.ns !== '' || KEPT_ATTRS.has(a.local));
+        rPr.children = rPr.children.filter(c => c.kind === 'element' && KEPT_CHILDREN.some(n => is(c, n)));
+        rPr.selfClosing = rPr.children.length === 0;
+      }
+      options.after?.();
+    },
+  });
+}
+
 function spacingXml(name: string, s: SpacingSpec): string {
   return 'pct' in s ? `<a:${name}><a:spcPct val="${Math.round(s.pct)}"/></a:${name}>` : `<a:${name}><a:spcPts val="${Math.round(s.pts)}"/></a:${name}>`;
 }

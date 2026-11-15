@@ -1,10 +1,10 @@
 // apps/web/src/ui/textActions.ts  -- typing and formatting, for the keyboard and the ribbon alike
 import {
-  deleteText, formatParagraphs, formatRuns, paragraphLength, paragraphs, typeText, type Command, type ParaPatch, type RunPatch, type TextPos,
-  type TextRange,
+  clearRunFormatting, deleteText, formatBody, formatParagraphs, formatRuns, paragraphLength, paragraphs, typeText, type BodyPatch, type Command,
+  type ParaPatch, type RunPatch, type TextPos, type TextRange,
 } from '@pptx/editor-core';
 import { ShapeView } from '@pptx/model';
-import type { ResolvedParagraph, ResolvedRunProps } from '@pptx/resolve';
+import type { ResolvedBodyProps, ResolvedParagraph, ResolvedRunProps } from '@pptx/resolve';
 import type { XmlElement } from '@pptx/xml';
 import { refit } from '../engine/textfit.ts';
 import { session, useEditor } from '../state/store.ts';
@@ -114,25 +114,49 @@ export function formatPara(patch: ParaPatch, label = 'Paragraph'): void {
   for (const x of targets()) runOn(x.part, x.el, formatParagraphs(s.ed, x.part, x.body, x.range, patch, { ...opts(x.part, x.el, undefined), label }));
 }
 
+/** Text box options (anchor, margins, columns) for the box being edited or every selected shape with text. */
+export function formatTextBox(patch: BodyPatch, label = 'Text Options'): void {
+  const s = useEditor.getState().session;
+  if (!s) return;
+  for (const x of targets()) runOn(x.part, x.el, formatBody(s.ed, x.part, x.body, patch, { ...opts(x.part, x.el, undefined), label }));
+}
+
+/**
+ * Clear All Formatting: the selected text, or all text of the selected shapes, goes back to what its placeholder or
+ * the deck's defaults give. With only a caret, the caret's whole paragraph is cleared, and so is pending formatting.
+ */
+export function clearFormatting(): void {
+  const st = useEditor.getState();
+  const s = st.session;
+  if (!s) return;
+  useEditor.setState({ pending: null });
+  for (const x of targets()) {
+    const caret = x.range.start.p === x.range.end.p && x.range.start.offset === x.range.end.offset;
+    const p = caret ? paragraphs(x.body)[x.range.start.p] : undefined;
+    const range = p ? { start: { p: x.range.start.p, offset: 0 }, end: { p: x.range.start.p, offset: paragraphLength(p) } } : x.range;
+    runOn(x.part, x.el, clearRunFormatting(s.ed, x.part, x.body, range, opts(x.part, x.el, undefined)));
+  }
+}
+
 /** The resolved formatting at the caret or of the selected shape's first run (for the ribbon's toggles). */
-export function formattingHere(): { run?: ResolvedRunProps; para?: ResolvedParagraph } {
+export function formattingHere(): { run?: ResolvedRunProps; para?: ResolvedParagraph; body?: ResolvedBodyProps } {
   const st = useEditor.getState();
   const s = st.session;
   if (!s || !st.slide) return {};
   const el = st.text?.el ?? st.selection[0];
   if (!el) return {};
   const scene = s.scenes.get(st.slide);
-  const walk = (list: typeof scene.slide.shapes): ResolvedParagraph[] | undefined => {
+  const walk = (list: typeof scene.slide.shapes): { paragraphs: ResolvedParagraph[]; body: ResolvedBodyProps } | undefined => {
     for (const r of list) {
-      if (r.source?.view.el === el) return r.source.text?.paragraphs;
+      if (r.source?.view.el === el) return r.source.text ?? undefined;
       const inner = walk(r.children);
       if (inner) return inner;
     }
     return undefined;
   };
-  const paras = walk(scene.slide.shapes);
-  const p = paras?.[st.text?.caret.p ?? 0];
-  if (!p) return {};
+  const text = walk(scene.slide.shapes);
+  const p = text?.paragraphs[st.text?.caret.p ?? 0];
+  if (!p || !text) return {};
   let run = p.runs[0]?.props ?? p.endProps;
   if (st.text) {
     let at = 0;
@@ -142,5 +166,12 @@ export function formattingHere(): { run?: ResolvedRunProps; para?: ResolvedParag
       at += len;
     }
   }
-  return { run: { ...run, ...(st.pending?.b !== undefined ? { bold: !!st.pending.b } : {}), ...(st.pending?.i !== undefined ? { italic: !!st.pending.i } : {}) }, para: p };
+  const pend = st.pending;
+  return {
+    run: {
+      ...run, ...(pend?.b !== undefined ? { bold: !!pend.b } : {}), ...(pend?.i !== undefined ? { italic: !!pend.i } : {}),
+      ...(pend?.baseline !== undefined ? { baseline: (pend.baseline ?? 0) / 100000 } : {}),
+    },
+    para: p, body: text.body,
+  };
 }

@@ -55,6 +55,8 @@ select { height: 28px; border: 1px solid var(--line); border-radius: var(--radiu
 .menu-item { display: block; width: 100%; text-align: left; border: 0; background: none; padding: 6px 10px; border-radius: var(--radius); cursor: pointer; }
 .menu-item:hover:not(:disabled) { background: var(--bg); }
 .menu-item:disabled { opacity: 0.4; }
+.menu-item .tick { display: inline-block; width: 16px; color: var(--accent); }
+.menu-title { padding: 6px 10px 2px; color: var(--muted); font-size: 11px; }
 .colors { width: 236px; }
 .colors-title { font-size: 11px; color: var(--muted); margin: 6px 2px 4px; }
 .colors-grid { display: grid; grid-template-columns: repeat(10, 20px); gap: 3px; }

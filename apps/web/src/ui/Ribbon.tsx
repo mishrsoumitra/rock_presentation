@@ -2,7 +2,7 @@
 import { useRef, useState } from 'react';
 import { useEditor, type EditorState } from '../state/store.ts';
 import * as act from './actions.ts';
-import { formatPara, formatText, formattingHere } from './textActions.ts';
+import { clearFormatting, formatPara, formatText, formatTextBox, formattingHere } from './textActions.ts';
 import { Btn, ColorGrid, keepFocus, Menu, MenuItem, refocusText, ShapeGallery } from './widgets.tsx';
 
 const FONTS = ['Calibri', 'Calibri Light', 'Cambria', 'Arial', 'Times New Roman', 'Courier New', 'Aptos', 'Georgia', 'Verdana', 'Segoe UI'];
@@ -39,6 +39,8 @@ function shown(s: EditorState): string {
     s.session?.name, s.session?.password ? 'pw' : '', log?.canUndo, log?.undoLabel, log?.canRedo, log?.redoLabel, !!s.clipboard,
     s.selection.length, s.selection[0]?.local, !!s.text,
     run?.latin, run?.size, run?.bold, run?.italic, run?.underline, run?.strike, para?.bullet?.kind, para?.level, para?.align,
+    run?.baseline, run?.spacing, para?.lineSpacing.kind, para?.lineSpacing.val, para?.spaceBefore.val, para?.spaceAfter.val,
+    here.body?.anchor, here.body?.numCol, here.body && Object.values(here.body.insets).join(','),
   ].join('|');
 }
 
@@ -51,6 +53,9 @@ export function Ribbon({ extraTabs }: { extraTabs?: Partial<Record<Tab, React.Re
   const here = formattingHere();
   const run = here.run;
   const para = here.para?.props;
+  const body = here.body;
+  const lineIs = (m: number) => para?.lineSpacing.kind === 'pct' && Math.abs(para.lineSpacing.val - m) < 0.001;
+  const marginsAre = (l: number, t: number) => !!body && body.insets.l === l && body.insets.r === l && body.insets.t === t && body.insets.b === t;
   const hasSel = selection.length > 0;
   const isPicture = selection.length === 1 && selection[0]!.local === 'pic';
   const tabs: Tab[] = ['File', 'Home', 'Insert', 'Design', 'Transitions', 'Animations', 'Slide Show'];
@@ -100,7 +105,16 @@ export function Ribbon({ extraTabs }: { extraTabs?: Partial<Record<Tab, React.Re
               <Btn icon="italic" label="Italic" active={run?.italic} onClick={() => formatText({ i: !run?.italic }, 'Italic')} />
               <Btn icon="underline" label="Underline" active={!!run?.underline && run.underline !== 'none'} onClick={() => formatText({ u: run?.underline && run.underline !== 'none' ? 'none' : 'sng' }, 'Underline')} />
               <Btn icon="strike" label="Strikethrough" active={run?.strike === 'sngStrike'} onClick={() => formatText({ strike: run?.strike === 'sngStrike' ? 'noStrike' : 'sngStrike' }, 'Strikethrough')} />
+              <Btn icon="sup" label="Superscript" active={(run?.baseline ?? 0) > 0} onClick={() => formatText({ baseline: (run?.baseline ?? 0) > 0 ? 0 : 30000 }, 'Superscript')} testid="superscript" />
+              <Btn icon="sub" label="Subscript" active={(run?.baseline ?? 0) < 0} onClick={() => formatText({ baseline: (run?.baseline ?? 0) < 0 ? 0 : -25000 }, 'Subscript')} testid="subscript" />
               <Menu icon="text" label="Font Color" wide={false}>{close => <ColorGrid onPick={c => { close(); formatText({ fill: c === 'none' ? null : c }, 'Font Color'); }} />}</Menu>
+              <Menu icon="highlight" label="Text Highlight Color" wide={false} testid="highlight">{close => <ColorGrid onPick={c => { close(); formatText({ highlight: c === 'none' ? null : c }, 'Highlight'); }}
+                extra={<MenuItem label="No Color" onClick={() => { close(); formatText({ highlight: null }, 'Highlight'); }} />} />}</Menu>
+              <Menu icon="spacing" label="Character Spacing" wide={false} testid="char-spacing">{close => (
+                ([['Very Tight', -3], ['Tight', -1.5], ['Normal', 0], ['Loose', 3], ['Very Loose', 6]] as const).map(([l, pt]) =>
+                  <MenuItem key={l} label={l} checked={!!run && run.spacing === pt} onClick={() => { close(); formatText({ spc: pt * 100 }, 'Character Spacing'); }} />)
+              )}</Menu>
+              <Btn icon="clear" label="Clear All Formatting" onClick={clearFormatting} testid="clear-formatting" />
             </section>
             <section className="group" aria-label="Paragraph">
               <Btn icon="bullets" label="Bullets" active={para?.bullet?.kind === 'char'} onClick={() => formatPara({ bullet: para?.bullet?.kind === 'char' ? { kind: 'none' } : { kind: 'char', char: '•', font: 'Arial' } }, 'Bullets')} />
@@ -111,6 +125,26 @@ export function Ribbon({ extraTabs }: { extraTabs?: Partial<Record<Tab, React.Re
               <Btn icon="center" label="Center" active={para?.align === 'ctr'} onClick={() => formatPara({ algn: 'ctr' }, 'Center')} testid="center" />
               <Btn icon="right" label="Align Right" active={para?.align === 'r'} onClick={() => formatPara({ algn: 'r' }, 'Align Right')} />
               <Btn icon="justify" label="Justify" active={para?.align === 'just'} onClick={() => formatPara({ algn: 'just' }, 'Justify')} />
+              <Menu icon="lines" label="Line Spacing" wide={false} testid="line-spacing">{close => (<>
+                {[1, 1.15, 1.5, 2, 2.5, 3].map(m => <MenuItem key={m} label={m.toFixed(m === 1.15 ? 2 : 1)} checked={lineIs(m)} onClick={() => { close(); formatPara({ lnSpc: { pct: m * 100000 } }, 'Line Spacing'); }} />)}
+                <hr />
+                <div className="menu-title">Space before paragraph</div>
+                {[0, 6, 12, 18].map(pt => <MenuItem key={pt} label={`Before: ${pt} pt`} checked={para?.spaceBefore.kind === 'pts' && para.spaceBefore.val === pt * 100} onClick={() => { close(); formatPara({ spcBef: { pts: pt * 100 } }, 'Paragraph Spacing'); }} />)}
+                <div className="menu-title">Space after paragraph</div>
+                {[0, 6, 12, 18].map(pt => <MenuItem key={pt} label={`After: ${pt} pt`} checked={para?.spaceAfter.kind === 'pts' && para.spaceAfter.val === pt * 100} onClick={() => { close(); formatPara({ spcAft: { pts: pt * 100 } }, 'Paragraph Spacing'); }} />)}
+              </>)}</Menu>
+              <Menu icon="anchor" label="Align Text" wide={false} testid="align-text">{close => (<>
+                {([['Top', 't'], ['Middle', 'ctr'], ['Bottom', 'b']] as const).map(([l, a]) =>
+                  <MenuItem key={a} label={l} checked={body?.anchor === a} onClick={() => { close(); formatTextBox({ anchor: a }, 'Align Text'); }} />)}
+                <hr />
+                <div className="menu-title">Text box margins</div>
+                {([['None', 0, 0], ['Narrow', 45720, 45720], ['Normal', 91440, 45720], ['Wide', 182880, 91440]] as const).map(([l, x, y]) =>
+                  <MenuItem key={l} label={`Margins: ${l}`} checked={marginsAre(x, y)} onClick={() => { close(); formatTextBox({ lIns: x, rIns: x, tIns: y, bIns: y }, 'Text Margins'); }} />)}
+              </>)}</Menu>
+              <Menu icon="columns" label="Columns" wide={false} testid="columns">{close => (
+                ([['One Column', 1], ['Two Columns', 2], ['Three Columns', 3]] as const).map(([l, n]) =>
+                  <MenuItem key={n} label={l} checked={(body?.numCol ?? 1) === n} onClick={() => { close(); formatTextBox({ numCol: n === 1 ? null : n }, 'Columns'); }} />)
+              )}</Menu>
             </section>
             {isPicture && (
               <section className="group" aria-label="Picture">
