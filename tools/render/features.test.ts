@@ -1364,6 +1364,115 @@ describe('rulers and guides', () => {
   }, 60_000);
 });
 
+describe('presenter view and the laser pointer', () => {
+  /** Three slides marked in a text box and in their notes; the first slide on screen. */
+  async function threeWithNotes(): Promise<void> {
+    for (const [i, mark] of ['one', 'two', 'three'].entries()) {
+      if (i) await page.getByTestId('new-slide').click();
+      await textBox(mark);
+      await page.keyboard.press('Escape');
+      await page.keyboard.press('Escape');
+      if (i !== 2) {                                                     // the last slide has no notes
+        await page.getByTestId('notes').click();
+        await page.keyboard.type(`Say ${mark}.`);
+        await page.keyboard.press('Escape');
+      }
+    }
+    await state('s.setSlide(s.session.ed.doc.slideParts()[0]);');
+  }
+  const startPresenter = async () => {
+    await page.getByRole('tab', { name: 'Slide Show' }).click();
+    await page.getByTestId('presenter-view').click();
+    await page.getByTestId('presenter-slide').waitFor();
+  };
+  const text = (id: string) => page.getByTestId(id).innerText();
+
+  test('the slide with the next slide, the notes, a count and a running timer; the keys move through the show; Escape goes back to the slide shown', async () => {
+    await threeWithNotes();
+    await startPresenter();
+    expect(await text('presenter-count')).toBe('Slide 1 of 3');
+    expect(await text('presenter-notes')).toBe('Say one.');
+    expect(await page.getByTestId('presenter-next').count()).toBe(1);
+    // the slide is drawn in its part of the window, not over all of it
+    const slide = (await page.getByTestId('presenter-slide').locator('canvas').boundingBox())!;
+    expect(slide.width).toBeGreaterThan(600);
+    expect(slide.width).toBeLessThan(1000);
+    expect(Math.abs(slide.width / slide.height - 16 / 9)).toBeLessThan(0.02);
+    // the next slide's picture arrives
+    await expect.poll(() => page.getByTestId('presenter-next').evaluate(c => (c as HTMLCanvasElement).width), { timeout: 15_000 }).toBeGreaterThan(100);
+
+    // the timer runs, and a click starts it again
+    expect(await text('presenter-timer')).toMatch(/^0:0[0-2]$/);
+    await page.waitForTimeout(1300);
+    expect(await text('presenter-timer')).toMatch(/^0:0[1-4]$/);
+    await page.getByTestId('presenter-timer').click();
+    expect(await text('presenter-timer')).toBe('0:00');
+    expect(await text('presenter-clock')).toMatch(/\d{1,2}:\d{2}/);
+
+    await page.keyboard.press('ArrowRight');
+    await expect.poll(() => text('presenter-count')).toBe('Slide 2 of 3');
+    expect(await text('presenter-notes')).toBe('Say two.');
+    await page.getByTestId('presenter-nextbtn').click();
+    await expect.poll(() => text('presenter-count')).toBe('Slide 3 of 3');
+    expect(await text('presenter-notes')).toBe('No notes for this slide.');
+    expect(await page.getByTestId('presenter-next-end').innerText()).toBe('End of slide show');
+    await page.getByTestId('presenter-prev').click();
+    await expect.poll(() => text('presenter-count')).toBe('Slide 2 of 3');
+
+    await page.keyboard.press('Escape');
+    await page.getByTestId('canvas').waitFor();
+    expect(await state<number>('return s.session.ed.doc.slideParts().indexOf(s.slide) + 1;')).toBe(2);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('after the last slide the count says the show has ended; End Show leaves it', async () => {
+    await threeWithNotes();
+    await state('s.setSlide(s.session.ed.doc.slideParts()[2]);');
+    await startPresenter();
+    expect(await text('presenter-count')).toBe('Slide 3 of 3');
+    await page.keyboard.press('ArrowRight');
+    await expect.poll(() => text('presenter-count')).toBe('End of slide show');
+    await page.getByTestId('presenter-end').click();
+    await page.getByTestId('canvas').waitFor();
+    expect(await page.getByTestId('presenter').count()).toBe(0);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('L turns on a laser pointer that follows the mouse, and while it is on a click does not advance the show', async () => {
+    await threeWithNotes();
+    await startPresenter();
+    const box = (await page.getByTestId('presenter-slide').boundingBox())!;
+    await page.mouse.move(box.x + 100, box.y + 100);
+    expect(await page.getByTestId('laser').count()).toBe(0);
+    await page.keyboard.press('l');
+    expect(await page.getByTestId('presenter-laser').getAttribute('aria-pressed')).toBe('true');
+    await page.mouse.move(box.x + 220, box.y + 160);
+    const dot = (await page.getByTestId('laser').boundingBox())!;
+    expect(Math.abs(dot.x + dot.width / 2 - (box.x + 220))).toBeLessThan(2);
+    expect(Math.abs(dot.y + dot.height / 2 - (box.y + 160))).toBeLessThan(2);
+    await page.mouse.click(box.x + 220, box.y + 160);
+    expect(await text('presenter-count')).toBe('Slide 1 of 3');           // pointing is not clicking
+    await page.keyboard.press('l');
+    expect(await page.getByTestId('laser').count()).toBe(0);
+    await page.mouse.click(box.x + 220, box.y + 160);
+    await expect.poll(() => text('presenter-count')).toBe('Slide 2 of 3');
+    await page.keyboard.press('Escape');
+
+    // the plain slide show has the pointer too
+    await page.getByTestId('canvas').waitFor();
+    await page.getByRole('tab', { name: 'Slide Show' }).click();
+    await page.getByTestId('present').click();
+    await page.getByTestId('presenter').waitFor();
+    expect(await page.getByTestId('presenter-notes').count()).toBe(0);
+    await page.keyboard.press('L');
+    await page.mouse.move(400, 300);
+    await page.mouse.move(420, 310);
+    expect(await page.getByTestId('laser').count()).toBe(1);
+    await page.keyboard.press('Escape');
+    expect(errors).toEqual([]);
+  }, 60_000);
+});
+
 describe('bullet and number styles', () => {
   test('pick a bullet character and a numbering scheme; the menus tick the one in force; text in a box gets a hanging indent', async () => {
     await textBox('one\ntwo');

@@ -314,8 +314,9 @@ export function Ribbon({ extraTabs }: { extraTabs?: Partial<Record<Tab, React.Re
         {tab === 'Slide Show' && (
           <>
             <section className="group">
-              <Btn icon="play" label="From Beginning" wide disabled={!session} onClick={() => useEditor.setState({ mode: 'present', slide: session?.ed.doc.slideParts()[0] ?? null })} testid="present" />
-              <Btn icon="play" label="From Current Slide" wide disabled={!session} onClick={() => useEditor.setState({ mode: 'present' })} />
+              <Btn icon="play" label="From Beginning" wide disabled={!session} onClick={() => useEditor.setState({ mode: 'present', presenterView: false, slide: session?.ed.doc.slideParts()[0] ?? null })} testid="present" />
+              <Btn icon="play" label="From Current Slide" wide disabled={!session} onClick={() => useEditor.setState({ mode: 'present', presenterView: false })} />
+              <Btn icon="layout" label="Presenter View" wide disabled={!session} onClick={() => useEditor.setState({ mode: 'present', presenterView: true })} testid="presenter-view" />
               <Btn icon="hide" label="Hide Slide" wide disabled={!session} onClick={act.toggleHidden} />
             </section>
           </>
