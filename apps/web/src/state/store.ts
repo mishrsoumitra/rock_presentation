@@ -1,7 +1,7 @@
 // apps/web/src/state/store.ts  -- the editor's state: the open deck, the slide on screen, selection, text editing
 import { create } from 'zustand';
 import { isEncryptedPackage, OfficeCryptoError } from '@pptx/crypto';
-import { Editor, paragraphLength, paragraphs, prepareForSave, type CellRef, type Command, type ShapeClip, type RunPatch, type TextPos } from '@pptx/editor-core';
+import { Editor, paragraphLength, paragraphs, prepareForSave, type CellRef, type Command, type ShapeClip, type SlideClip, type RunPatch, type TextPos } from '@pptx/editor-core';
 import { ShapeView } from '@pptx/model';
 import { OpcError, OpcPackage } from '@pptx/opc';
 import type { FontRegistry } from '@pptx/text';
@@ -57,6 +57,8 @@ export interface EditorState {
   /** The find and replace panel is open. */
   finding: boolean;
   clipboard: ShapeClip | null;
+  /** A copied or cut slide, held apart from the deck, and the mark it carries on the system clipboard. */
+  slideClip: { clip: SlideClip; id: string } | null;
   /** The mark the copied shapes carry on the system clipboard, so a paste of that clipboard brings them back whole. */
   clipId: string | null;
   message: { kind: 'info' | 'error'; text: string } | null;
@@ -98,7 +100,7 @@ function fitted(s: Session, t: TextEditing | null): TextEditing | null {
 
 export const useEditor = create<EditorState>((set, get) => ({
   session: null, version: 0, slide: null, selection: [], entered: null, text: null, cells: null, pending: null,
-  zoom: 'fit', drawing: null, mode: 'edit', pane: 'none', finding: false, menu: null, clipboard: null, clipId: null, message: null, askPassword: null,
+  zoom: 'fit', drawing: null, mode: 'edit', pane: 'none', finding: false, menu: null, clipboard: null, clipId: null, slideClip: null, message: null, askPassword: null,
 
   async open(bytes, name, password) {
     performance.mark('open-start');

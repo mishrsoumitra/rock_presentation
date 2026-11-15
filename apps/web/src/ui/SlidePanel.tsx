@@ -2,7 +2,7 @@
 import { memo, useEffect, useRef, useState } from 'react';
 import { ANIM_UNDERSTOOD } from '@pptx/anim';
 import { useEditor } from '../state/store.ts';
-import { deleteCurrentSlide, duplicateCurrentSlide, moveCurrentSlide } from './actions.ts';
+import { deleteCurrentSlide, duplicateCurrentSlide, moveCurrentSlide, copyCurrentSlide, cutCurrentSlide, pasteSlideClip } from './actions.ts';
 
 const THUMB = 168;
 
@@ -88,6 +88,29 @@ export function SlidePanel() {
   return (
     <aside
       className="slides" tabIndex={0} aria-label="Slides"
+      // Ctrl/Cmd+C, X and V with the panel focused copy, cut and paste the current slide; the clipboard carries a
+      // mark that names the slide held in memory, so only a paste of that same clipboard brings it back
+      onCopy={e => {
+        const id = copyCurrentSlide();
+        if (!id) return;
+        e.preventDefault();
+        e.clipboardData.setData('text/plain', `Slide ${parts.indexOf(useEditor.getState().slide ?? '') + 1}`);
+        e.clipboardData.setData('text/html', `<div data-pptx-slide="${id}"></div>`);
+      }}
+      onCut={e => {
+        const n = parts.indexOf(useEditor.getState().slide ?? '') + 1;
+        const id = cutCurrentSlide();
+        if (!id) return;
+        e.preventDefault();
+        e.clipboardData.setData('text/plain', `Slide ${n}`);
+        e.clipboardData.setData('text/html', `<div data-pptx-slide="${id}"></div>`);
+      }}
+      onPaste={e => {
+        const held = useEditor.getState().slideClip;
+        if (!held || !e.clipboardData.getData('text/html').includes(`data-pptx-slide="${held.id}"`)) return;
+        e.preventDefault();
+        pasteSlideClip();
+      }}
       onKeyDown={e => {
         if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteCurrentSlide(); }
         else if ((e.metaKey || e.ctrlKey) && e.key === 'd') { e.preventDefault(); duplicateCurrentSlide(); }

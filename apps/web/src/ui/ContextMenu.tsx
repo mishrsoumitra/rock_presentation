@@ -28,6 +28,10 @@ export function menuEntries(s: EditorState): MenuEntry[] {
   ];
   if (menu.kind === 'thumb') {
     return [
+      { label: 'Cut Slide', run: () => void act.cutCurrentSlide(), disabled: slides.length < 2, keys: 'Ctrl+X', testid: 'menu-cut-slide' },
+      { label: 'Copy Slide', run: () => void act.copyCurrentSlide(), keys: 'Ctrl+C', testid: 'menu-copy-slide' },
+      { label: 'Paste Slide', run: act.pasteSlideClip, disabled: !s.slideClip, keys: 'Ctrl+V', testid: 'menu-paste-slide' },
+      'separator',
       ...slideEntries, 'separator',
       { label: 'Move Slide Up', run: () => act.moveCurrentSlide(index - 1), disabled: index <= 0, testid: 'menu-slide-up' },
       { label: 'Move Slide Down', run: () => act.moveCurrentSlide(index + 1), disabled: index >= slides.length - 1, testid: 'menu-slide-down' },

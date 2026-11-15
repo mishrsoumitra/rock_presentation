@@ -62,7 +62,7 @@ function notesMasterXml(strict: boolean, size: { cx: number; cy: number }): stri
  * The deck's notes master, made when it has none: a new master with its own copy of the first slide master's theme
  * (a theme part belongs to one master), listed in p:notesMasterIdLst. Runs inside a structural edit.
  */
-function ensureNotesMaster(ed: Editor): string {
+export function ensureNotesMaster(ed: Editor): string {
   const existing = ed.doc.notesMaster();
   if (existing) return existing;
   const pkg = ed.pkg;

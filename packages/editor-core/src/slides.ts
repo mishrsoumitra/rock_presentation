@@ -1,13 +1,14 @@
 // packages/editor-core/src/slides.ts  -- adding, deleting, duplicating and moving slides; layouts; sections
 import { encodeXmlText, type XmlElement } from '@pptx/xml';
-import { normalizeName, resolveTarget } from '@pptx/opc';
+import { normalizeName, OpcPackage, partKey, resolveTarget } from '@pptx/opc';
 import {
   attr, child, children, CONTENT_TYPE, insertInOrder, int, is, relKind, relType, removeChildren, setAttr, ShapeView, uriFor,
 } from '@pptx/model';
 import { matchLayoutPlaceholder } from '@pptx/resolve';
 import type { Editor } from './editor.ts';
 import type { Command } from './history.ts';
-import { collectOrphans, copyPart, freeName, relRefs } from './parts.ts';
+import { ensureNotesMaster } from './notes.ts';
+import { addRelationshipWithId, collectOrphans, copyPart, freeName, relRefs } from './parts.ts';
 import { retarget } from './pictures.ts';
 import { effectiveXfrm } from './transform.ts';
 import { element, insertAt, nextShapeId, unitsIn } from './xml.ts';
@@ -257,5 +258,103 @@ export function setBackground(ed: Editor, slide: string, color: { hex: string } 
       if (color) insertInOrder(cSld, element(cSld, `<p:bg><p:bgPr><a:solidFill><a:srgbClr val="${color.hex.replace(/^#/, '').toUpperCase()}"/></a:solidFill><a:effectLst/></p:bgPr></p:bg>`, ed.strict));
     },
   });
+}
+
+/**
+ * A copied slide, held apart from the deck: the slide and everything it owns (notes, charts, pictures) in a small
+ * package of its own, so it can be pasted after the deck has changed, after the slide itself was cut, or into
+ * another deck. What a slide only points at is remembered by name instead: its layout, and the slides it links to.
+ */
+export interface SlideClip {
+  /** The deck it was copied from: pasting back there reuses that deck's layout and pictures. */
+  source: OpcPackage;
+  holding: OpcPackage;
+  /** The slide's part name in `holding`. */
+  slide: string;
+  /** The layout it used in `source`. */
+  layout: string | undefined;
+  /** Links to other slides of `source`: relationship id to the slide's part name there. */
+  links: Map<string, string>;
+  /** Parts of `holding` that are copies of media of `source`: holding part key to the name there. */
+  media: Map<string, string>;
+}
+
+const MEDIA_KINDS = new Set(['image', 'media', 'video', 'audio']);
+
+/** Copy a slide to hold apart from the deck (see `SlideClip`). The deck is not changed. */
+export function copySlide(ed: Editor, slide: string): SlideClip {
+  const holding = OpcPackage.create();
+  const copied = new Map<string, string>();
+  const media = new Map<string, string>();
+  const name = copyPart(holding, ed.pkg, slide, copied, kind => (MEDIA_KINDS.has(kind) ? undefined : null));
+  for (const [key, held] of copied) {
+    const original = ed.pkg.getPart(key)?.name;
+    if (original && /^\/ppt\/media\//i.test(original)) media.set(partKey(held), original);
+  }
+  const links = new Map<string, string>();
+  for (const r of ed.pkg.relationships(slide)) {
+    if (!r.external && relKind(r.type) === 'slide') links.set(r.id, resolveTarget(normalizeName(slide), r.target));
+  }
+  return { source: ed.pkg, holding, slide: name, layout: ed.doc.layoutOf(slide), links, media };
+}
+
+function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
+/**
+ * Paste a copied slide at a position (at the end by default). In the deck it came from it takes the layout it had
+ * and shares the pictures still there; anywhere else it takes the deck's first layout and brings its pictures.
+ * Links to slides that are no longer there are removed, the linked text staying.
+ */
+export function pasteSlide(ed: Editor, clip: SlideClip, index?: number): { command: Command; part: string | undefined } {
+  const pres = ed.presentationRoot;
+  const main = ed.doc.mainPart;
+  let part: string | undefined;
+  const command = ed.edit({
+    label: 'Paste Slide', parts: [main], structural: true, scope: () => [pres],
+    apply: () => {
+      const pkg = ed.pkg;
+      const home = clip.source === pkg;
+      const firstMaster = ed.doc.masterParts()[0];
+      const layout = home && clip.layout && pkg.getPart(clip.layout) ? clip.layout : firstMaster ? ed.doc.layoutsOf(firstMaster)[0] : undefined;
+      if (!layout) throw new Error('this presentation has no slide layout to paste onto');
+      const copy = copyPart(pkg, clip.holding, clip.slide, new Map(), (kind, target) => {
+        if (!MEDIA_KINDS.has(kind)) return null;
+        // a picture the deck still has, unchanged, is shared rather than stored twice
+        const original = home ? clip.media.get(partKey(target)) : undefined;
+        const mine = original ? pkg.getPart(original) : undefined;
+        const held = clip.holding.getPart(target);
+        return mine && held && sameBytes(mine.bytes, held.bytes) ? mine.name : undefined;
+      });
+      part = copy;
+      // links first, under the ids the slide's XML names them by; then what still points at a relationship that
+      // was not brought along (a link to a slide that is gone) is removed; only then the relationships that get
+      // new ids, which may now reuse an id nothing names any more
+      const slides = new Set(ed.doc.slideParts());
+      for (const [id, target] of clip.links) {
+        if (home && slides.has(target) && pkg.getPart(target)) addRelationshipWithId(pkg, copy, id, relType('slide', ed.strict), target, false);
+      }
+      const root = pkg.xml(copy).root;
+      const known = new Set(pkg.relationships(copy).map(r => r.id));
+      unlinkIn(root, new Set(relRefs(root).map(r => r.value).filter(id => !known.has(id))));
+      pkg.markDirty(copy);
+      pkg.addRelationship(copy, relType('slideLayout', ed.strict), layout);
+      // the notes page points back at its slide, and at the deck's notes master
+      for (const r of pkg.relationships(copy)) {
+        if (r.external || relKind(r.type) !== 'notesSlide') continue;
+        const notes = resolveTarget(normalizeName(copy), r.target);
+        pkg.addRelationship(notes, relType('slide', ed.strict), copy);
+        pkg.addRelationship(notes, relType('notesMaster', ed.strict), ensureNotesMaster(ed));
+      }
+      const rId = pkg.addRelationship(main, relType('slide', ed.strict), copy);
+      const id = ed.doc.presentation.addSlideId(rId, index);
+      joinSection(ed, pres, id);
+    },
+  });
+  return { command, get part() { return part; } };
 }
 

@@ -438,6 +438,87 @@ describe('the clipboard on the slide', () => {
   }, 60_000);
 });
 
+describe('copy, cut and paste slides', () => {
+  /** What tells the slides apart: the text of each slide's text boxes. */
+  const marks = () => state<string[]>(`
+    const textOf = el => { const out = []; const walk = e => { if (e.local === 't') out.push(e.children.map(c => c.value ?? '').join('')); for (const c of e.children) if (c.kind === 'element') walk(c); }; walk(el); return out.join(''); };
+    return s.session.ed.doc.slideParts().map(p => s.session.ed.doc.slide(p).shapes.filter(sh => sh.name.startsWith('TextBox')).map(sh => textOf(sh.el)).join('+'));`);
+  const current = () => state<number>('return s.session.ed.doc.slideParts().indexOf(s.slide) + 1;');
+  /** Three slides, each with a text box saying which it is; the slide panel focused, on the first slide. */
+  async function threeSlides(): Promise<void> {
+    for (const [i, mark] of ['one', 'two', 'three'].entries()) {
+      if (i) await page.getByTestId('new-slide').click();
+      await textBox(mark);
+      await page.keyboard.press('Escape');
+      await page.keyboard.press('Escape');
+    }
+    await page.getByTestId('thumb-1').click();
+    await page.locator('aside.slides').focus();
+  }
+
+  test('with the slide panel focused: copy and paste puts a copy after the current slide; cut and paste moves a slide', async () => {
+    await threeSlides();
+    const copied = await clipboardEvent('copy');
+    expect(copied.handled).toBe(true);
+    expect(copied.plain).toBe('Slide 1');
+    expect(copied.html).toMatch(/^<div data-pptx-slide="[a-z0-9-]+"><\/div>$/);
+    expect(await marks()).toEqual(['one', 'two', 'three']);
+
+    await page.getByTestId('thumb-2').click();
+    await page.locator('aside.slides').focus();
+    await clipboardEvent('paste', { 'text/plain': copied.plain, 'text/html': copied.html });
+    expect(await marks()).toEqual(['one', 'two', 'one', 'three']);
+    expect(await current()).toBe(3);                                     // on the pasted slide
+    expect(await state<string>('return s.session.ed.log.undoLabel;')).toBe('Paste Slide');
+
+    // cut the first slide and paste it at the end
+    await page.getByTestId('thumb-1').click();
+    await page.locator('aside.slides').focus();
+    const cut = await clipboardEvent('cut');
+    expect(cut.handled).toBe(true);
+    expect(await marks()).toEqual(['two', 'one', 'three']);
+    await page.getByTestId('thumb-3').click();
+    await page.locator('aside.slides').focus();
+    await clipboardEvent('paste', { 'text/plain': cut.plain, 'text/html': cut.html });
+    expect(await marks()).toEqual(['two', 'one', 'three', 'one']);
+
+    // a clipboard that is not that slide (copied since, elsewhere) pastes nothing here
+    expect((await clipboardEvent('paste', { 'text/plain': 'x', 'text/html': '<div data-pptx-slide="other"></div>' })).handled).toBe(false);
+    expect((await clipboardEvent('paste', { 'text/plain': 'just text' })).handled).toBe(false);
+    expect((await marks()).length).toBe(4);
+
+    const ed = await saved();
+    expect(ed.doc.slideParts().length).toBe(4);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('the only slide of a deck cannot be cut; shapes on the slide are not copied while the panel has the focus', async () => {
+    await textBox('alone');
+    await page.keyboard.press('Escape');                                 // the box stays selected
+    await page.locator('aside.slides').focus();
+    expect((await clipboardEvent('cut')).handled).toBe(false);
+    expect(await marks()).toEqual(['alone']);
+    const copied = await clipboardEvent('copy');
+    expect(copied.html).toContain('data-pptx-slide');                    // the slide, not the selected box
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('from the right-click menu of a thumbnail: Copy Slide, then Paste Slide on another', async () => {
+    await threeSlides();
+    await page.getByTestId('thumb-3').click({ button: 'right' });
+    await page.getByTestId('menu-copy-slide').click();
+    await page.getByTestId('thumb-1').click({ button: 'right' });
+    await page.getByTestId('menu-paste-slide').click();
+    expect(await marks()).toEqual(['one', 'three', 'two', 'three']);
+    await page.getByTestId('thumb-2').click({ button: 'right' });
+    await page.getByTestId('menu-cut-slide').click();
+    expect(await marks()).toEqual(['one', 'two', 'three']);
+    await page.keyboard.press('Control+z');
+    expect(await marks()).toEqual(['one', 'three', 'two', 'three']);
+    expect(errors).toEqual([]);
+  }, 60_000);
+});
+
 describe('bullet and number styles', () => {
   test('pick a bullet character and a numbering scheme; the menus tick the one in force; text in a box gets a hanging indent', async () => {
     await textBox('one\ntwo');
@@ -823,8 +904,8 @@ describe('the right-click menu', () => {
 
     await thumbMenu(1);
     expect(await menu().getAttribute('data-kind')).toBe('thumb');
-    expect(await labels()).toEqual(['New Slide', 'Duplicate Slide', 'Delete Slide', 'Hide Slide', 'Move Slide Up', 'Move Slide Down']);
-    expect(await disabled()).toEqual(['Delete Slide', 'Move Slide Up', 'Move Slide Down']);
+    expect(await labels()).toEqual(['Cut Slide', 'Copy Slide', 'Paste Slide', 'New Slide', 'Duplicate Slide', 'Delete Slide', 'Hide Slide', 'Move Slide Up', 'Move Slide Down']);
+    expect(await disabled()).toEqual(['Cut Slide', 'Paste Slide', 'Delete Slide', 'Move Slide Up', 'Move Slide Down']);
     await page.getByTestId('menu-new-slide').click();
     await thumbMenu(2);
     await page.getByTestId('menu-duplicate-slide').click();
@@ -834,7 +915,7 @@ describe('the right-click menu', () => {
     expect(await current()).toBe(3);
     await thumbMenu(1);
     expect(await current()).toBe(1);
-    expect(await disabled()).toEqual(['Move Slide Up']);
+    expect(await disabled()).toEqual(['Paste Slide', 'Move Slide Up']);
     await page.getByTestId('menu-slide-down').click();
     expect(await order()).toEqual(['2', '1', '3']);
     expect(await current()).toBe(2);

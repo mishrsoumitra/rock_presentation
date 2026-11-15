@@ -1,6 +1,6 @@
 // apps/web/src/ui/actions.ts  -- what the ribbon and the keyboard do: commands on the current selection
 import {
-  addSlide, align, applyLayout, compound, copyShapes, cropPicture, deleteShapes, deleteSlide, distribute, duplicateShapes, duplicateSlide, flip, group, importMasters, replacePicture,
+  addSlide, align, applyLayout, compound, copyShapes, copySlide, pasteSlide, cropPicture, deleteShapes, deleteSlide, distribute, duplicateShapes, duplicateSlide, flip, group, importMasters, replacePicture,
   insertPicture, insertShape, insertTable, insertTextBox, moveBy, ROW_HEIGHT, moveSlide, pasteShapes, prepareImage, prepareSvg, prepareTemplate, rotateQuarter,
   setBackground, setFill, setLine, setSlideHidden, setSlideSize, setTransforms, ungroup, zOrder, type Alignment, type ColorSpec, type LineSpec,
   type ScaleMode, type ZOrder,
@@ -320,6 +320,36 @@ export function duplicateCurrentSlide(): void {
   const ed = s.session?.ed;
   if (!ed || !s.slide) return;
   const r = duplicateSlide(ed, s.slide);
+  s.run(r.command);
+  if (r.part) s.setSlide(r.part);
+}
+
+/** Copy the current slide, to paste here or in another deck opened in this tab. Returns the mark for the clipboard. */
+export function copyCurrentSlide(): string | undefined {
+  const s = st();
+  const ed = s.session?.ed;
+  if (!ed || !s.slide) return undefined;
+  const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  useEditor.setState({ slideClip: { clip: copySlide(ed, s.slide), id } });
+  return id;
+}
+
+/** Cut the current slide: copied, then deleted. The only slide of a deck stays where it is. */
+export function cutCurrentSlide(): string | undefined {
+  const ed = st().session?.ed;
+  if (!ed || ed.doc.slideParts().length < 2) return undefined;
+  const id = copyCurrentSlide();
+  if (id) deleteCurrentSlide();
+  return id;
+}
+
+/** Paste the copied slide after the current one, and go to it. */
+export function pasteSlideClip(): void {
+  const s = st();
+  const ed = s.session?.ed;
+  if (!ed || !s.slideClip) return;
+  const slides = ed.doc.slideParts();
+  const r = pasteSlide(ed, s.slideClip.clip, s.slide ? slides.indexOf(s.slide) + 1 : slides.length);
   s.run(r.command);
   if (r.part) s.setSlide(r.part);
 }
