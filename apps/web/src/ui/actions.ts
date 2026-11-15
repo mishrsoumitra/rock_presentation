@@ -6,6 +6,7 @@ import {
   type ScaleMode, type ZOrder,
 } from '@pptx/editor-core';
 import { OpcPackage } from '@pptx/opc';
+import { paragraphLength, paragraphs } from '@pptx/editor-core';
 import { ShapeView } from '@pptx/model';
 import type { XmlElement } from '@pptx/xml';
 import { blankPresentation } from '../engine/blank.ts';
@@ -135,6 +136,27 @@ export async function insertPictureFile(file: File): Promise<void> {
   const r = insertPicture(c.ed, c.part, prepared, undefined, file.name.replace(/\.[^.]+$/, ''));
   c.s.run(r.command);
   c.s.select(inserted(r.id));
+}
+
+/** Select every shape of the slide itself (not the layout's or master's), as Ctrl+A does. */
+export function selectAllShapes(): void {
+  const s = st();
+  if (!s.session || !s.slide) return;
+  const scene = s.session.scenes.get(s.slide);
+  s.select(scene.slide.shapes.filter(x => x.layer === 'slide' && x.source).map(x => x.source.view.el));
+}
+
+/** Start editing the text of the one selected shape, with the caret at its end (Enter, F2, the menu's Edit Text). */
+export function editSelectedText(): boolean {
+  const s = st();
+  if (!s.session || !s.slide || s.selection.length !== 1) return false;
+  const v = new ShapeView(s.selection[0]!, s.session.ed.doc.owner(s.slide));
+  const body = v.txBody;
+  if (!body) return false;
+  const ps = paragraphs(body);
+  const end = { p: Math.max(0, ps.length - 1), offset: ps.length ? paragraphLength(ps[ps.length - 1]!) : 0 };
+  s.setState({ text: { part: s.slide, el: v.el, caret: end, anchor: end } });
+  return true;
 }
 
 export function deleteSelection(): void {

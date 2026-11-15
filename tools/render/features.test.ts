@@ -342,3 +342,188 @@ describe('find and replace', () => {
     expect(errors).toEqual([]);
   }, 60_000);
 });
+
+describe('the right-click menu', () => {
+  /** Where a point of the slide (EMU) is on the page. */
+  const onScreen = (x: number, y: number) => page.evaluate(([x, y]) => {
+    const st = (globalThis as unknown as { __stage: { getAbsoluteTransform(): { point(p: { x: number; y: number }): { x: number; y: number } }; container(): HTMLElement } }).__stage;
+    const p = st.getAbsoluteTransform().point({ x, y });
+    const r = st.container().getBoundingClientRect();
+    return { x: r.left + p.x, y: r.top + p.y };
+  }, [x, y] as const);
+  /** Draw a rectangle on the slide by dragging, at a box given in EMU; it ends up selected. */
+  async function rect(x: number, y: number, w: number, h: number): Promise<void> {
+    await drawnOnScreen();
+    await page.getByTestId('shapes').click();
+    await page.locator('[data-testid="shape-gallery"] button[data-prst="rect"]').click();
+    const a = await onScreen(x, y), b = await onScreen(x + w, y + h);
+    await page.mouse.move(a.x, a.y);
+    await page.mouse.down();
+    await page.mouse.move(b.x, b.y, { steps: 4 });
+    await page.mouse.up();
+  }
+  /** The slide as it is now is on screen: two frames have been drawn since the last change (a person is never faster). */
+  const drawnOnScreen = () => page.evaluate(() => new Promise<void>(done => requestAnimationFrame(() => requestAnimationFrame(() => done()))));
+  const rightClick = async (x: number, y: number) => { await drawnOnScreen(); const p = await onScreen(x, y); await page.mouse.click(p.x, p.y, { button: 'right' }); };
+  const menu = () => page.getByTestId('context-menu');
+  const labels = async () => (await menu().getByRole('menuitem').allInnerTexts()).map(t => t.split('\n')[0]!);
+  const disabled = async () => (await menu().locator('button:disabled').allInnerTexts()).map(t => t.split('\n')[0]!);
+  /** Names of the slide's own drawn shapes (not its placeholders), in z-order, and how many are selected. */
+  const drawn = () => state<string[]>(`return s.session.ed.doc.slide(s.slide).shapes.filter(sh => !sh.placeholder).map(sh => sh.name);`);
+  const selected = () => state<number>('return s.selection.length;');
+  const EMPTY = [600000, 600000] as const;            // a spot of the title slide with nothing on it
+
+  test('on a shape: clipboard, duplicate, delete, order and grouping; on the empty slide: paste, select all and slide commands', async () => {
+    await rect(1000000, 5500000, 1500000, 800000);
+    expect(await drawn()).toEqual(['Rectangle 3']);
+
+    await rightClick(1700000, 5900000);
+    expect(await menu().getAttribute('data-kind')).toBe('shape');
+    expect(await labels()).toEqual(['Cut', 'Copy', 'Paste', 'Duplicate', 'Delete', 'Edit Text', 'Bring to Front', 'Bring Forward', 'Send Backward', 'Send to Back', 'Group', 'Ungroup']);
+    expect(await disabled()).toEqual(['Paste', 'Group', 'Ungroup']);     // nothing copied yet; one shape, not a group
+    await page.getByTestId('menu-duplicate').click();
+    expect(await menu().count()).toBe(0);                                // choosing closes the menu
+    expect((await drawn()).length).toBe(2);
+
+    // the empty slide: nothing is selected there, and the menu is the slide's
+    await rightClick(...EMPTY);
+    expect(await selected()).toBe(0);
+    expect(await menu().getAttribute('data-kind')).toBe('slide');
+    expect(await labels()).toEqual(['Paste', 'Select All', 'New Slide', 'Duplicate Slide', 'Delete Slide', 'Hide Slide']);
+    expect(await disabled()).toEqual(['Paste', 'Delete Slide']);         // the only slide cannot be deleted
+    await page.getByTestId('menu-select-all').click();
+    expect(await selected()).toBe(4);                                    // two placeholders and the two rectangles
+
+    // a right click on one of several selected shapes keeps them all selected: Group is for all of them
+    await page.keyboard.press('Escape');
+    await rightClick(1700000, 5900000);
+    await menu().waitFor();
+    await page.keyboard.press('Escape');
+    expect(await menu().count()).toBe(0);
+    expect(await selected()).toBe(1);                                    // Escape closed the menu, not the selection
+    await page.keyboard.press('Control+a');
+    await rightClick(1700000, 5900000);
+    expect(await selected()).toBe(4);
+    expect(await disabled()).not.toContain('Group');
+    await page.getByTestId('menu-group').click();
+    expect(await state<number>('return s.session.ed.doc.slide(s.slide).shapes.length;')).toBe(1);
+    await rightClick(1700000, 5900000);
+    expect(await disabled()).toEqual(['Paste', 'Group']);                 // one group selected: Ungroup is on, Group is not
+    await page.getByTestId('menu-ungroup').click();
+    expect(await state<number>('return s.session.ed.doc.slide(s.slide).shapes.length;')).toBe(4);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('copy on one slide and paste from the menu on another; cut and delete take the shape away', async () => {
+    await rect(1000000, 5500000, 1500000, 800000);
+    await rightClick(1700000, 5900000);
+    await page.getByTestId('menu-copy').click();
+    await page.getByTestId('new-slide').click();
+    await rightClick(...EMPTY);
+    expect(await disabled()).not.toContain('Paste');
+    await page.getByTestId('menu-paste').click();
+    await expect.poll(drawn).toEqual(['Rectangle 3']);
+    expect(await selected()).toBe(1);
+
+    await rightClick(1700000, 5900000);
+    await page.getByTestId('menu-cut').click();
+    expect(await drawn()).toEqual([]);
+    await rightClick(...EMPTY);
+    await page.getByTestId('menu-paste').click();
+    await expect.poll(() => drawn().then(d => d.length)).toBe(1);
+    const at = await state<{ x: number; y: number }>(`
+      const sp = s.selection[0].children.find(c => c.local === 'spPr'), x = sp.children.find(c => c.local === 'xfrm'), off = x.children.find(c => c.local === 'off');
+      return { x: Number(off.attrs.find(a => a.local === 'x').value), y: Number(off.attrs.find(a => a.local === 'y').value) };`);
+    await rightClick(at.x + 300000, at.y + 300000);
+    await page.getByTestId('menu-delete').click();
+    expect(await drawn()).toEqual([]);
+    expect(await state<string>('return s.session.ed.log.undoLabel;')).toMatch(/Delete/);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('the keyboard works in the menu, a press elsewhere closes it, and it stays inside the window', async () => {
+    await rect(1000000, 5500000, 1500000, 800000);
+    await rightClick(1700000, 5900000);
+    // focus starts on the first command; Down skips the disabled Paste to Duplicate; Enter runs it
+    expect(await page.evaluate(() => document.activeElement?.getAttribute('data-testid'))).toBe('menu-cut');
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('ArrowDown');
+    expect(await page.evaluate(() => document.activeElement?.getAttribute('data-testid'))).toBe('menu-duplicate');
+    await page.keyboard.press('ArrowUp');
+    await page.keyboard.press('ArrowUp');
+    await page.keyboard.press('ArrowUp');                                 // round the top to the last enabled command
+    expect(await page.evaluate(() => document.activeElement?.getAttribute('data-testid'))).toBe('menu-back');
+    await page.keyboard.press('Enter');
+    expect(await menu().count()).toBe(0);
+    expect(await state<string>('return s.session.ed.log.undoLabel;')).toBe('Send to Back');
+    // keys typed while the menu is open do nothing to the slide
+    await rightClick(1700000, 5900000);
+    await page.keyboard.press('Delete');
+    expect(await drawn()).toEqual(['Rectangle 3']);
+    // a press elsewhere closes it
+    await page.mouse.click(700, 20);
+    expect(await menu().count()).toBe(0);
+
+    // opened at the bottom right corner of the slide area, the whole menu is still in the window
+    const host = await page.getByTestId('canvas').boundingBox();
+    await page.mouse.click(host!.x + host!.width - 3, host!.y + host!.height - 3, { button: 'right' });
+    const box = await menu().boundingBox();
+    expect(box!.x + box!.width).toBeLessThanOrEqual(1400);
+    expect(box!.y + box!.height).toBeLessThanOrEqual(860);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('Edit Text puts the caret in the shape; the menu gives the keyboard back to the text afterwards', async () => {
+    await rect(1000000, 5500000, 1500000, 800000);
+    await rightClick(1700000, 5900000);
+    await page.getByTestId('menu-edit-text').click();
+    await page.keyboard.type('Hi');
+    expect(await shapeXml()).toContain('<a:t>Hi</t>');
+    // a right click while editing, then Escape: typing goes on in the box
+    await rightClick(1700000, 5900000);
+    await menu().waitFor();
+    await page.keyboard.press('Escape');
+    await page.keyboard.type('!');
+    expect(await shapeXml()).toContain('<a:t>Hi!</t>');
+    // two right clicks in a row are not a double click: no word is selected, so typing adds to the text
+    await rightClick(1700000, 5900000);
+    await page.keyboard.press('Escape');
+    await rightClick(1700000, 5900000);
+    await page.keyboard.press('Escape');
+    await page.keyboard.type('?');
+    expect(await shapeXml()).toContain('<a:t>Hi!?</t>');
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('on a slide thumbnail: new, duplicate, hide, move and delete, on the slide that was clicked', async () => {
+    const thumbMenu = async (n: number) => { await page.getByTestId(`thumb-${n}`).click({ button: 'right' }); await menu().waitFor(); };
+    const order = () => state<string[]>('return s.session.ed.doc.slideParts().map(p => p.replace(/^.*slide(\\d+)\\.xml$/, "$1"));');
+    const current = () => state<number>('return s.session.ed.doc.slideParts().indexOf(s.slide) + 1;');
+
+    await thumbMenu(1);
+    expect(await menu().getAttribute('data-kind')).toBe('thumb');
+    expect(await labels()).toEqual(['New Slide', 'Duplicate Slide', 'Delete Slide', 'Hide Slide', 'Move Slide Up', 'Move Slide Down']);
+    expect(await disabled()).toEqual(['Delete Slide', 'Move Slide Up', 'Move Slide Down']);
+    await page.getByTestId('menu-new-slide').click();
+    await thumbMenu(2);
+    await page.getByTestId('menu-duplicate-slide').click();
+    expect(await order()).toEqual(['1', '2', '3']);
+
+    // a right click on a slide that is not the current one makes it current, and the menu acts on it
+    expect(await current()).toBe(3);
+    await thumbMenu(1);
+    expect(await current()).toBe(1);
+    expect(await disabled()).toEqual(['Move Slide Up']);
+    await page.getByTestId('menu-slide-down').click();
+    expect(await order()).toEqual(['2', '1', '3']);
+    expect(await current()).toBe(2);
+    await thumbMenu(2);
+    await page.getByTestId('menu-hide-slide').click();
+    expect(await state<boolean>('return s.session.ed.doc.slide(s.slide).hidden;')).toBe(true);
+    await thumbMenu(2);
+    expect(await labels()).toContain('Show Slide');
+    await page.getByTestId('menu-delete-slide').click();
+    expect(await order()).toEqual(['2', '3']);
+    expect(errors).toEqual([]);
+  }, 60_000);
+});

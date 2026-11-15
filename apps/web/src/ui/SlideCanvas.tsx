@@ -490,6 +490,10 @@ export function SlideCanvas() {
       st.session?.ed.log.seal();
       st.setState({ text: null, pending: null });
     }
+    if (e.evt.button !== 0) {                             // a right click here opens the slide's menu; no marquee
+      st.select([]);
+      return;
+    }
     const p = pointer();
     setMarquee({ x0: p.x, y0: p.y, x1: p.x, y1: p.y });
     if (!e.evt.shiftKey) st.select([]);
@@ -537,6 +541,13 @@ export function SlideCanvas() {
   return (
     <div
       ref={host} className={`canvas-host${drawing ? ' drawing' : ''}`} data-testid="canvas"
+      onContextMenu={e => {
+        // the press that came first selected what is under the pointer: the menu is for that
+        e.preventDefault();
+        const st = useEditor.getState();
+        if (st.drawing) return;
+        set({ menu: { x: e.clientX, y: e.clientY, kind: st.selection.length ? 'shape' : 'slide' } });
+      }}
       onWheel={e => {
         if (!e.ctrlKey && !e.metaKey) return;
         e.preventDefault();
@@ -626,7 +637,8 @@ export function SlideCanvas() {
                   // Konva counts any two clicks within 400 ms as a double click, wherever they land, and the third
                   // click of a triple click too; the browser's count (the same spot, quickly, the second time) is what
                   // a double click means here: two clicks on different words are two clicks, a third is a triple click
-                  if (e.evt.detail !== 2) return;
+                  // (and only the left button double-clicks: two right clicks open the menu twice)
+                  if (e.evt.detail !== 2 || e.evt.button !== 0) return;
                   if (rs.source.kind === 'grpSp') { set({ entered: el, selection: [] }); return; }
                   const at = pointer();
                   const v = textViewOf(rs);

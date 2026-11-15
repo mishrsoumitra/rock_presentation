@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react';
 import { useEditor } from './state/store.ts';
 import { newPresentation, openFile } from './ui/actions.ts';
+import { ContextMenu } from './ui/ContextMenu.tsx';
 import { NewPasswordDialog, OpenPasswordDialog, SlideSizeDialog } from './ui/Dialogs.tsx';
 import { FindBar } from './ui/FindBar.tsx';
 import { NotesPane } from './ui/NotesPane.tsx';
@@ -81,6 +82,7 @@ export function App() {
         {session ? <><SlidePanel /><div className="editing"><SlideCanvas /><NotesPane /><FindBar /></div>{pane === 'animation' && <AnimationPane />}</> : <Welcome />}
       </main>
       <StatusBar />
+      <ContextMenu />
       <OpenPasswordDialog />
       <NewPasswordDialog />
       <SlideSizeDialog />

@@ -14,7 +14,7 @@ export function useShortcuts(): void {
     const onKey = (e: KeyboardEvent) => {
       const s = useEditor.getState();
       const target = e.target as HTMLElement | null;
-      if (!s.session || s.mode !== 'edit' || s.text) return;
+      if (!s.session || s.mode !== 'edit' || s.text || s.menu) return;
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.closest('.slides'))) return;
       const mod = e.metaKey || e.ctrlKey;
       const k = e.key.toLowerCase();
@@ -28,11 +28,7 @@ export function useShortcuts(): void {
       else if (mod && k === 'g') { handled(); if (e.shiftKey) act.ungroupSelection(); else act.groupSelection(); }
       else if (mod && k === 'm') { handled(); act.newSlide(); }
       else if (mod && k === 's') { handled(); void act.saveAndDownload(); }
-      else if (mod && k === 'a') {
-        handled();
-        const scene = s.slide ? s.session.scenes.get(s.slide) : undefined;
-        s.select(scene ? scene.slide.shapes.filter(x => x.layer === 'slide' && x.source).map(x => x.source.view.el) : []);
-      }
+      else if (mod && k === 'a') { handled(); act.selectAllShapes(); }
       else if (e.key === 'Delete' || e.key === 'Backspace') { if (s.selection.length) { handled(); act.deleteSelection(); } }
       else if (e.key === 'Escape') { handled(); if (s.drawing) s.setState({ drawing: null }); else if (s.entered) s.setState({ entered: null, selection: [] }); else s.select([]); }
       else if (e.key.startsWith('Arrow') && s.selection.length) {
@@ -42,13 +38,7 @@ export function useShortcuts(): void {
       }
       else if ((e.key === 'Enter' || e.key === 'F2') && s.selection.length === 1 && s.slide) {
         // start editing the selected shape's text, caret at the end
-        const v = new ShapeView(s.selection[0]!, s.session.ed.doc.owner(s.slide));
-        const body = v.txBody;
-        if (!body) return;
-        handled();
-        const ps = paragraphs(body);
-        const end = { p: Math.max(0, ps.length - 1), offset: ps.length ? paragraphLength(ps[ps.length - 1]!) : 0 };
-        s.setState({ text: { part: s.slide, el: v.el, caret: end, anchor: end } });
+        if (act.editSelectedText()) handled();
       }
       else if (e.key === 'Tab' && s.slide) {
         handled();

@@ -66,6 +66,11 @@ const Thumb = memo(function Thumb({ part, index }: { part: string; index: number
         if (from && from !== part) moveCurrentSlide(index, from);
       }}
       onClick={() => useEditor.getState().setSlide(part)}
+      onContextMenu={e => {
+        e.preventDefault();
+        if (useEditor.getState().slide !== part) useEditor.getState().setSlide(part);
+        useEditor.setState({ menu: { x: e.clientX, y: e.clientY, kind: 'thumb' } });
+      }}
     >
       <span className="thumb-num">{index + 1}{animated && <span className="thumb-anim" title="Animations or a transition">★</span>}</span>
       <canvas ref={ref} style={{ width: THUMB, height: h }} aria-label={`Slide ${index + 1}`} />
