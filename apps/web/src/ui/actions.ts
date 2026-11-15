@@ -7,7 +7,9 @@ import {
   type ScaleMode, type ZOrder,
 } from '@pptx/editor-core';
 import { OpcPackage } from '@pptx/opc';
-import { copyFormat, copyTextFormat, paragraphLength, paragraphs, pasteFormat } from '@pptx/editor-core';
+import {
+  connectionSites, copyFormat, copyTextFormat, frameBetween, nearestSite, paragraphLength, paragraphs, pasteFormat, setConnectorEnds, type Point,
+} from '@pptx/editor-core';
 import { runsOf } from '@pptx/model';
 import { ShapeView } from '@pptx/model';
 import type { XmlElement } from '@pptx/xml';
@@ -67,6 +69,35 @@ export function insertShapeHere(prst: string, box?: { x: number; y: number; w: n
   const w = 1828800, h = line ? 0 : 1371600;
   const r = insertShape(c.ed, c.part, prst, box ?? { x: (size.cx - w) / 2, y: (size.cy - h) / 2, w, h });
   c.s.run(r.command);
+  c.s.select(inserted(r.id));
+}
+
+/** The shapes of the current slide a connector can attach to: its own top-level shapes that have a frame. */
+export function attachable(): ShapeView[] {
+  const s = st();
+  if (!s.session || !s.slide) return [];
+  return s.session.ed.doc.slide(s.slide).shapes.filter(v => connectionSites(v).length > 0);
+}
+
+/**
+ * Draw a line or connector from one point to another, as it was dragged (so it keeps its direction). An end let go
+ * within `reach` of a shape's connection point is attached to it, and then follows that shape.
+ */
+export function insertConnectorBetween(prst: string, from: Point, to: Point, reach: number): void {
+  const c = ctx();
+  if (!c) return;
+  const shapes = attachable();
+  const a = nearestSite(shapes, from, reach), b = nearestSite(shapes, to, reach);
+  const start = a?.site ?? from, end = b?.site ?? to;
+  const f = frameBetween(start, end);
+  const r = insertShape(c.ed, c.part, prst, { x: f.x, y: f.y, w: f.cx, h: f.cy });
+  c.s.run(r.command);
+  const view = c.ed.shape(c.part, r.id);
+  if (view) {
+    c.s.run(setConnectorEnds(c.ed, c.part, view, start, end, {
+      ...(a ? { start: { id: a.shape.id, index: a.site.index } } : {}), ...(b ? { end: { id: b.shape.id, index: b.site.index } } : {}),
+    }));
+  }
   c.s.select(inserted(r.id));
 }
 

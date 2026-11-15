@@ -4,6 +4,7 @@ import { boxMatrix, childSpaceMatrix, IDENTITY, invert, matchLayoutPlaceholder, 
 import type { XmlElement } from '@pptx/xml';
 import type { Editor } from './editor.ts';
 import type { Command } from './history.ts';
+import { rerouted } from './connectors.ts';
 import { twins, unitOf } from './xml.ts';
 
 export interface Box { x: number; y: number; w: number; h: number; }
@@ -95,9 +96,11 @@ function scaleTable(frame: XmlElement, sx: number, sy: number): void {
 }
 
 export function setTransforms(ed: Editor, part: string, changes: TransformChange[], label = 'Move', coalesceKey?: string): Command {
+  // connectors attached to the shapes follow them, in the same step (found now: their elements are in the scope)
+  const followers = rerouted(ed, part, changes.map(c => c.shape)).map(r => r.connector);
   return ed.edit({
     label, parts: [part], ...(coalesceKey ? { coalesceKey } : {}),
-    scope: () => changes.map(c => unitOf(c.shape.el)),
+    scope: () => [...changes.map(c => unitOf(c.shape.el)), ...followers.map(c => unitOf(c.el))],
     apply: () => {
       for (const { shape, xfrm } of changes) {
         for (const el of twins(shape.el)) {
@@ -107,6 +110,7 @@ export function setTransforms(ed: Editor, part: string, changes: TransformChange
           if (before) scaleTable(el, before.cx ? xfrm.cx / before.cx : 1, before.cy ? xfrm.cy / before.cy : 1);
         }
       }
+      for (const r of rerouted(ed, part, changes.map(c => c.shape))) r.connector.setXfrm(r.xfrm);
     },
   });
 }

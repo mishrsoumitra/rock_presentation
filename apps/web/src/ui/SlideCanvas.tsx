@@ -1,7 +1,7 @@
 // apps/web/src/ui/SlideCanvas.tsx  -- the slide being edited: drawing, selection, moving, resizing, rotating
 import Konva from 'konva';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Layer, Line, Rect, Shape, Stage, Transformer } from 'react-konva';
+import { Circle, Layer, Line, Rect, Shape, Stage, Transformer } from 'react-konva';
 import { moveBy, setTransforms, type TransformChange } from '@pptx/editor-core';
 import { ShapeView } from '@pptx/model';
 import { drawPrimitive, drawShape, drawSlide, shapeTextLayout, type RenderShape, type RenderSlide } from '@pptx/render';
@@ -14,8 +14,8 @@ import { promptOf } from './prompts.ts';
 import { selectAll } from './textActions.ts';
 import { TextInput } from './TextInput.tsx';
 import { CellEditor } from './CellEditor.tsx';
-import { cropAndPlace, pictureCrop } from '@pptx/editor-core';
-import { paintFormat } from './actions.ts';
+import { connectionSites, connectorEnds, cropAndPlace, isConnector, nearestSite, pictureCrop, setConnectorEnds, type Point } from '@pptx/editor-core';
+import { attachable, paintFormat } from './actions.ts';
 import { CROP_HANDLES, dragCrop, fullCorners, handlePoint, type CropHandle, type Cropped } from './crop.ts';
 import { activeCells, cellAtPoint, cellCorners, editCell, rangeOf } from './tables.ts';
 import * as act from './actions.ts';
@@ -126,6 +126,16 @@ function findRendered(slide: RenderSlide, el: XmlElement): RenderShape | undefin
 interface Guide { x?: number; y?: number; }
 
 /**
+ * The connector that gets end handles: the one selected shape, when it is an unrotated connector at the top of the
+ * slide (not inside a group, whose space its ends would be in) and no text or crop is being edited.
+ */
+function lineOf(s: { selection: XmlElement[]; text: unknown; cropping: XmlElement | null }): XmlElement | undefined {
+  const el = s.selection.length === 1 && !s.text && !s.cropping ? s.selection[0] : undefined;
+  if (!el || el.local !== 'cxnSp' || el.parent?.local !== 'spTree') return undefined;
+  return isConnector(new ShapeView(el)) ? el : undefined;
+}
+
+/**
  * What a mouse-down on a shape started, until the mouse comes up. 'text': the mouse selects text in the box being
  * edited as it moves (tracked on the window, so it goes on outside the box). 'click': the shape was selected; the
  * mouse moving more than DRAG_PX before it comes up drags the shape, and a plain click on its text (`edit`) starts
@@ -160,6 +170,8 @@ export function SlideCanvas() {
   const [size, setSize] = useState({ w: 800, h: 600 });
   const [marquee, setMarquee] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   const [guides, setGuides] = useState<Guide[]>([]);
+  /** Connection points shown while an end of a connector is being dragged near a shape. */
+  const [hints, setHints] = useState<Point[]>([]);
   const drag = useRef<{ starts: Map<string, { x: number; y: number }>; key: string } | null>(null);
   const press = useRef<Press | null>(null);
   const endPress = useRef<() => void>(() => undefined);
@@ -211,7 +223,8 @@ export function SlideCanvas() {
     const stage = stageRef.current, tr = trRef.current;
     if (!stage || !tr) return;
     // (a picture being cropped has crop handles instead of the resize handles)
-    const nodes = text || (cropEl && selection[0] === cropEl) ? [] : selection.map(el => stage.findOne(`#${keyOf(el)}`)).filter((n): n is Konva.Node => !!n);
+    // (and a connector selected alone has a handle on each end)
+    const nodes = text || (cropEl && selection[0] === cropEl) || lineOf(useEditor.getState()) ? [] : selection.map(el => stage.findOne(`#${keyOf(el)}`)).filter((n): n is Konva.Node => !!n);
     tr.nodes(nodes);
     tr.getLayer()?.batchDraw();
   });
@@ -393,6 +406,46 @@ export function SlideCanvas() {
       set({ text: null, selection: [el] });
     } else selectShape(el, false);
     beginPress({ kind: 'click', el, rs, node, down: evt, at, edit: text });
+  };
+
+  /** How near (in slide units) an end must be let go to a connection point to attach to it: fourteen screen pixels. */
+  const reach = () => 14 / zoom;
+  /** The connection points worth showing for an end at a point: those of every shape that has one within a few reaches. */
+  const hintsNear = (at: Point): Point[] => attachable().filter(v => connectionSites(v).some(s => Math.hypot(s.x - at.x, s.y - at.y) < reach() * 6)).flatMap(v => connectionSites(v));
+
+  /**
+   * The mouse goes down on an end handle of the selected connector: until it comes up the end follows it, snapping
+   * to a connection point within reach (and attaching to it), free otherwise (and detached). One undo step.
+   */
+  const startEnd = (which: 'start' | 'end', e: Konva.KonvaEventObject<MouseEvent>) => {
+    const stage = stageRef.current;
+    const el = lineOf(useEditor.getState());
+    if (!stage || !el || e.evt.button !== 0) return;
+    e.cancelBubble = true;
+    e.evt.preventDefault();
+    const from = connectorEnds(ed.view(part, el));
+    const p0 = pointer();
+    const key = `end:${keyOf(el)}:${Date.now()}`;
+    ed.log.seal();
+    const move = (ev: MouseEvent) => {
+      stage.setPointersPositions(ev);
+      const p = stage.getRelativePointerPosition();
+      if (!p) return;
+      const at = { x: from[which].x + p.x - p0.x, y: from[which].y + p.y - p0.y };
+      const near = nearestSite(attachable(), at, reach(), el);
+      const point = near?.site ?? at;
+      setHints(hintsNear(at));
+      useEditor.getState().run(setConnectorEnds(ed, part, ed.view(part, el), which === 'start' ? point : from.start, which === 'end' ? point : from.end,
+        { [which]: near ? { id: near.shape.id, index: near.site.index } : null }, key));
+    };
+    const up = () => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+      setHints([]);
+      ed.log.seal();
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
   };
 
   /** The picture being cropped, as the crop geometry reads it: its frame, and the fractions cut off each side. */
@@ -610,6 +663,9 @@ export function SlideCanvas() {
   const onStageMove = (e: Konva.KonvaEventObject<MouseEvent>) => {
     if (!marquee) return;
     const p = pointer();
+    // drawing a line or connector: the connection points it could attach to show as it nears a shape
+    const drawn = useEditor.getState().drawing;
+    if (drawn && /Connector|^line$/.test(drawn)) setHints(hintsNear(p));
     if (useEditor.getState().drawing && e.evt.shiftKey) {
       // Shift keeps it square (or a circle), as in PowerPoint
       const d = Math.max(Math.abs(p.x - marquee.x0), Math.abs(p.y - marquee.y0));
@@ -624,9 +680,12 @@ export function SlideCanvas() {
       useEditor.setState({ drawing: null });
       const w = Math.abs(marquee.x1 - marquee.x0), h = Math.abs(marquee.y1 - marquee.y0);
       const line = /Connector|^line$/.test(prst);
+      setHints([]);
       // a click without a drag gives PowerPoint's default size (1 inch) at the click
       if (w < 4 / zoom && h < 4 / zoom) act.insertShapeHere(prst, { x: marquee.x0, y: marquee.y0, w: 914400, h: line ? 0 : 914400 });
-      else act.insertShapeHere(prst, { x: Math.min(marquee.x0, marquee.x1), y: Math.min(marquee.y0, marquee.y1), w, h: line ? (marquee.y1 - marquee.y0) : h });
+      // a line or connector runs from where the drag began to where it ended, and attaches to connection points there
+      else if (line) act.insertConnectorBetween(prst, { x: marquee.x0, y: marquee.y0 }, { x: marquee.x1, y: marquee.y1 }, reach());
+      else act.insertShapeHere(prst, { x: Math.min(marquee.x0, marquee.x1), y: Math.min(marquee.y0, marquee.y1), w, h });
       return;
     }
     const x0 = Math.min(marquee.x0, marquee.x1), x1 = Math.max(marquee.x0, marquee.x1);
@@ -646,6 +705,9 @@ export function SlideCanvas() {
   };
 
   const tv = text ? textViewOf(findRendered(slide, text.el)) : undefined;
+  // a connector selected alone: a handle on each end
+  const lineEl = lineOf({ selection, text, cropping: cropEl });
+  const lineEnds = lineEl ? connectorEnds(ed.view(part, lineEl)) : undefined;
   // the picture being cropped: the whole picture outlined behind its frame, and a handle on each edge and corner
   const crop = cropEl && selection.length === 1 && selection[0] === cropEl && !text ? cropState() : undefined;
   // the cells picked in the selected table: outlined, and typed in through the box laid over the cell
@@ -799,6 +861,11 @@ export function SlideCanvas() {
             return <Rect key={`crop${h.x},${h.y}`} name="crop-handle" x={q.x - size / 2} y={q.y - size / 2} width={size} height={size} fill="#111" stroke="#fff" strokeWidth={1.5 / zoom}
               onMouseDown={e => startCrop(h, e)} onMouseEnter={() => setCursor('crosshair')} onMouseLeave={() => setCursor('')} />;
           })}
+          {hints.map((h, i) => <Circle key={`hint${i}`} name="site-hint" x={h.x} y={h.y} radius={4 / zoom} fill="#fff" stroke="#2b6cb0" strokeWidth={1.5 / zoom} listening={false} />)}
+          {lineEnds && (['start', 'end'] as const).map(which => (
+            <Circle key={which} name="end-handle" x={lineEnds[which].x} y={lineEnds[which].y} radius={6 / zoom} fill="#fff" stroke="#2b6cb0" strokeWidth={1.5 / zoom}
+              onMouseDown={e => startEnd(which, e)} onMouseEnter={() => setCursor('crosshair')} onMouseLeave={() => setCursor('')} />
+          ))}
           {cellOutline && <Line points={cellOutline} closed stroke="#2b6cb0" strokeWidth={2 / zoom} fill="rgba(43,108,176,0.12)" listening={false} name="cell-outline" />}
           {marquee && <Rect x={Math.min(marquee.x0, marquee.x1)} y={Math.min(marquee.y0, marquee.y1)} width={Math.abs(marquee.x1 - marquee.x0)} height={Math.abs(marquee.y1 - marquee.y0)}
             fill="rgba(43,108,176,0.08)" stroke="#2b6cb0" strokeWidth={1 / zoom} listening={false} />}

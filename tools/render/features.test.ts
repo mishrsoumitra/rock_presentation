@@ -995,6 +995,156 @@ describe('cropping a picture with handles', () => {
   }, 60_000);
 });
 
+describe('connectors attached to shapes', () => {
+  /** The frame of every drawn shape by name, and for a connector its ends and what they are attached to (shape names). */
+  const scene = () => state<Record<string, { x: number; y: number; cx: number; cy: number; start?: [number, number]; end?: [number, number]; from?: string; to?: string }>>(`
+    const find = (e, n) => e && e.children.find(c => c.kind === 'element' && c.local === n);
+    const num = (e, n) => { const a = e && e.attrs.find(t => t.local === n); return a ? Number(a.value) : 0; };
+    const shapes = s.session.ed.doc.slide(s.slide).shapes.filter(x => !x.placeholder);
+    const byId = new Map(shapes.map(x => [x.id, x.name]));
+    const out = {};
+    for (const sh of shapes) {
+      const x = sh.xfrm; const o = { x: x.x, y: x.y, cx: x.cx, cy: x.cy };
+      if (sh.kind === 'cxnSp') {
+        o.start = [x.flipH ? x.x + x.cx : x.x, x.flipV ? x.y + x.cy : x.y];
+        o.end = [x.flipH ? x.x : x.x + x.cx, x.flipV ? x.y : x.y + x.cy];
+        const nv = find(find(sh.el, 'nvCxnSpPr'), 'cNvCxnSpPr'); const st = find(nv, 'stCxn'), en = find(nv, 'endCxn');
+        if (st) o.from = byId.get(num(st, 'id')) + '#' + num(st, 'idx');
+        if (en) o.to = byId.get(num(en, 'id')) + '#' + num(en, 'idx');
+      }
+      out[sh.name.replace(/ \\d+$/, '')] = o;
+    }
+    return out;`);
+  const A = { x: 1000000, y: 5500000, w: 1500000, h: 800000 }, B = { x: 5000000, y: 5500000, w: 1500000, h: 800000 };
+  /** Two rectangles under the placeholders: "Rectangle" (A) on the left and "Rectangle: Rounded Corners" (B) on the right. */
+  async function twoBoxes(): Promise<void> {
+    await drawShape('rect', A.x, A.y, A.w, A.h);
+    await drawShape('roundRect', B.x, B.y, B.w, B.h);
+    await page.keyboard.press('Escape');
+  }
+  /** Drag on the slide from one point to another (EMU), a few pixels off at each end if asked. */
+  async function dragSlide(from: [number, number], to: [number, number], off = 0): Promise<void> {
+    await frames();
+    const a = await slidePoint(...from), b = await slidePoint(...to);
+    await page.mouse.move(a.x + off, a.y + off);
+    await page.mouse.down();
+    await page.mouse.move((a.x + b.x) / 2, (a.y + b.y) / 2, { steps: 3 });
+    await page.mouse.move(b.x - off, b.y + off, { steps: 3 });
+    await page.mouse.up();
+    await frames();
+  }
+  async function drawConnector(from: [number, number], to: [number, number], off = 0): Promise<void> {
+    await page.getByTestId('shapes').click();
+    await page.locator('[data-testid="shape-gallery"] button[data-prst="straightConnector1"]').first().click();
+    await dragSlide(from, to, off);
+  }
+  /** Where the end handles of the selected connector are on the page: [start, end]. */
+  const endHandles = () => page.evaluate(() => {
+    const st = (globalThis as unknown as { __stage: { find(s: string): { getClientRect(): { x: number; y: number; width: number; height: number } }[]; container(): HTMLElement } }).__stage;
+    const r = st.container().getBoundingClientRect();
+    return st.find('.end-handle').map(h => { const b = h.getClientRect(); return { x: r.left + b.x + b.width / 2, y: r.top + b.y + b.height / 2 }; });
+  });
+  const A_RIGHT: [number, number] = [A.x + A.w, A.y + A.h / 2], B_LEFT: [number, number] = [B.x, B.y + B.h / 2];
+
+  test('a connector drawn from one shape to another attaches to their connection points, and follows a shape that is moved', async () => {
+    await twoBoxes();
+    await drawConnector(A_RIGHT, B_LEFT, 5);                             // let go a few pixels off each point: it snaps
+    let sc = await scene();
+    const a = sc.Rectangle!, b = sc['Rectangle: Rounded Corners']!;
+    const c = sc['Straight Arrow Connector']!;
+    expect(c.from).toBe('Rectangle 3#3');                               // the right side of A
+    expect(c.to).toBe('Rectangle: Rounded Corners 4#1');                         // the left side of B
+    expect(c.start).toEqual([a.x + a.cx, Math.round(a.y + a.cy / 2)]);
+    expect(c.end).toEqual([b.x, Math.round(b.y + b.cy / 2)]);
+
+    // drag B up and to the right: the connector's end is still on B's left side, its start still on A
+    await dragSlide([b.x + b.cx / 2, b.y + b.cy / 2], [b.x + b.cx / 2 + 1500000, b.y + b.cy / 2 - 3000000]);
+    sc = await scene();
+    const moved = sc['Rectangle: Rounded Corners']!;
+    expect(moved.y).toBeLessThan(b.y - 2000000);
+    expect(sc['Straight Arrow Connector']!.end).toEqual([moved.x, Math.round(moved.y + moved.cy / 2)]);
+    expect(sc['Straight Arrow Connector']!.start).toEqual([a.x + a.cx, Math.round(a.y + a.cy / 2)]);
+    // moving the shape and its connector was one step
+    await page.keyboard.press('Control+z');
+    sc = await scene();
+    expect(sc['Rectangle: Rounded Corners']).toEqual(b);
+    expect(sc['Straight Arrow Connector']!.end).toEqual([b.x, Math.round(b.y + b.cy / 2)]);
+
+    const ed = await saved();
+    const xml = new TextDecoder().decode(ed.pkg.getPart(ed.doc.slideParts()[0]!)!.bytes);
+    expect(xml).toMatch(/<a:stCxn id="\d+" idx="3"\/><a:endCxn id="\d+" idx="1"\/>/);
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('a selected connector has a handle on each end: dragged onto a connection point it attaches, dragged away it lets go', async () => {
+    await twoBoxes();
+    await drawConnector([3000000, 4900000], [4500000, 4900000]);         // in the open: attached to nothing
+    let c = (await scene())['Straight Arrow Connector']!;
+    expect([c.from, c.to]).toEqual([undefined, undefined]);
+    const hs = await endHandles();
+    expect(hs.length).toBe(2);
+
+    // the end onto B's left side
+    const bLeft = await slidePoint(...B_LEFT);
+    await page.mouse.move(hs[1]!.x, hs[1]!.y);
+    await page.mouse.down();
+    await page.mouse.move(bLeft.x - 30, bLeft.y - 10, { steps: 3 });
+    expect(await page.evaluate(() => (globalThis as unknown as { __stage: { find(s: string): unknown[] } }).__stage.find('.site-hint').length)).toBeGreaterThanOrEqual(4);   // B's points show
+    await page.mouse.move(bLeft.x - 4, bLeft.y + 3, { steps: 3 });
+    await page.mouse.up();
+    await frames();
+    expect(await page.evaluate(() => (globalThis as unknown as { __stage: { find(s: string): unknown[] } }).__stage.find('.site-hint').length)).toBe(0);
+    let sc = await scene();
+    c = sc['Straight Arrow Connector']!;
+    const b = sc['Rectangle: Rounded Corners']!;
+    expect(c.to).toBe('Rectangle: Rounded Corners 4#1');
+    expect(c.end).toEqual([b.x, Math.round(b.y + b.cy / 2)]);
+    expect(c.from).toBeUndefined();
+    expect(await state<string>('return s.session.ed.log.undoLabel;')).toBe('Move End Point');
+
+    // the start onto A's top (it then runs from A's top to B's left); then the end away again
+    const hs2 = await endHandles();
+    const aTop = await slidePoint(A.x + A.w / 2, A.y);
+    await page.mouse.move(hs2[0]!.x, hs2[0]!.y);
+    await page.mouse.down();
+    await page.mouse.move(aTop.x + 3, aTop.y - 2, { steps: 5 });
+    await page.mouse.up();
+    await frames();
+    c = (await scene())['Straight Arrow Connector']!;
+    expect(c.from).toBe('Rectangle 3#0');
+    const hs3 = await endHandles();
+    await page.mouse.move(hs3[1]!.x, hs3[1]!.y);
+    await page.mouse.down();
+    await page.mouse.move(hs3[1]!.x - 80, hs3[1]!.y - 120, { steps: 5 });
+    await page.mouse.up();
+    await frames();
+    c = (await scene())['Straight Arrow Connector']!;
+    expect([c.from, c.to]).toEqual(['Rectangle 3#0', undefined]);
+
+    // each drag was one undo step
+    await page.keyboard.press('Control+z');
+    expect((await scene())['Straight Arrow Connector']!.to).toBe('Rectangle: Rounded Corners 4#1');
+    await page.keyboard.press('Control+z');
+    expect((await scene())['Straight Arrow Connector']!.from).toBeUndefined();
+    expect(errors).toEqual([]);
+  }, 60_000);
+
+  test('a line keeps the direction it was drawn in, and a shape with no connector moves as before', async () => {
+    await twoBoxes();
+    await page.getByTestId('shapes').click();
+    await page.locator('[data-testid="shape-gallery"] button[data-prst="line"]').first().click();
+    await dragSlide([4400000, 5000000], [3000000, 4700000]);             // right to left, and upwards
+    const sc = await scene();
+    const line = sc['Straight Connector'] ?? sc.Line!;
+    const z = await page.evaluate(() => (globalThis as unknown as { __stage: { scaleX(): number } }).__stage.scaleX());
+    expect(Math.abs(line.start![0] - 4400000)).toBeLessThan(3 / z);
+    expect(Math.abs(line.end![0] - 3000000)).toBeLessThan(3 / z);
+    expect(line.start![1]).toBeGreaterThan(line.end![1]);
+    expect([line.from, line.to]).toEqual([undefined, undefined]);
+    expect(errors).toEqual([]);
+  }, 60_000);
+});
+
 describe('bullet and number styles', () => {
   test('pick a bullet character and a numbering scheme; the menus tick the one in force; text in a box gets a hanging indent', async () => {
     await textBox('one\ntwo');

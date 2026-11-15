@@ -28,6 +28,9 @@ export { importMasters, partText, prepareTemplate } from './templates.ts';
 export { lightnessClass, STANDARD_COLORS, themePalette, type PaletteColumn, type Swatch } from './palette.ts';
 export { setSlideSize, type ScaleMode } from './slide-size.ts';
 export { copyFormat, copyTextFormat, pasteFormat, type FormatClip } from './painter.ts';
+export {
+  attachments, connectionSites, connectorEnds, frameBetween, isConnector, nearestSite, rerouted, setConnectorEnds, type Attachment, type Point, type Site,
+} from './connectors.ts';
 export { colorXml, fillColorOf, setFill, setFillTransparency, setGradientFill, setLine, setShadow, SHADOWS, type GradientSpec, type LineSpec } from './format.ts';
 export { addAnimation, moveAnimation, removeAnimation, setAnimationTiming, setSlideTransition, setTransitionOnAll } from './animation.ts';
 export { prepareForSave } from './save.ts';
