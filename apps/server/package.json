@@ -11,8 +11,8 @@
   },
   "dependencies": {
     "@fastify/helmet": "13.2.0",
-    "@fastify/multipart": "10.1.6",
-    "@fastify/rate-limit": "11.2.1",
+    "@fastify/multipart": "10.1.8",
+    "@fastify/rate-limit": "11.2.2",
     "@fastify/under-pressure": "9.2.1",
     "@pptx/charts": "workspace:*",
     "@pptx/crypto": "workspace:*",
@@ -23,13 +23,13 @@
     "@pptx/resolve": "workspace:*",
     "@pptx/text": "workspace:*",
     "@pptx/xml": "workspace:*",
-    "fastify": "5.12.7",
+    "fastify": "5.12.8",
     "pixelmatch": "8.0.0",
-    "playwright": "1.64.1",
+    "playwright": "1.65.0",
     "pngjs": "7.0.0",
-    "typebox": "1.4.3"
+    "typebox": "1.4.6"
   },
   "devDependencies": {
-    "vite": "8.3.5"
+    "vite": "8.3.6"
   }
 }
