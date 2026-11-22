@@ -6,6 +6,6 @@
   "dependencies": {
     "@pptx/xml": "workspace:*",
     "@pptx/geometry": "workspace:*",
-    "playwright": "1.64.1"
+    "playwright": "1.65.0"
   }
 }
